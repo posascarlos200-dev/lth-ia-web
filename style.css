@@ -65,6 +65,9 @@ input, textarea { font-family: inherit; }
   min-height: 100%; display: grid; place-items: center;
   padding: calc(28px + var(--safe-top)) 20px calc(28px + var(--safe-bot));
 }
+/* display:grid de arriba anula el [hidden] del navegador; hay que forzar el
+   ocultado o login y chat se muestran a la vez. */
+.auth-screen[hidden] { display: none; }
 .auth-card {
   width: 100%; max-width: 400px;
   background: var(--panel);
@@ -136,6 +139,7 @@ input, textarea { font-family: inherit; }
   grid-template-rows: auto auto 1fr auto;
   grid-template-areas: "top" "usage" "msg" "composer";
 }
+.app-screen[hidden] { display: none; }
 .topbar { grid-area: top; }
 .usage-strip { grid-area: usage; }
 .messages { grid-area: msg; }
