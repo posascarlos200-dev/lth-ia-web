@@ -1,0 +1,26 @@
+{
+  "name": "LTH IA · Mady",
+  "short_name": "LTH IA",
+  "description": "Habla con Mady, la asistente de LTH OS. Chat con IA en tu telefono.",
+  "start_url": "./index.html",
+  "scope": "./",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#02060a",
+  "theme_color": "#02060a",
+  "categories": ["productivity", "utilities"],
+  "icons": [
+    {
+      "src": "./icon.png",
+      "sizes": "882x882",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "./icon.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any"
+    }
+  ]
+}

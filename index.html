@@ -1,0 +1,155 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, maximum-scale=1, user-scalable=no" />
+  <meta name="theme-color" content="#02060a" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+  <meta name="apple-mobile-web-app-title" content="LTH IA" />
+  <title>LTH IA · Mady</title>
+  <link rel="manifest" href="./manifest.webmanifest" />
+  <link rel="apple-touch-icon" href="./icon.png" />
+  <link rel="icon" href="./icon.png" type="image/png" />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@500;700;900&family=Share+Tech+Mono&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="./style.css" />
+</head>
+<body>
+  <!-- Fondo animado -->
+  <div class="bg-grid" aria-hidden="true"></div>
+  <div class="bg-glow" aria-hidden="true"></div>
+  <div class="bg-scan" aria-hidden="true"></div>
+
+  <!-- ════════ PANTALLA DE ACCESO ════════ -->
+  <section id="authScreen" class="auth-screen">
+    <div class="auth-card">
+      <div class="brand">
+        <div class="brand-mark">
+          <img src="./icon.png" alt="LTH IA" width="56" height="56" />
+        </div>
+        <h1 class="brand-title">LTH<span>IA</span></h1>
+        <p class="brand-sub">Tu asistente <b>Mady</b> · directa desde el ecosistema LTH OS</p>
+      </div>
+
+      <div class="auth-tabs">
+        <button class="auth-tab on" data-auth-tab="login" type="button">Entrar</button>
+        <button class="auth-tab" data-auth-tab="signup" type="button">Crear cuenta</button>
+      </div>
+
+      <form id="authForm" class="auth-form" autocomplete="on" novalidate>
+        <label class="field">
+          <span>Correo</span>
+          <input id="authEmail" type="email" inputmode="email" autocomplete="email" placeholder="tu@correo.com" required />
+        </label>
+        <label class="field">
+          <span>Contraseña</span>
+          <input id="authPassword" type="password" autocomplete="current-password" placeholder="••••••••" minlength="6" required />
+        </label>
+        <label class="field" id="authNameField" hidden>
+          <span>Nombre (opcional)</span>
+          <input id="authName" type="text" autocomplete="name" placeholder="Cómo te llama Mady" />
+        </label>
+
+        <button id="authSubmit" class="btn-primary" type="submit">
+          <span class="btn-label">Entrar</span>
+          <span class="btn-spinner" hidden></span>
+        </button>
+        <p id="authMsg" class="auth-msg" role="status"></p>
+      </form>
+
+      <p class="auth-foot">Plan <b>free</b> incluido · sin tarjeta · chatea con Mady ya mismo</p>
+    </div>
+  </section>
+
+  <!-- ════════ APP DE CHAT ════════ -->
+  <main id="appScreen" class="app-screen" hidden>
+    <!-- Barra superior -->
+    <header class="topbar">
+      <button id="menuBtn" class="icon-btn" type="button" aria-label="Conversaciones">
+        <svg viewBox="0 0 24 24"><path d="M4 7h16M4 12h16M4 17h16"/></svg>
+      </button>
+      <div class="topbar-title">
+        <div class="dot" id="statusDot"></div>
+        <div class="tt-text">
+          <strong>Mady</strong>
+          <span id="modelLabel">LTH IA</span>
+        </div>
+      </div>
+      <button id="newChatTop" class="icon-btn" type="button" aria-label="Nuevo chat" title="Nuevo chat">
+        <svg viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg>
+      </button>
+    </header>
+
+    <!-- Barra de uso (siempre visible) -->
+    <div class="usage-strip" id="usageStrip">
+      <span id="planTag" class="us-plan">free</span>
+      <div class="us-main">
+        <div class="us-head"><span id="usageLabel">Uso actual</span><span id="usageVal">—</span></div>
+        <div class="us-track"><i id="usageFill"></i></div>
+      </div>
+      <button id="creditsBtn" class="us-more" type="button" aria-label="Detalle de uso">⌄</button>
+
+      <!-- Panel de detalle -->
+      <div id="creditsPanel" class="credits-panel" hidden>
+        <div class="cp-row"><span>Plan</span><b id="cpPlan">—</b></div>
+        <div class="cp-bar"><span>Semana</span><div class="bar"><i id="cpWeek"></i></div><em id="cpWeekTxt">—</em></div>
+        <div class="cp-bar"><span>Mes</span><div class="bar"><i id="cpMonth"></i></div><em id="cpMonthTxt">—</em></div>
+        <div class="cp-bar"><span>Ventana</span><div class="bar"><i id="cpWindow"></i></div><em id="cpWindowTxt">—</em></div>
+        <p id="cpNote" class="cp-note"></p>
+      </div>
+    </div>
+
+    <!-- Lista de conversaciones (drawer) -->
+    <aside id="drawer" class="drawer" hidden>
+      <div class="drawer-head">
+        <strong>Conversaciones</strong>
+        <button id="newChatBtn" class="mini-btn" type="button">+ Nueva</button>
+      </div>
+      <div id="convoList" class="convo-list"></div>
+      <div class="drawer-foot">
+        <div class="user-mini">
+          <div class="avatar" id="userAvatar">L</div>
+          <div class="user-meta">
+            <strong id="userName">Usuario</strong>
+            <span id="userEmail">—</span>
+          </div>
+        </div>
+        <button id="logoutBtn" class="mini-btn ghost" type="button">Salir</button>
+      </div>
+    </aside>
+    <div id="scrim" class="scrim" hidden></div>
+
+    <!-- Mensajes -->
+    <div id="messages" class="messages">
+      <div id="welcome" class="welcome">
+        <div class="welcome-mark"><img src="./icon.png" alt="" width="64" height="64" /></div>
+        <h2>Hola, soy <span>Mady</span></h2>
+        <p>La asistente de LTH OS. Pregúntame lo que quieras.</p>
+        <div class="suggest" id="suggestions">
+          <button type="button">Explícame qué es LTH OS</button>
+          <button type="button">Dame ideas para mi negocio</button>
+          <button type="button">Resume este texto: …</button>
+          <button type="button">Ayúdame a escribir un mensaje</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Composer -->
+    <form id="composer" class="composer">
+      <div class="composer-inner">
+        <textarea id="input" rows="1" placeholder="Escribe a Mady…" autocomplete="off"></textarea>
+        <button id="sendBtn" class="send-btn" type="submit" aria-label="Enviar">
+          <svg viewBox="0 0 24 24" class="ic-send"><path d="M4 12l16-8-6 8 6 8-16-8z"/></svg>
+          <svg viewBox="0 0 24 24" class="ic-stop" hidden><rect x="6" y="6" width="12" height="12" rx="2"/></svg>
+        </button>
+      </div>
+      <p class="composer-hint" id="composerHint">LTH IA puede equivocarse. Verifica información importante.</p>
+    </form>
+  </main>
+
+  <script src="./config.js"></script>
+  <script src="./app.js"></script>
+</body>
+</html>
