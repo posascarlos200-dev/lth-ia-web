@@ -309,6 +309,11 @@ input, textarea { font-family: inherit; }
 .engine-status.warn { color: #ffd15b; border-color: rgba(255,180,60,.3); background: rgba(255,180,60,.06); }
 .settings-note { margin: 14px 0 0; font-size: 11px; color: var(--text-dim); line-height: 1.6; }
 .settings-note b { color: var(--cyan-soft); }
+.engine-pin-entry { display: flex; gap: 9px; margin-top: 12px; }
+.engine-pin-entry[hidden] { display: none; }
+#enginePinInput { flex: 1; min-width: 0; background: rgba(0,0,0,.4); border: 1px solid var(--line-strong); border-radius: 11px; padding: 12px 14px; color: #eaf3ff; font-family: var(--font-mono); font-size: 22px; letter-spacing: 8px; text-align: center; outline: none; }
+#enginePinInput:focus { border-color: var(--cyan); box-shadow: 0 0 0 3px rgba(74,163,255,.12); }
+.engine-pin-entry .pdf-btn { flex: none; }
 .cursor::after { content: '▍'; color: var(--cyan); animation: blink 1s step-end infinite; margin-left: 1px; }
 .typing { display: inline-flex; gap: 4px; padding: 4px 2px; }
 .typing i { width: 7px; height: 7px; border-radius: 50%; background: var(--cyan); opacity: .4; animation: typing 1.2s ease-in-out infinite; }
@@ -316,6 +321,13 @@ input, textarea { font-family: inherit; }
 @keyframes typing { 30% { opacity: 1; transform: translateY(-3px); } }
 .msg-err { align-self: center; max-width: 90%; text-align: center; font-size: 12.5px; color: var(--danger); background: rgba(255,92,122,.08); border: 1px solid rgba(255,92,122,.3); border-radius: 11px; padding: 10px 14px; }
 .msg-err b { color: #ffd3dc; }
+/* Me gusta / no me gusta (iconos, no emojis) */
+.msg-feedback { display: flex; gap: 6px; margin-top: 9px; padding-top: 8px; border-top: 1px solid rgba(120,180,255,.1); }
+.fb-btn { width: 30px; height: 30px; display: grid; place-items: center; border-radius: 8px; border: 1px solid var(--line); background: rgba(74,163,255,.04); color: var(--text-dim); transition: .15s; }
+.fb-btn svg { width: 16px; height: 16px; fill: currentColor; }
+.fb-btn:hover { color: var(--cyan); border-color: var(--line-strong); }
+.fb-btn.up.on { color: #4ad6a0; border-color: rgba(74,214,160,.4); background: rgba(74,214,160,.1); }
+.fb-btn.down.on { color: var(--danger); border-color: rgba(255,92,122,.4); background: rgba(255,92,122,.1); }
 
 /* Composer */
 .composer { padding: 8px 12px calc(10px + var(--safe-bot)); background: linear-gradient(0deg, rgba(2,8,12,.96), rgba(2,8,12,.4)); border-top: 1px solid var(--line); }

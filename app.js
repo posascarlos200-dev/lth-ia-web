@@ -30,6 +30,7 @@
 
   // Motor de imagen: el MISMO modelo/ruta que usa LTH IA en el OS (edge compartido).
   const MEDIA_REST_URL = SB_URL + '/rest/v1/ia_media';
+  const FEEDBACK_REST_URL = SB_URL + '/rest/v1/ai_response_feedback';
   const IMAGE_MODEL = 'google/gemini-3.1-flash-image-preview';
   const IMAGE_SYSTEM_PROMPT = 'Eres Mady, la asistente de LTH OS. Genera directamente la imagen que describe el usuario y acompanala con una frase breve en espanol. La imagen debe tratar EXACTAMENTE lo pedido; no agregues marcas, textos ni elementos no solicitados (nunca generes productos LTH si no se piden). Si el usuario pide texto dentro de la imagen, respetalo exactamente.';
   const PDF_SYSTEM_PROMPT = 'Eres Mady, la asistente de LTH OS. El usuario quiere un documento que se exportara a PDF. Redacta el documento COMPLETO en espanol, bien estructurado en Markdown simple: una primera linea con el titulo usando "# Titulo", luego secciones con "## Subtitulo", parrafos claros y listas con "- " cuando ayude. No uses tablas ni bloques de codigo ni HTML. Entrega solo el contenido del documento, sin preambulos como "aqui tienes" ni despedidas.';
@@ -422,6 +423,7 @@
       const html = m.role === 'user' ? escapeHtml(m.content).replace(/\n/g, '<br>') : renderMarkdown(m.content);
       const node = bubbleEl(m.role, html);
       if (Array.isArray(m.media) && m.media.length) appendMedia(node.bub, m.media);
+      if (m.role === 'assistant' && String(m.content || '').trim()) appendFeedback(node.bub, m, c);
       el.messages.appendChild(node.wrap);
     }
     scrollDown();
@@ -689,6 +691,55 @@
     bub.appendChild(card);
   }
 
+  function appendFeedback(bub, message, convo) {
+    const row = document.createElement('div');
+    row.className = 'msg-feedback';
+    const up = document.createElement('button');
+    up.type = 'button'; up.className = 'fb-btn up'; up.setAttribute('aria-label', 'Buena respuesta'); up.title = 'Me gusta';
+    up.innerHTML = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M2 10h3.2v11H2zM22 11a2 2 0 0 0-2-2h-5.1l.9-4.3a1.6 1.6 0 0 0-1.6-1.9c-.45 0-.87.2-1.16.55L8 9.4V21h10a2 2 0 0 0 1.95-1.55l1.95-7A2 2 0 0 0 22 11z"/></svg>';
+    const down = document.createElement('button');
+    down.type = 'button'; down.className = 'fb-btn down'; down.setAttribute('aria-label', 'Mala respuesta'); down.title = 'No me gusta';
+    down.innerHTML = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M22 14h-3.2V3H22zM2 13a2 2 0 0 1 2 2h5.1l-.9 4.3a1.6 1.6 0 0 0 1.6 1.9c.45 0 .87-.2 1.16-.55L16 14.6V3H6a2 2 0 0 0-1.95 1.55l-1.95 7A2 2 0 0 0 2 13z"/></svg>';
+    if (message._feedback === 'up') up.classList.add('on');
+    if (message._feedback === 'down') down.classList.add('on');
+    up.addEventListener('click', () => submitFeedback(message, convo, 'up', up, down));
+    down.addEventListener('click', () => submitFeedback(message, convo, 'down', up, down));
+    row.appendChild(up); row.appendChild(down);
+    bub.appendChild(row);
+  }
+
+  async function submitFeedback(message, convo, rating, upBtn, downBtn) {
+    message._feedback = rating;
+    upBtn.classList.toggle('on', rating === 'up');
+    downBtn.classList.toggle('on', rating === 'down');
+    saveConvos();
+    const token = await ensureToken();
+    const userId = state.session && state.session.user && state.session.user.id;
+    if (!token || !userId) return;
+    let userMsgId = '';
+    const idx = convo.messages.indexOf(message);
+    for (let i = idx - 1; i >= 0; i -= 1) {
+      if (convo.messages[i] && convo.messages[i].role === 'user') { userMsgId = String(convo.messages[i].id || ''); break; }
+    }
+    try {
+      await fetch(FEEDBACK_REST_URL + '?on_conflict=user_id,conversation_id,assistant_message_id', {
+        method: 'POST',
+        headers: { apikey: SB_KEY, Authorization: 'Bearer ' + token, 'Content-Type': 'application/json', Prefer: 'resolution=merge-duplicates,return=minimal' },
+        body: JSON.stringify([{
+          user_id: userId,
+          conversation_id: String(convo.id || 'web').slice(0, 120),
+          conversation_title: String(convo.title || '').slice(0, 180),
+          user_message_id: userMsgId.slice(0, 120),
+          assistant_message_id: String(message.id || '').slice(0, 120),
+          assistant_response: String(message.content || '').slice(0, 30000),
+          rating: rating,
+          source_app: 'lth-ia-web',
+          updated_at: new Date().toISOString()
+        }])
+      });
+    } catch (_) {}
+  }
+
   async function fetchMediaData(mediaId) {
     if (mediaCache[mediaId]) return mediaCache[mediaId];
     const token = await ensureToken();
@@ -871,7 +922,11 @@
     try {
       bub.innerHTML = '<span class="gen-img-loading">🧠 Motor LTH OS pensando<span class="dots"><i>.</i><i>.</i><i>.</i></span></span>';
       const row = await sendOsCommand('ia-ask', { convoId: convo.id, text }, 165000);
-      if (!row || row.status !== 'done') return false;
+      if (!row || row.status !== 'done') {
+        // Emparejamiento perdido (PC reiniciado): vuelve al motor web y pide re-vincular.
+        if (row && row.status === 'denied') { state.engine = 'web'; persistEngine(); }
+        return false;
+      }
       const answer = String((row.result || {}).text || '').trim();
       if (!answer) return false;
       bub.classList.remove('cursor');
@@ -934,17 +989,41 @@
   async function toggleEngine() {
     if (state.engine === 'os') {
       state.engine = 'web'; persistEngine();
+      el.enginePinEntry.hidden = true;
       setEngineUI(false, '', 'Motor web (estándar)');
       return;
     }
-    setEngineToggleVisual(true, 'busy');
+    setEngineToggleVisual(false, 'busy');
+    el.enginePinEntry.hidden = true;
     el.engineStatus.className = 'engine-status';
     el.engineStatus.textContent = '🔎 Buscando tu PC con LTH OS…';
     const probe = await probeOsEngine();
-    if (!probe.ok) { state.engine = 'web'; persistEngine(); setEngineUI(false, 'warn', '⚠️ No se encontró tu PC. Enciende LTH OS y activa LTH Remote (control) en la misma cuenta.'); return; }
-    if (!probe.allowControl) { state.engine = 'web'; persistEngine(); setEngineUI(false, 'warn', '⚠️ PC encontrado, pero activa "Control" en LTH Remote del PC para usar el motor.'); return; }
-    if (probe.sessionLocked) { state.engine = 'web'; persistEngine(); setEngineUI(false, 'warn', '🔒 PC encontrado pero bloqueado con PIN. Desbloquéalo en el PC.'); return; }
-    state.engine = 'os'; persistEngine(); setEngineUI(true, 'ok', '✅ Conectado al motor LTH OS');
+    if (!probe.ok) {
+      setEngineUI(false, 'warn', '⚠️ No se encontró tu PC. Enciende LTH OS y activa LTH Remote, en la misma cuenta.');
+      return;
+    }
+    // PC en línea: pedir el PIN de 6 dígitos que se muestra en LTH IA del PC.
+    el.engineStatus.className = 'engine-status';
+    el.engineStatus.textContent = '🔐 Tu PC está listo. En LTH IA del PC toca "vincular móvil" y escribe aquí el código.';
+    el.enginePinEntry.hidden = false;
+    el.enginePinInput.value = '';
+    try { el.enginePinInput.focus(); } catch (_) {}
+  }
+
+  async function connectEngineWithPin(pin) {
+    el.engineStatus.className = 'engine-status';
+    el.engineStatus.textContent = '⏳ Conectando con el motor…';
+    const row = await sendOsCommand('engine-unlock', { pin: pin, deviceId: osDeviceId() }, 12000);
+    if (row && row.status === 'done' && (row.result || {}).paired) {
+      state.engine = 'os'; persistEngine();
+      el.enginePinEntry.hidden = true;
+      setEngineUI(true, 'ok', '✅ Conectado al motor LTH OS');
+      return true;
+    }
+    const err = (row && row.error) ? row.error : 'No se pudo conectar. Revisa el PIN.';
+    el.engineStatus.className = 'engine-status warn';
+    el.engineStatus.textContent = '⚠️ ' + err;
+    return false;
   }
 
   function bindApp() {
@@ -960,6 +1039,14 @@
     el.settingsClose.addEventListener('click', closeSettings);
     el.settingsModal.addEventListener('click', (e) => { if (e.target === el.settingsModal) closeSettings(); });
     el.engineToggle.addEventListener('click', toggleEngine);
+    const submitPin = async () => {
+      const pin = String(el.enginePinInput.value || '').replace(/\D/g, '').slice(0, 6);
+      if (pin.length !== 6) { el.engineStatus.className = 'engine-status warn'; el.engineStatus.textContent = '⚠️ El PIN debe tener 6 dígitos.'; return; }
+      el.enginePinSubmit.disabled = true;
+      try { await connectEngineWithPin(pin); } finally { el.enginePinSubmit.disabled = false; }
+    };
+    el.enginePinSubmit.addEventListener('click', submitPin);
+    el.enginePinInput.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); submitPin(); } });
     el.creditsBtn.addEventListener('click', () => { el.creditsPanel.hidden = !el.creditsPanel.hidden; });
     document.addEventListener('click', (e) => {
       if (!el.creditsPanel.hidden && !el.creditsPanel.contains(e.target) && !el.creditsBtn.contains(e.target)) el.creditsPanel.hidden = true;
@@ -1085,6 +1172,7 @@
     el.newChatBtn = $('#newChatBtn'); el.closeDrawerBtn = $('#closeDrawerBtn'); el.logoutBtn = $('#logoutBtn');
     el.settingsBtn = $('#settingsBtn'); el.settingsModal = $('#settingsModal'); el.settingsClose = $('#settingsClose');
     el.engineToggle = $('#engineToggle'); el.engineStatus = $('#engineStatus'); el.engineDot = $('#engineDot');
+    el.enginePinEntry = $('#enginePinEntry'); el.enginePinInput = $('#enginePinInput'); el.enginePinSubmit = $('#enginePinSubmit');
     el.userName = $('#userName'); el.userEmail = $('#userEmail'); el.userAvatar = $('#userAvatar');
     el.messages = $('#messages'); el.welcome = $('#welcome'); el.suggestions = $('#suggestions');
     el.composer = $('#composer'); el.input = $('#input'); el.sendBtn = $('#sendBtn');
