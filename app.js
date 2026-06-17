@@ -34,6 +34,13 @@
   const IMAGE_SYSTEM_PROMPT = 'Eres Mady, la asistente de LTH OS. Genera directamente la imagen que describe el usuario y acompanala con una frase breve en espanol. La imagen debe tratar EXACTAMENTE lo pedido; no agregues marcas, textos ni elementos no solicitados (nunca generes productos LTH si no se piden). Si el usuario pide texto dentro de la imagen, respetalo exactamente.';
   const PDF_SYSTEM_PROMPT = 'Eres Mady, la asistente de LTH OS. El usuario quiere un documento que se exportara a PDF. Redacta el documento COMPLETO en espanol, bien estructurado en Markdown simple: una primera linea con el titulo usando "# Titulo", luego secciones con "## Subtitulo", parrafos claros y listas con "- " cuando ayude. No uses tablas ni bloques de codigo ni HTML. Entrega solo el contenido del documento, sin preambulos como "aqui tienes" ni despedidas.';
 
+  // Motor LTH OS (PC): se enruta por la cola remote_commands (accion ia-ask),
+  // igual que LTH Remote. El Mady completo del PC responde.
+  const REMOTE_CMD_URL = SB_URL + '/rest/v1/remote_commands';
+  const ENGINE_KEY = 'lth_ia_web_engine_v1';
+  const OSDEV_KEY = 'lth_ia_web_osdevice_v1';
+  const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
   /* ───────────────────────── Estado ───────────────────────── */
   const state = {
     session: null,     // { access_token, refresh_token, expires_at, user }
@@ -45,7 +52,8 @@
     tombstones: [],
     busy: false,
     abort: null,
-    authMode: 'login'
+    authMode: 'login',
+    engine: 'web'
   };
 
   /* ───────────────────────── Utils ───────────────────────── */
@@ -461,7 +469,8 @@
     const { wrap, bub } = bubbleEl('ai',
       wantImage ? '<span class="gen-img-loading">🎨 Generando imagen<span class="dots"><i>.</i><i>.</i><i>.</i></span></span>'
         : wantPdf ? '<span class="gen-img-loading">📄 Preparando PDF<span class="dots"><i>.</i><i>.</i><i>.</i></span></span>'
-          : '<span class="typing"><i></i><i></i><i></i></span>');
+          : state.engine === 'os' ? '<span class="gen-img-loading">🧠 Motor LTH OS pensando<span class="dots"><i>.</i><i>.</i><i>.</i></span></span>'
+            : '<span class="typing"><i></i><i></i><i></i></span>');
     el.messages.appendChild(wrap); scrollDown();
 
     setBusy(true);
@@ -475,6 +484,12 @@
       if (wantPdf) {
         await generatePdf(text, convo, wrap, bub);
         return;
+      }
+      // Si el usuario activo el Motor LTH OS, la pregunta pasa primero por el PC.
+      if (state.engine === 'os') {
+        const ok = await askPcEngine(text, convo, bub);
+        if (ok) return;
+        bub.innerHTML = '<span class="typing"><i></i><i></i><i></i></span>';
       }
 
       const history = convo.messages.slice(-HISTORY_LIMIT).map((m) => ({ role: m.role, content: m.content }));
@@ -798,6 +813,76 @@
     saveConvos(); renderMessages(); renderConvoList(); syncPushOne(convo); fetchStatus();
   }
 
+  /* ─────────────────── Motor LTH OS (PC) ─────────────────── */
+  function osDeviceId() {
+    let id = '';
+    try { id = localStorage.getItem(OSDEV_KEY) || ''; } catch (_) {}
+    if (!id) { id = 'web_' + Math.random().toString(36).slice(2, 10) + Date.now().toString(36); try { localStorage.setItem(OSDEV_KEY, id); } catch (_) {} }
+    return id;
+  }
+
+  // Inserta un comando en remote_commands y hace polling del resultado. Si el PC
+  // no recoge el comando en ~8s (sigue 'pending'), lo damos por desconectado.
+  async function sendOsCommand(action, params, waitMs = 30000) {
+    const token = await ensureToken();
+    const userId = state.session && state.session.user && state.session.user.id;
+    if (!token || !userId) return null;
+    const headers = { apikey: SB_KEY, Authorization: 'Bearer ' + token, 'Content-Type': 'application/json' };
+    let id = null;
+    try {
+      const res = await fetch(REMOTE_CMD_URL + '?select=id', {
+        method: 'POST',
+        headers: Object.assign({}, headers, { Prefer: 'return=representation' }),
+        body: JSON.stringify([{ user_id: userId, device_id: osDeviceId(), action, params: params || {} }])
+      });
+      if (!res.ok) return null;
+      const rows = await res.json().catch(() => []);
+      id = rows && rows[0] && rows[0].id;
+    } catch (_) { return null; }
+    if (!id) return null;
+
+    const started = Date.now();
+    let sawRunning = false;
+    while (Date.now() - started < waitMs) {
+      await sleep(800);
+      try {
+        const pr = await fetch(REMOTE_CMD_URL + '?select=status,result,error&id=eq.' + encodeURIComponent(id), { headers });
+        const prows = await pr.json().catch(() => []);
+        const row = prows && prows[0];
+        if (row) {
+          if (row.status === 'running') sawRunning = true;
+          if (row.status === 'done' || row.status === 'error' || row.status === 'denied') return row;
+          if (!sawRunning && Date.now() - started > 8000) return null; // el PC no lo recogio
+        }
+      } catch (_) {}
+    }
+    return null;
+  }
+
+  async function probeOsEngine() {
+    const row = await sendOsCommand('diagnostic-ping', { from: 'web' }, 9000);
+    if (!row || row.status !== 'done') return { ok: false };
+    const r = row.result || {};
+    return { ok: true, allowControl: r.allowControl === true, sessionLocked: r.sessionLocked === true, pinConfigured: r.pinConfigured === true };
+  }
+
+  // Enruta la pregunta al motor completo de Mady en el PC. Devuelve true si respondio.
+  async function askPcEngine(text, convo, bub) {
+    try {
+      bub.innerHTML = '<span class="gen-img-loading">🧠 Motor LTH OS pensando<span class="dots"><i>.</i><i>.</i><i>.</i></span></span>';
+      const row = await sendOsCommand('ia-ask', { convoId: convo.id, text }, 165000);
+      if (!row || row.status !== 'done') return false;
+      const answer = String((row.result || {}).text || '').trim();
+      if (!answer) return false;
+      bub.classList.remove('cursor');
+      bub.innerHTML = renderMarkdown(answer);
+      convo.messages.push({ id: uid(), role: 'assistant', content: answer, ts: Date.now() });
+      convo.updated = Date.now();
+      saveConvos(); renderConvoList(); syncPushOne(convo); fetchStatus();
+      return true;
+    } catch (_) { return false; }
+  }
+
   function mergeCredits(base, extra) {
     if (!extra) return base;
     const b = base || {};
@@ -827,6 +912,41 @@
   function openDrawer() { el.drawer.hidden = false; el.scrim.hidden = false; }
   function closeDrawer() { el.drawer.hidden = true; el.scrim.hidden = true; }
 
+  /* ─────────────────── Configuración ─────────────────── */
+  function openSettings() {
+    el.settingsModal.hidden = false;
+    const on = state.engine === 'os';
+    setEngineToggleVisual(on);
+    el.engineStatus.className = 'engine-status' + (on ? ' ok' : '');
+    el.engineStatus.textContent = on ? '✅ Motor LTH OS activado' : 'Motor web (estándar)';
+  }
+  function closeSettings() { el.settingsModal.hidden = true; }
+  function persistEngine() { try { localStorage.setItem(ENGINE_KEY, state.engine); } catch (_) {} }
+  function setEngineToggleVisual(on, dot) {
+    el.engineToggle.setAttribute('aria-checked', on ? 'true' : 'false');
+    el.engineDot.className = 'eng-dot ' + (dot || (on ? 'on' : 'off'));
+  }
+  function setEngineUI(on, statusClass, statusText) {
+    setEngineToggleVisual(on);
+    el.engineStatus.className = 'engine-status' + (statusClass ? ' ' + statusClass : '');
+    el.engineStatus.textContent = statusText;
+  }
+  async function toggleEngine() {
+    if (state.engine === 'os') {
+      state.engine = 'web'; persistEngine();
+      setEngineUI(false, '', 'Motor web (estándar)');
+      return;
+    }
+    setEngineToggleVisual(true, 'busy');
+    el.engineStatus.className = 'engine-status';
+    el.engineStatus.textContent = '🔎 Buscando tu PC con LTH OS…';
+    const probe = await probeOsEngine();
+    if (!probe.ok) { state.engine = 'web'; persistEngine(); setEngineUI(false, 'warn', '⚠️ No se encontró tu PC. Enciende LTH OS y activa LTH Remote (control) en la misma cuenta.'); return; }
+    if (!probe.allowControl) { state.engine = 'web'; persistEngine(); setEngineUI(false, 'warn', '⚠️ PC encontrado, pero activa "Control" en LTH Remote del PC para usar el motor.'); return; }
+    if (probe.sessionLocked) { state.engine = 'web'; persistEngine(); setEngineUI(false, 'warn', '🔒 PC encontrado pero bloqueado con PIN. Desbloquéalo en el PC.'); return; }
+    state.engine = 'os'; persistEngine(); setEngineUI(true, 'ok', '✅ Conectado al motor LTH OS');
+  }
+
   function bindApp() {
     el.menuBtn.addEventListener('click', () => {
       if (el.drawer.hidden) { renderConvoList(); openDrawer(); } else closeDrawer();
@@ -836,6 +956,10 @@
     el.newChatBtn.addEventListener('click', newConvo);
     el.newChatTop.addEventListener('click', newConvo);
     el.logoutBtn.addEventListener('click', logout);
+    el.settingsBtn.addEventListener('click', () => { closeDrawer(); openSettings(); });
+    el.settingsClose.addEventListener('click', closeSettings);
+    el.settingsModal.addEventListener('click', (e) => { if (e.target === el.settingsModal) closeSettings(); });
+    el.engineToggle.addEventListener('click', toggleEngine);
     el.creditsBtn.addEventListener('click', () => { el.creditsPanel.hidden = !el.creditsPanel.hidden; });
     document.addEventListener('click', (e) => {
       if (!el.creditsPanel.hidden && !el.creditsPanel.contains(e.target) && !el.creditsBtn.contains(e.target)) el.creditsPanel.hidden = true;
@@ -921,6 +1045,7 @@
     el.userEmail.textContent = email;
     el.userAvatar.textContent = (name[0] || 'L').toUpperCase();
 
+    try { state.engine = localStorage.getItem(ENGINE_KEY) === 'os' ? 'os' : 'web'; } catch (_) { state.engine = 'web'; }
     loadConvos();
     state.activeId = state.convos[0] ? state.convos[0].id : null;
     renderConvoList(); renderMessages();
@@ -958,6 +1083,8 @@
     el.cpWindow = $('#cpWindow'); el.cpWindowTxt = $('#cpWindowTxt'); el.cpNote = $('#cpNote');
     el.drawer = $('#drawer'); el.scrim = $('#scrim'); el.convoList = $('#convoList');
     el.newChatBtn = $('#newChatBtn'); el.closeDrawerBtn = $('#closeDrawerBtn'); el.logoutBtn = $('#logoutBtn');
+    el.settingsBtn = $('#settingsBtn'); el.settingsModal = $('#settingsModal'); el.settingsClose = $('#settingsClose');
+    el.engineToggle = $('#engineToggle'); el.engineStatus = $('#engineStatus'); el.engineDot = $('#engineDot');
     el.userName = $('#userName'); el.userEmail = $('#userEmail'); el.userAvatar = $('#userAvatar');
     el.messages = $('#messages'); el.welcome = $('#welcome'); el.suggestions = $('#suggestions');
     el.composer = $('#composer'); el.input = $('#input'); el.sendBtn = $('#sendBtn');

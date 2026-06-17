@@ -119,7 +119,10 @@
             <span id="userEmail">—</span>
           </div>
         </div>
-        <button id="logoutBtn" class="mini-btn ghost" type="button">Salir</button>
+        <div class="foot-actions">
+          <button id="settingsBtn" class="mini-btn ghost" type="button" aria-label="Configuración" title="Configuración">⚙️</button>
+          <button id="logoutBtn" class="mini-btn ghost" type="button">Salir</button>
+        </div>
       </div>
     </aside>
     <div id="scrim" class="scrim" hidden></div>
@@ -150,6 +153,25 @@
       </div>
       <p class="composer-hint" id="composerHint">LTH IA puede equivocarse. Verifica información importante.</p>
     </form>
+
+    <!-- Configuración -->
+    <div id="settingsModal" class="settings-modal" hidden>
+      <div class="settings-card">
+        <div class="settings-head">
+          <strong>Configuración</strong>
+          <button id="settingsClose" class="us-more" type="button" aria-label="Cerrar">✕</button>
+        </div>
+        <div class="setting-row">
+          <div class="setting-info">
+            <strong>Motor LTH OS <span id="engineDot" class="eng-dot off"></span></strong>
+            <span>Conecta con el motor completo de Mady en tu PC para mejor funcionamiento.</span>
+          </div>
+          <button id="engineToggle" class="switch" type="button" role="switch" aria-checked="false"><i></i></button>
+        </div>
+        <div id="engineStatus" class="engine-status">Motor web (estándar)</div>
+        <p class="settings-note">Al activarlo, tus preguntas pasan primero por <b>Mady de LTH OS</b> (con router y memoria), en vez del motor básico de la web. Requiere tu <b>PC encendido</b> con <b>LTH OS</b> y <b>LTH Remote (control)</b> activado, en la misma cuenta. Si el PC no responde, Mady contesta en modo web automáticamente.</p>
+      </div>
+    </div>
   </main>
 
   <script src="./config.js"></script>
