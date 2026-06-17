@@ -54,7 +54,9 @@
     busy: false,
     abort: null,
     authMode: 'login',
-    engine: 'web'
+    engine: 'web',
+    osConnected: true,
+    presenceTimer: null
   };
 
   /* ───────────────────────── Utils ───────────────────────── */
@@ -924,18 +926,48 @@
       const row = await sendOsCommand('ia-ask', { convoId: convo.id, text }, 165000);
       if (!row || row.status !== 'done') {
         // Emparejamiento perdido (PC reiniciado): vuelve al motor web y pide re-vincular.
-        if (row && row.status === 'denied') { state.engine = 'web'; persistEngine(); }
+        if (row && row.status === 'denied') { state.engine = 'web'; persistEngine(); stopEnginePresence(); }
+        state.osConnected = false; renderEngineBadge();
         return false;
       }
       const answer = String((row.result || {}).text || '').trim();
-      if (!answer) return false;
+      if (!answer) { state.osConnected = false; renderEngineBadge(); return false; }
       bub.classList.remove('cursor');
       bub.innerHTML = renderMarkdown(answer);
       convo.messages.push({ id: uid(), role: 'assistant', content: answer, ts: Date.now() });
       convo.updated = Date.now();
       saveConvos(); renderConvoList(); syncPushOne(convo); fetchStatus();
+      state.osConnected = true; renderEngineBadge();
       return true;
-    } catch (_) { return false; }
+    } catch (_) { state.osConnected = false; renderEngineBadge(); return false; }
+  }
+
+  function renderEngineBadge() {
+    const b = el.engineBadge;
+    if (!b) return;
+    if (state.engine !== 'os') { b.hidden = true; return; }
+    b.hidden = false;
+    if (state.osConnected === false) { b.className = 'engine-badge off'; b.textContent = '● LTH OS sin conexión'; }
+    else { b.className = 'engine-badge on'; b.textContent = '● LTH OS'; }
+  }
+
+  function stopEnginePresence() {
+    try { clearInterval(state.presenceTimer); } catch (_) {}
+    state.presenceTimer = null;
+  }
+
+  function startEnginePresence() {
+    stopEnginePresence();
+    if (state.engine !== 'os') return;
+    const tick = async () => {
+      if (state.engine !== 'os') { stopEnginePresence(); return; }
+      if (state.busy) return; // no interferir mientras Mady responde
+      const probe = await probeOsEngine();
+      state.osConnected = Boolean(probe.ok);
+      renderEngineBadge();
+    };
+    state.presenceTimer = setInterval(tick, 40000);
+    void tick();
   }
 
   function mergeCredits(base, extra) {
@@ -990,7 +1022,9 @@
     if (state.engine === 'os') {
       state.engine = 'web'; persistEngine();
       el.enginePinEntry.hidden = true;
+      stopEnginePresence();
       setEngineUI(false, '', 'Motor web (estándar)');
+      renderEngineBadge();
       return;
     }
     setEngineToggleVisual(false, 'busy');
@@ -1016,8 +1050,10 @@
     const row = await sendOsCommand('engine-unlock', { pin: pin, deviceId: osDeviceId() }, 12000);
     if (row && row.status === 'done' && (row.result || {}).paired) {
       state.engine = 'os'; persistEngine();
+      state.osConnected = true;
       el.enginePinEntry.hidden = true;
       setEngineUI(true, 'ok', '✅ Conectado al motor LTH OS');
+      renderEngineBadge(); startEnginePresence();
       return true;
     }
     const err = (row && row.error) ? row.error : 'No se pudo conectar. Revisa el PIN.';
@@ -1133,6 +1169,9 @@
     el.userAvatar.textContent = (name[0] || 'L').toUpperCase();
 
     try { state.engine = localStorage.getItem(ENGINE_KEY) === 'os' ? 'os' : 'web'; } catch (_) { state.engine = 'web'; }
+    state.osConnected = true;
+    renderEngineBadge();
+    if (state.engine === 'os') startEnginePresence();
     loadConvos();
     state.activeId = state.convos[0] ? state.convos[0].id : null;
     renderConvoList(); renderMessages();
@@ -1146,7 +1185,9 @@
     const token = state.session && state.session.access_token;
     if (token) { fetch(AUTH_URL + '/logout', { method: 'POST', headers: { apikey: SB_KEY, Authorization: 'Bearer ' + token } }).catch(() => {}); }
     clearSession();
+    stopEnginePresence();
     state.convos = []; state.activeId = null; state.credits = null;
+    if (el.engineBadge) el.engineBadge.hidden = true;
     closeDrawer();
     el.appScreen.hidden = true;
     el.authScreen.hidden = false;
@@ -1161,7 +1202,7 @@
     el.authName = $('#authName'); el.authNameField = $('#authNameField');
     el.authSubmit = $('#authSubmit'); el.authBtnLabel = el.authSubmit.querySelector('.btn-label');
     el.authSpinner = el.authSubmit.querySelector('.btn-spinner'); el.authMsg = $('#authMsg');
-    el.menuBtn = $('#menuBtn'); el.statusDot = $('#statusDot'); el.modelLabel = $('#modelLabel');
+    el.menuBtn = $('#menuBtn'); el.statusDot = $('#statusDot'); el.modelLabel = $('#modelLabel'); el.engineBadge = $('#engineBadge');
     el.creditsBtn = $('#creditsBtn'); el.planTag = $('#planTag');
     el.usageFill = $('#usageFill'); el.usageVal = $('#usageVal'); el.usageLabel = $('#usageLabel');
     el.newChatTop = $('#newChatTop');
