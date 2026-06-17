@@ -28,6 +28,11 @@
     'No inventes datos; si no estas segura, dilo. Eres parte de LTH OS, un sistema operativo de apps creado por el equipo LTH.'
   ].join(' ');
 
+  // Motor de imagen: el MISMO modelo/ruta que usa LTH IA en el OS (edge compartido).
+  const MEDIA_REST_URL = SB_URL + '/rest/v1/ia_media';
+  const IMAGE_MODEL = 'google/gemini-3.1-flash-image-preview';
+  const IMAGE_SYSTEM_PROMPT = 'Eres Mady, la asistente de LTH OS. Genera directamente la imagen que describe el usuario y acompanala con una frase breve en espanol. La imagen debe tratar EXACTAMENTE lo pedido; no agregues marcas, textos ni elementos no solicitados (nunca generes productos LTH si no se piden). Si el usuario pide texto dentro de la imagen, respetalo exactamente.';
+
   /* ───────────────────────── Estado ───────────────────────── */
   const state = {
     session: null,     // { access_token, refresh_token, expires_at, user }
@@ -276,7 +281,7 @@
           state.convos.push({
             id, title: String(row.title || '').trim() || 'Chat', updated: Date.parse(row.updated_at) || Date.now(),
             created: new Date(Number(remoteMsgs[0] && remoteMsgs[0].ts) || Date.now()).toISOString(),
-            messages: remoteMsgs.map((m) => ({ id: m.id || uid(), role: m.role, content: String(m.content || ''), ts: Number(m.ts) || Date.now() }))
+            messages: remoteMsgs.map((m) => ({ id: m.id || uid(), role: m.role, content: String(m.content || ''), ts: Number(m.ts) || Date.now(), media: Array.isArray(m.media) ? m.media : undefined }))
           });
           changed = true; continue;
         }
@@ -284,7 +289,7 @@
         for (const m of remoteMsgs) {
           const key = m.role + '|' + (Number(m.ts) || 0) + '|' + String(m.content || '').slice(0, 60);
           if (known.has(key)) continue;
-          c.messages.push({ id: m.id || uid(), role: m.role, content: String(m.content || ''), ts: Number(m.ts) || Date.now() });
+          c.messages.push({ id: m.id || uid(), role: m.role, content: String(m.content || ''), ts: Number(m.ts) || Date.now(), media: Array.isArray(m.media) ? m.media : undefined });
           known.add(key); changed = true;
         }
       }
@@ -302,7 +307,11 @@
     const row = {
       id: convo.id,
       title: String(convo.title || '').slice(0, 160),
-      messages: convo.messages.slice(-120).map((m) => ({ id: m.id, role: m.role, content: String(m.content || '').slice(0, 20000), ts: m.ts })),
+      messages: convo.messages.slice(-120).map((m) => {
+        const r = { id: m.id, role: m.role, content: String(m.content || '').slice(0, 20000), ts: m.ts };
+        if (Array.isArray(m.media) && m.media.length) r.media = m.media;
+        return r;
+      }),
       source: 'web',
       updated_at: new Date().toISOString()
     };
@@ -402,7 +411,9 @@
     if (!c || !c.messages.length) { el.messages.appendChild(el.welcome); el.welcome.hidden = false; return; }
     for (const m of c.messages) {
       const html = m.role === 'user' ? escapeHtml(m.content).replace(/\n/g, '<br>') : renderMarkdown(m.content);
-      el.messages.appendChild(bubbleEl(m.role, html).wrap);
+      const node = bubbleEl(m.role, html);
+      if (Array.isArray(m.media) && m.media.length) appendMedia(node.bub, m.media);
+      el.messages.appendChild(node.wrap);
     }
     scrollDown();
   }
@@ -433,16 +444,32 @@
     el.input.value = ''; autoGrow();
     scrollDown();
 
-    // Burbuja de respuesta con indicador de tipeo
-    const { wrap, bub } = bubbleEl('ai', '<span class="typing"><i></i><i></i><i></i></span>');
+    // Mismo criterio que el OS: detecta si el usuario pidio una imagen.
+    const wantImage = looksLikeImageRequest(text);
+    if (wantImage && !canUseImages()) {
+      const note = 'La generacion de imagenes es del plan **Pro**. Con tu plan actual puedo ayudarte con texto; mejora a Pro para crear imagenes.';
+      convo.messages.push({ id: uid(), role: 'assistant', content: note, ts: Date.now() });
+      convo.updated = Date.now();
+      saveConvos(); renderMessages(); renderConvoList(); syncPushOne(convo);
+      return;
+    }
+
+    // Burbuja de respuesta: texto = tipeo, imagen = "generando".
+    const { wrap, bub } = bubbleEl('ai', wantImage
+      ? '<span class="gen-img-loading">🎨 Generando imagen<span class="dots"><i>.</i><i>.</i><i>.</i></span></span>'
+      : '<span class="typing"><i></i><i></i><i></i></span>');
     el.messages.appendChild(wrap); scrollDown();
 
     setBusy(true);
     state.abort = new AbortController();
 
-    const history = convo.messages.slice(-HISTORY_LIMIT).map((m) => ({ role: m.role, content: m.content }));
-
     try {
+      if (wantImage) {
+        await generateImage(text, convo, wrap, bub);
+        return;
+      }
+
+      const history = convo.messages.slice(-HISTORY_LIMIT).map((m) => ({ role: m.role, content: m.content }));
       let started = false;
       const result = await streamChat(history, (full) => {
         if (!started) { started = true; bub.classList.add('cursor'); }
@@ -476,6 +503,128 @@
     } finally {
       setBusy(false);
       state.abort = null;
+    }
+  }
+
+  /* ─────────────────── Imagenes (motor compartido) ─────────────────── */
+  const mediaCache = {};
+
+  function looksLikeImageRequest(text) {
+    const t = String(text || '').toLowerCase();
+    if (/\b(no (generes|crees|hagas)|sin)\b[^.]{0,24}\b(imagen|foto|logo)\b/.test(t)) return false;
+    return /\b(gener[ao]|crea(me|la)?|haz(me|la)?|dibuj[ao]|dise[nñ]a|ilustra|render(iza)?|imagina|pinta)\b[^.]{0,44}\b(imagen|imagenes|foto|fotos|ilustracion|dibujo|logo|logotipo|banner|portada|wallpaper|fondo|render|poster|afiche|icono|avatar|arte|grafico)\b/.test(t)
+      || /\b(imagen|ilustracion|dibujo|logo|banner|portada|wallpaper|render|poster|afiche)\b\s+(de|del|para|con|sobre)\b/.test(t)
+      || /^\s*(imagen|foto|dibujo|logo)\s*[:\-]/.test(t);
+  }
+
+  function canUseImages() {
+    const plan = String((state.credits && state.credits.plan) || 'free').toLowerCase();
+    return ['pro', 'studio', 'ultra'].includes(plan) && (state.credits ? state.credits.plan_active !== false : true);
+  }
+
+  function parseImageMime(url) {
+    const m = String(url || '').match(/^data:([^;]+);base64,/i);
+    return m ? m[1] : 'image/png';
+  }
+
+  // Guarda el medio en la BD (tabla ia_media, se borra solo a las 24h). Devuelve {id, expires_at}.
+  async function storeMedia({ convoId, kind, mime, title, prompt, src }) {
+    const token = await ensureToken();
+    if (!token) return null;
+    const value = String(src || '');
+    if (!value || value.length > 7500000) return null; // tope ~7.5MB por fila
+    try {
+      const res = await fetch(MEDIA_REST_URL + '?select=id,expires_at', {
+        method: 'POST',
+        headers: { apikey: SB_KEY, Authorization: 'Bearer ' + token, 'Content-Type': 'application/json', Prefer: 'return=representation' },
+        body: JSON.stringify([{ conversation_id: convoId || null, kind, mime: mime || 'image/png', title: (title || '').slice(0, 160), prompt: (prompt || '').slice(0, 2000), data_base64: value, bytes: value.length }])
+      });
+      if (!res.ok) return null;
+      const rows = await res.json().catch(() => []);
+      return rows && rows[0] ? rows[0] : null;
+    } catch (_) { return null; }
+  }
+
+  async function loadMediaImage(imgEl, capEl, mediaId) {
+    if (mediaCache[mediaId]) { imgEl.src = mediaCache[mediaId]; return; }
+    const token = await ensureToken();
+    if (!token) return;
+    try {
+      const res = await fetch(MEDIA_REST_URL + '?select=data_base64,expires_at&id=eq.' + encodeURIComponent(mediaId), {
+        headers: { apikey: SB_KEY, Authorization: 'Bearer ' + token }
+      });
+      const rows = await res.json().catch(() => []);
+      if (rows && rows[0] && rows[0].data_base64) {
+        mediaCache[mediaId] = rows[0].data_base64;
+        imgEl.src = rows[0].data_base64;
+      } else {
+        imgEl.remove();
+        if (capEl) capEl.textContent = '🗑️ Imagen expirada (se borran a las 24 h)';
+      }
+    } catch (_) {}
+  }
+
+  async function generateImage(prompt, convo, wrap, bub) {
+    const res = await callEdge({
+      action: 'chat',
+      model: IMAGE_MODEL,
+      routerMode: 'image',
+      routerHint: 'image',
+      modalities: ['image', 'text'],
+      image_config: { aspect_ratio: '1:1', image_size: '1K' },
+      maxTokens: 1200,
+      temperature: 0.5,
+      system: IMAGE_SYSTEM_PROMPT,
+      messages: [{ role: 'user', content: prompt }]
+    }, state.abort && state.abort.signal);
+
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok || data.success === false) {
+      if (data && data.credits) { state.credits = mergeCredits(state.credits, data.credits); renderCredits(); }
+      throw ApiError(data.error || 'No se pudo generar la imagen.', data.status || res.status, data.credits);
+    }
+
+    const urls = (Array.isArray(data.imageUrls) ? data.imageUrls : []).filter(Boolean);
+    const caption = String(data.text || '').trim();
+
+    if (!urls.length) {
+      const txt = caption || 'No pude generar la imagen esta vez. Intenta describirla con mas detalle.';
+      convo.messages.push({ id: uid(), role: 'assistant', content: txt, ts: Date.now() });
+      convo.updated = Date.now();
+      saveConvos(); renderMessages(); renderConvoList(); syncPushOne(convo); fetchStatus();
+      return;
+    }
+
+    const media = [];
+    for (const url of urls) {
+      const mime = parseImageMime(url);
+      const stored = await storeMedia({ convoId: convo.id, kind: 'image', mime, title: prompt, prompt, src: url });
+      const id = stored && stored.id ? stored.id : ('local_' + uid());
+      mediaCache[id] = url;
+      media.push({ id: id, kind: 'image', mime: mime });
+    }
+
+    convo.messages.push({ id: uid(), role: 'assistant', content: caption || 'Aqui tienes tu imagen.', media: media, ts: Date.now() });
+    convo.updated = Date.now();
+    saveConvos(); renderMessages(); renderConvoList(); syncPushOne(convo); fetchStatus();
+  }
+
+  function appendMedia(bub, media) {
+    for (const item of media) {
+      if (!item || item.kind !== 'image' || !item.id) continue;
+      const fig = document.createElement('figure');
+      fig.className = 'gen-media';
+      const img = document.createElement('img');
+      img.className = 'gen-img';
+      img.alt = 'Imagen generada por Mady';
+      img.loading = 'lazy';
+      img.addEventListener('click', () => { if (img.src) window.open(img.src, '_blank'); });
+      const cap = document.createElement('figcaption');
+      cap.className = 'media-note';
+      cap.textContent = '🕒 Se guarda 24 h · toca para ampliar';
+      fig.appendChild(img); fig.appendChild(cap);
+      bub.appendChild(fig);
+      loadMediaImage(img, cap, item.id);
     }
   }
 
