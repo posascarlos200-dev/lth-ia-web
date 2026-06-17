@@ -277,6 +277,14 @@ input, textarea { font-family: inherit; }
 .gen-img-loading .dots i { animation: blink 1.2s infinite; font-style: normal; }
 .gen-img-loading .dots i:nth-child(2) { animation-delay: .2s; }
 .gen-img-loading .dots i:nth-child(3) { animation-delay: .4s; }
+/* Tarjeta de PDF generado */
+.gen-pdf { display: flex; align-items: center; gap: 12px; margin: 10px 0 2px; padding: 11px 12px; border-radius: 12px; border: 1px solid var(--line-strong); background: rgba(74,163,255,.06); flex-wrap: wrap; }
+.pdf-ic { flex: none; width: 42px; height: 50px; border-radius: 7px; display: grid; place-items: center; font-family: var(--font-display); font-weight: 700; font-size: 12px; color: #001226; background: linear-gradient(160deg, var(--cyan), var(--cyan-2)); box-shadow: 0 0 14px rgba(74,163,255,.3); }
+.pdf-meta { flex: 1; min-width: 120px; display: flex; flex-direction: column; gap: 2px; }
+.pdf-meta strong { font-size: 13px; color: #eaf3ff; word-break: break-word; }
+.pdf-actions { display: flex; gap: 7px; }
+.pdf-btn { background: linear-gradient(120deg, var(--cyan), var(--cyan-2)); color: #001226; border: 0; border-radius: 9px; padding: 8px 13px; font-size: 12px; font-weight: 700; }
+.pdf-btn.ghost { background: transparent; color: var(--cyan); border: 1px solid var(--line-strong); font-weight: 600; }
 .cursor::after { content: '▍'; color: var(--cyan); animation: blink 1s step-end infinite; margin-left: 1px; }
 .typing { display: inline-flex; gap: 4px; padding: 4px 2px; }
 .typing i { width: 7px; height: 7px; border-radius: 50%; background: var(--cyan); opacity: .4; animation: typing 1.2s ease-in-out infinite; }

@@ -32,6 +32,7 @@
   const MEDIA_REST_URL = SB_URL + '/rest/v1/ia_media';
   const IMAGE_MODEL = 'google/gemini-3.1-flash-image-preview';
   const IMAGE_SYSTEM_PROMPT = 'Eres Mady, la asistente de LTH OS. Genera directamente la imagen que describe el usuario y acompanala con una frase breve en espanol. La imagen debe tratar EXACTAMENTE lo pedido; no agregues marcas, textos ni elementos no solicitados (nunca generes productos LTH si no se piden). Si el usuario pide texto dentro de la imagen, respetalo exactamente.';
+  const PDF_SYSTEM_PROMPT = 'Eres Mady, la asistente de LTH OS. El usuario quiere un documento que se exportara a PDF. Redacta el documento COMPLETO en espanol, bien estructurado en Markdown simple: una primera linea con el titulo usando "# Titulo", luego secciones con "## Subtitulo", parrafos claros y listas con "- " cuando ayude. No uses tablas ni bloques de codigo ni HTML. Entrega solo el contenido del documento, sin preambulos como "aqui tienes" ni despedidas.';
 
   /* ───────────────────────── Estado ───────────────────────── */
   const state = {
@@ -444,20 +445,23 @@
     el.input.value = ''; autoGrow();
     scrollDown();
 
-    // Mismo criterio que el OS: detecta si el usuario pidio una imagen.
+    // Mismo criterio que el OS: detecta imagen o PDF.
     const wantImage = looksLikeImageRequest(text);
-    if (wantImage && !canUseImages()) {
-      const note = 'La generacion de imagenes es del plan **Pro**. Con tu plan actual puedo ayudarte con texto; mejora a Pro para crear imagenes.';
+    const wantPdf = !wantImage && looksLikePdfRequest(text);
+    if ((wantImage || wantPdf) && !canUsePremium()) {
+      const what = wantImage ? 'La generacion de imagenes' : 'La generacion de PDF';
+      const note = what + ' es del plan **Pro**. Con tu plan actual puedo ayudarte con texto; mejora a Pro para desbloquearlo.';
       convo.messages.push({ id: uid(), role: 'assistant', content: note, ts: Date.now() });
       convo.updated = Date.now();
       saveConvos(); renderMessages(); renderConvoList(); syncPushOne(convo);
       return;
     }
 
-    // Burbuja de respuesta: texto = tipeo, imagen = "generando".
-    const { wrap, bub } = bubbleEl('ai', wantImage
-      ? '<span class="gen-img-loading">🎨 Generando imagen<span class="dots"><i>.</i><i>.</i><i>.</i></span></span>'
-      : '<span class="typing"><i></i><i></i><i></i></span>');
+    // Burbuja de respuesta segun el tipo.
+    const { wrap, bub } = bubbleEl('ai',
+      wantImage ? '<span class="gen-img-loading">🎨 Generando imagen<span class="dots"><i>.</i><i>.</i><i>.</i></span></span>'
+        : wantPdf ? '<span class="gen-img-loading">📄 Preparando PDF<span class="dots"><i>.</i><i>.</i><i>.</i></span></span>'
+          : '<span class="typing"><i></i><i></i><i></i></span>');
     el.messages.appendChild(wrap); scrollDown();
 
     setBusy(true);
@@ -466,6 +470,10 @@
     try {
       if (wantImage) {
         await generateImage(text, convo, wrap, bub);
+        return;
+      }
+      if (wantPdf) {
+        await generatePdf(text, convo, wrap, bub);
         return;
       }
 
@@ -517,9 +525,16 @@
       || /^\s*(imagen|foto|dibujo|logo)\s*[:\-]/.test(t);
   }
 
-  function canUseImages() {
+  function canUsePremium() {
     const plan = String((state.credits && state.credits.plan) || 'free').toLowerCase();
     return ['pro', 'studio', 'ultra'].includes(plan) && (state.credits ? state.credits.plan_active !== false : true);
+  }
+
+  function looksLikePdfRequest(text) {
+    const t = String(text || '').toLowerCase();
+    if (/\bno\b[^.]{0,20}\bpdf\b/.test(t)) return false;
+    return /\bpdf\b/.test(t)
+      || /\b(gener[ao]|crea(me)?|haz(me)?|arma(me)?|prepara(me)?|redacta(me)?|elabora|escribe(me)?|dame)\b[^.]{0,46}\b(documento|reporte|informe|guia|manual|ensayo|carta|contrato|propuesta|articulo|resumen escrito|dossier)\b/.test(t);
   }
 
   function parseImageMime(url) {
@@ -611,21 +626,176 @@
 
   function appendMedia(bub, media) {
     for (const item of media) {
-      if (!item || item.kind !== 'image' || !item.id) continue;
-      const fig = document.createElement('figure');
-      fig.className = 'gen-media';
-      const img = document.createElement('img');
-      img.className = 'gen-img';
-      img.alt = 'Imagen generada por Mady';
-      img.loading = 'lazy';
-      img.addEventListener('click', () => { if (img.src) window.open(img.src, '_blank'); });
-      const cap = document.createElement('figcaption');
-      cap.className = 'media-note';
-      cap.textContent = '🕒 Se guarda 24 h · toca para ampliar';
-      fig.appendChild(img); fig.appendChild(cap);
-      bub.appendChild(fig);
-      loadMediaImage(img, cap, item.id);
+      if (!item || !item.id) continue;
+      if (item.kind === 'image') appendImageMedia(bub, item);
+      else if (item.kind === 'pdf') appendPdfMedia(bub, item);
     }
+  }
+
+  function appendImageMedia(bub, item) {
+    const fig = document.createElement('figure');
+    fig.className = 'gen-media';
+    const img = document.createElement('img');
+    img.className = 'gen-img';
+    img.alt = 'Imagen generada por Mady';
+    img.loading = 'lazy';
+    img.addEventListener('click', () => { if (img.src) window.open(img.src, '_blank'); });
+    const cap = document.createElement('figcaption');
+    cap.className = 'media-note';
+    cap.textContent = '🕒 Se guarda 24 h · toca para ampliar';
+    fig.appendChild(img); fig.appendChild(cap);
+    bub.appendChild(fig);
+    loadMediaImage(img, cap, item.id);
+  }
+
+  function appendPdfMedia(bub, item) {
+    const card = document.createElement('div');
+    card.className = 'gen-pdf';
+    const ic = document.createElement('div'); ic.className = 'pdf-ic'; ic.textContent = 'PDF';
+    const meta = document.createElement('div'); meta.className = 'pdf-meta';
+    const name = document.createElement('strong'); name.textContent = item.title || 'Documento';
+    const note = document.createElement('span'); note.className = 'media-note'; note.textContent = '🕒 Se guarda 24 h';
+    meta.appendChild(name); meta.appendChild(note);
+    const actions = document.createElement('div'); actions.className = 'pdf-actions';
+    const view = document.createElement('button'); view.type = 'button'; view.className = 'pdf-btn'; view.textContent = 'Ver';
+    const dl = document.createElement('button'); dl.type = 'button'; dl.className = 'pdf-btn ghost'; dl.textContent = 'Descargar';
+    view.addEventListener('click', async () => {
+      const data = await fetchMediaData(item.id);
+      if (!data) { note.textContent = '🗑️ PDF expirado (se borran a las 24 h)'; return; }
+      openData(data);
+    });
+    dl.addEventListener('click', async () => {
+      const data = await fetchMediaData(item.id);
+      if (!data) { note.textContent = '🗑️ PDF expirado (se borran a las 24 h)'; return; }
+      downloadData(data, (item.title || 'documento').slice(0, 60) + '.pdf');
+    });
+    actions.appendChild(view); actions.appendChild(dl);
+    card.appendChild(ic); card.appendChild(meta); card.appendChild(actions);
+    bub.appendChild(card);
+  }
+
+  async function fetchMediaData(mediaId) {
+    if (mediaCache[mediaId]) return mediaCache[mediaId];
+    const token = await ensureToken();
+    if (!token) return null;
+    try {
+      const res = await fetch(MEDIA_REST_URL + '?select=data_base64&id=eq.' + encodeURIComponent(mediaId), {
+        headers: { apikey: SB_KEY, Authorization: 'Bearer ' + token }
+      });
+      const rows = await res.json().catch(() => []);
+      if (rows && rows[0] && rows[0].data_base64) { mediaCache[mediaId] = rows[0].data_base64; return rows[0].data_base64; }
+    } catch (_) {}
+    return null;
+  }
+
+  function dataUriToBlob(uri) {
+    const s = String(uri || '');
+    const comma = s.indexOf(',');
+    const meta = s.slice(0, comma);
+    const mime = (meta.match(/data:([^;]+)/) || [])[1] || 'application/octet-stream';
+    const bin = atob(s.slice(comma + 1));
+    const arr = new Uint8Array(bin.length);
+    for (let i = 0; i < bin.length; i += 1) arr[i] = bin.charCodeAt(i);
+    return new Blob([arr], { type: mime });
+  }
+
+  function openData(uri) {
+    try { const url = URL.createObjectURL(dataUriToBlob(uri)); window.open(url, '_blank'); setTimeout(() => URL.revokeObjectURL(url), 60000); }
+    catch (_) { window.open(uri, '_blank'); }
+  }
+
+  function downloadData(uri, filename) {
+    try {
+      const a = document.createElement('a');
+      a.href = URL.createObjectURL(dataUriToBlob(uri));
+      a.download = filename;
+      document.body.appendChild(a); a.click(); a.remove();
+      setTimeout(() => URL.revokeObjectURL(a.href), 60000);
+    } catch (_) {
+      const a = document.createElement('a'); a.href = uri; a.download = filename; a.click();
+    }
+  }
+
+  function ensurePdfSpace(doc, y, need) {
+    const pageH = doc.internal.pageSize.getHeight();
+    if (y + need > pageH - 48) { doc.addPage(); return 56; }
+    return y;
+  }
+
+  function buildPdfFromText(title, md) {
+    const ctor = window.jspdf && window.jspdf.jsPDF;
+    if (!ctor) throw new Error('No se pudo cargar el generador de PDF.');
+    const doc = new ctor({ unit: 'pt', format: 'a4' });
+    const pageW = doc.internal.pageSize.getWidth();
+    const margin = 48;
+    const maxW = pageW - margin * 2;
+
+    doc.setFillColor(6, 16, 28); doc.rect(0, 0, pageW, 70, 'F');
+    doc.setTextColor(120, 180, 255); doc.setFont('helvetica', 'bold'); doc.setFontSize(16);
+    doc.text('LTH IA · Mady', margin, 34);
+    doc.setTextColor(150, 175, 205); doc.setFont('helvetica', 'normal'); doc.setFontSize(9);
+    doc.text(new Date().toLocaleString('es'), margin, 52);
+
+    let y = 100;
+    doc.setTextColor(18, 26, 38); doc.setFont('helvetica', 'bold'); doc.setFontSize(17);
+    for (const ln of doc.splitTextToSize(String(title || 'Documento'), maxW)) { y = ensurePdfSpace(doc, y, 24); doc.text(ln, margin, y); y += 24; }
+    y += 6;
+
+    for (const raw of String(md || '').split('\n')) {
+      const line = raw.replace(/\s+$/, '');
+      if (!line.trim()) { y += 8; continue; }
+      let text = line, size = 11, bold = false, indent = 0;
+      const h = line.match(/^(#{1,3})\s+(.*)$/);
+      const bullet = line.match(/^\s*[-*]\s+(.*)$/);
+      const num = line.match(/^\s*(\d+[.)])\s+(.*)$/);
+      if (h) { size = h[1].length === 1 ? 14 : (h[1].length === 2 ? 12.5 : 11.5); bold = true; text = h[2]; y += 6; }
+      else if (bullet) { text = '•  ' + bullet[1]; indent = 14; }
+      else if (num) { text = num[1] + '  ' + num[2]; indent = 14; }
+      text = text.replace(/\*\*(.+?)\*\*/g, '$1').replace(/\*(.+?)\*/g, '$1').replace(/`(.+?)`/g, '$1');
+      doc.setFont('helvetica', bold ? 'bold' : 'normal'); doc.setFontSize(size); doc.setTextColor(28, 36, 48);
+      const lh = size + 5;
+      for (const w of doc.splitTextToSize(text, maxW - indent)) { y = ensurePdfSpace(doc, y, lh); doc.text(w, margin + indent, y); y += lh; }
+      if (h) y += 3;
+    }
+    return doc.output('datauristring');
+  }
+
+  function derivePdfTitle(userText, docText) {
+    const firstHeading = String(docText || '').match(/^#\s+(.+)$/m);
+    if (firstHeading) return firstHeading[1].trim().slice(0, 90);
+    const t = String(userText || '').replace(/\b(genera|crea|hazme|haz|arma|prepara|redacta|elabora|escribe|dame|un|una|el|la|de|pdf|documento|en|formato|sobre)\b/gi, ' ').replace(/\s+/g, ' ').trim();
+    return (t || 'Documento').slice(0, 80);
+  }
+
+  async function generatePdf(prompt, convo, wrap, bub) {
+    const history = convo.messages.slice(-HISTORY_LIMIT).map((m) => ({ role: m.role, content: m.content }));
+    const res = await callEdge({ action: 'chat', feature: 'pdf', maxTokens: 4000, system: PDF_SYSTEM_PROMPT, messages: history }, state.abort && state.abort.signal);
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok || data.success === false) {
+      if (data && data.credits) { state.credits = mergeCredits(state.credits, data.credits); renderCredits(); }
+      throw ApiError(data.error || 'No se pudo generar el documento.', data.status || res.status, data.credits);
+    }
+    const docText = String(data.text || '').trim();
+    if (!docText) {
+      convo.messages.push({ id: uid(), role: 'assistant', content: 'No pude generar el documento esta vez. Dame mas detalle de lo que quieres en el PDF.', ts: Date.now() });
+      convo.updated = Date.now(); saveConvos(); renderMessages(); renderConvoList(); syncPushOne(convo); fetchStatus();
+      return;
+    }
+    const title = derivePdfTitle(prompt, docText);
+    let dataUri;
+    try { dataUri = buildPdfFromText(title, docText); }
+    catch (_) {
+      // Si el generador de PDF fallara, al menos entrega el texto.
+      convo.messages.push({ id: uid(), role: 'assistant', content: docText, ts: Date.now() });
+      convo.updated = Date.now(); saveConvos(); renderMessages(); renderConvoList(); syncPushOne(convo); fetchStatus();
+      return;
+    }
+    const stored = await storeMedia({ convoId: convo.id, kind: 'pdf', mime: 'application/pdf', title, prompt, src: dataUri });
+    const id = stored && stored.id ? stored.id : ('local_' + uid());
+    mediaCache[id] = dataUri;
+    convo.messages.push({ id: uid(), role: 'assistant', content: 'Aqui tienes tu PDF: **' + title + '**.', media: [{ id: id, kind: 'pdf', mime: 'application/pdf', title: title }], ts: Date.now() });
+    convo.updated = Date.now();
+    saveConvos(); renderMessages(); renderConvoList(); syncPushOne(convo); fetchStatus();
   }
 
   function mergeCredits(base, extra) {
