@@ -55,7 +55,7 @@
     abort: null,
     authMode: 'login',
     engine: 'web',
-    osConnected: true,
+    osConnected: null,   // null = comprobando, true = conectado, false = sin conexion
     presenceTimer: null
   };
 
@@ -947,8 +947,9 @@
     if (!b) return;
     if (state.engine !== 'os') { b.hidden = true; return; }
     b.hidden = false;
-    if (state.osConnected === false) { b.className = 'engine-badge off'; b.textContent = '● LTH OS sin conexión'; }
-    else { b.className = 'engine-badge on'; b.textContent = '● LTH OS'; }
+    if (state.osConnected === true) { b.className = 'engine-badge on'; b.textContent = '● LTH OS'; }
+    else if (state.osConnected === false) { b.className = 'engine-badge off'; b.textContent = '● LTH OS sin conexión'; }
+    else { b.className = 'engine-badge'; b.textContent = '● LTH OS…'; } // comprobando conexion
   }
 
   function stopEnginePresence() {
@@ -1169,7 +1170,7 @@
     el.userAvatar.textContent = (name[0] || 'L').toUpperCase();
 
     try { state.engine = localStorage.getItem(ENGINE_KEY) === 'os' ? 'os' : 'web'; } catch (_) { state.engine = 'web'; }
-    state.osConnected = true;
+    state.osConnected = null; // comprobando hasta el primer sondeo
     renderEngineBadge();
     if (state.engine === 'os') startEnginePresence();
     loadConvos();
