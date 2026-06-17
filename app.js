@@ -916,7 +916,10 @@
     const row = await sendOsCommand('diagnostic-ping', { from: 'web' }, 9000);
     if (!row || row.status !== 'done') return { ok: false };
     const r = row.result || {};
-    return { ok: true, allowControl: r.allowControl === true, sessionLocked: r.sessionLocked === true, pinConfigured: r.pinConfigured === true };
+    // engineReady=false => LTH OS sigue vivo en segundo plano pero con su ventana
+    // cerrada/oculta: lo tratamos como desconectado (es lo que el usuario espera).
+    const ready = r.engineReady !== false;
+    return { ok: ready, engineReady: ready, allowControl: r.allowControl === true, sessionLocked: r.sessionLocked === true, pinConfigured: r.pinConfigured === true };
   }
 
   // Enruta la pregunta al motor completo de Mady en el PC. Devuelve true si respondio.
