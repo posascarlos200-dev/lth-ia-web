@@ -366,6 +366,26 @@ input, textarea { font-family: inherit; }
 .reason-live .reason-dots i { width: 4px; height: 4px; border-radius: 50%; background: #8aa9ff; opacity: .4; animation: blink 1.2s infinite; }
 .reason-live .reason-dots i:nth-child(2) { animation-delay: .2s; }
 .reason-live .reason-dots i:nth-child(3) { animation-delay: .4s; }
+/* Tarjeta de veredicto del juez */
+.verdict-card { margin-top: 11px; padding: 11px 13px; border-radius: 13px; border: 1px solid var(--line); background: rgba(74,163,255,.05); }
+.verdict-card.v-ok { border-color: rgba(74,214,160,.4); background: rgba(74,214,160,.07); }
+.verdict-card.v-warn { border-color: rgba(255,180,60,.4); background: rgba(255,180,60,.07); }
+.verdict-card.v-bad { border-color: rgba(255,92,122,.4); background: rgba(255,92,122,.07); }
+.vc-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+.vc-badge { font-weight: 700; font-size: 11px; letter-spacing: .4px; padding: 4px 10px; border-radius: 999px; white-space: nowrap; }
+.v-ok .vc-badge { color: #00231a; background: #5bffd0; }
+.v-warn .vc-badge { color: #2a1c00; background: #ffd15b; }
+.v-bad .vc-badge { color: #2a0010; background: #ff7a93; }
+.vc-conf { font-size: 11px; color: var(--text-dim); white-space: nowrap; }
+.vc-bar { height: 6px; border-radius: 4px; background: rgba(0,0,0,.35); border: 1px solid var(--line); overflow: hidden; margin: 9px 0 1px; }
+.vc-bar i { display: block; height: 100%; background: linear-gradient(90deg, var(--cyan), var(--cyan-2)); box-shadow: 0 0 8px var(--cyan); }
+.v-ok .vc-bar i { background: linear-gradient(90deg, #4ad6a0, #5bffd0); box-shadow: 0 0 8px rgba(74,214,160,.5); }
+.v-bad .vc-bar i { background: linear-gradient(90deg, #ff7a93, #ff5c7a); }
+.vc-warn { margin-top: 9px; font-size: 11.5px; color: #ffd15b; line-height: 1.5; }
+.vc-sources { margin-top: 10px; display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+.vc-srctitle { font-size: 9.5px; text-transform: uppercase; letter-spacing: 1.2px; color: var(--text-dim); margin-right: 2px; }
+.vc-src { font-size: 11px; padding: 4px 9px; border-radius: 999px; border: 1px solid var(--line-strong); color: var(--cyan-2); background: rgba(74,163,255,.06); text-decoration: none; max-width: 200px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+a.vc-src:active, a.vc-src:hover { border-color: var(--cyan); color: #eaf3ff; }
 @media (min-width: 880px) { .composer-modes { max-width: 820px; margin-inline: auto; } }
 
 /* ════════ PC / pantallas anchas ════════ */

@@ -462,6 +462,7 @@
       const html = m.role === 'user' ? escapeHtml(m.content).replace(/\n/g, '<br>') : renderMarkdown(m.content);
       const node = bubbleEl(m.role, html);
       if (Array.isArray(m.media) && m.media.length) appendMedia(node.bub, m.media);
+      if (m.role === 'assistant' && m.verdict) appendVerdict(node.bub, m.verdict);
       if (m.role === 'assistant' && String(m.content || '').trim()) appendFeedback(node.bub, m, c);
       el.messages.appendChild(node.wrap);
     }
@@ -1104,19 +1105,41 @@
     return { model: 'openai/gpt-5.5', stage: 'chat_simple', temperature: 0.4, system: SYSTEM_PROMPT + brief };
   }
 
-  function verdictFooterMarkdown(j) {
+  function extractVerdict(j) {
     const v = String(j.veredicto || '').toUpperCase();
-    if (!v && j.confianza == null && !(Array.isArray(j.fuentes) && j.fuentes.length)) return '';
-    const label = v === 'APROBADO' ? '✅ Aprobado'
-      : v === 'APROBADO_CON_CORRECCIONES' ? '🛠️ Aprobado con correcciones'
-        : v === 'RECHAZADO' ? '⚠️ Rechazado' : '✓ Revisado';
-    const lines = [];
-    let head = '`' + label + '`';
-    if (j.confianza != null && isFinite(Number(j.confianza))) head += ' · Confianza ' + Math.round(Number(j.confianza)) + '%';
-    lines.push(head);
-    if (Array.isArray(j.fuentes) && j.fuentes.length) lines.push('**Fuentes:** ' + j.fuentes.slice(0, 6).map((s) => String(s)).join(' · '));
-    if (j.advertencia && String(j.advertencia).trim()) lines.push('⚠️ ' + String(j.advertencia).trim());
-    return '\n\n---\n' + lines.join('\n');
+    const conf = (j.confianza != null && isFinite(Number(j.confianza))) ? Math.max(0, Math.min(100, Math.round(Number(j.confianza)))) : null;
+    const fuentes = Array.isArray(j.fuentes) ? j.fuentes.map((s) => String(s).trim()).filter(Boolean).slice(0, 8) : [];
+    const advertencia = j.advertencia ? String(j.advertencia).trim() : '';
+    if (!v && conf == null && !fuentes.length && !advertencia) return null;
+    return { veredicto: v, confianza: conf, fuentes: fuentes, advertencia: advertencia };
+  }
+
+  function appendVerdict(bub, v) {
+    if (!v) return;
+    const tone = v.veredicto === 'APROBADO' ? 'ok' : v.veredicto === 'RECHAZADO' ? 'bad' : 'warn';
+    const label = v.veredicto === 'APROBADO' ? 'Aprobado'
+      : v.veredicto === 'APROBADO_CON_CORRECCIONES' ? 'Aprobado con correcciones'
+        : v.veredicto === 'RECHAZADO' ? 'Rechazado' : 'Revisado';
+    const card = document.createElement('div');
+    card.className = 'verdict-card v-' + tone;
+    let html = '<div class="vc-head"><span class="vc-badge">' + escapeHtml(label) + '</span>';
+    if (v.confianza != null) html += '<span class="vc-conf">Confianza ' + v.confianza + '%</span>';
+    html += '</div>';
+    if (v.confianza != null) html += '<div class="vc-bar"><i style="width:' + v.confianza + '%"></i></div>';
+    if (v.advertencia) html += '<div class="vc-warn">Sin verificar: ' + escapeHtml(v.advertencia) + '</div>';
+    if (v.fuentes && v.fuentes.length) {
+      html += '<div class="vc-sources"><span class="vc-srctitle">Fuentes</span>';
+      html += v.fuentes.map((s) => {
+        const isUrl = /^https?:\/\//i.test(s);
+        const label2 = isUrl ? s.replace(/^https?:\/\//i, '').replace(/\/.*$/, '') : s.slice(0, 40);
+        return isUrl
+          ? '<a href="' + escapeHtml(s) + '" target="_blank" rel="noopener" class="vc-src">' + escapeHtml(label2) + '</a>'
+          : '<span class="vc-src">' + escapeHtml(label2) + '</span>';
+      }).join('');
+      html += '</div>';
+    }
+    card.innerHTML = html;
+    bub.appendChild(card);
   }
 
   // Pipeline premium: IA principal (clasifica + mejora prompt) -> especialista -> juez GLM-5.2.
@@ -1160,13 +1183,14 @@
       temperature: 0.1
     }, signal);
     const j = parseReasonJson(judgeRaw);
-    const finalText = String(j.respuesta_final || draft).trim();
-    const full = (finalText || '_(sin respuesta)_') + verdictFooterMarkdown(j);
+    const finalText = String(j.respuesta_final || draft).trim() || '_(sin respuesta)_';
+    const verdict = extractVerdict(j);
 
-    bub.innerHTML = renderMarkdown(full);
-    convo.messages.push({ id: uid(), role: 'assistant', content: full, ts: Date.now() });
+    const m = { id: uid(), role: 'assistant', content: finalText, ts: Date.now() };
+    if (verdict) m.verdict = verdict;
+    convo.messages.push(m);
     convo.updated = Date.now();
-    saveConvos(); renderConvoList(); syncPushOne(convo); fetchStatus();
+    saveConvos(); renderMessages(); renderConvoList(); syncPushOne(convo); fetchStatus();
   }
 
   async function reasonChat(opts, signal) {
