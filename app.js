@@ -85,7 +85,21 @@
     engine: 'web',
     osConnected: null,   // null = comprobando, true = conectado, false = sin conexion
     presenceTimer: null,
-    reasoning: false
+    reasoning: false,
+    manualModel: 'auto'   // 'auto' = ruteo automatico; o un id de MANUAL_MODELS
+  };
+
+  // Selector de modelo manual (barra de modelos, igual que en LTH OS). 'auto' deja
+  // que el router elija. Los premium requieren plan de pago (el server tambien lo valida).
+  const MANUAL_MODELS = {
+    auto: { label: 'Auto' },
+    flashlite: { label: 'Flash Lite', model: 'google/gemini-2.5-flash-lite', maxTokens: 4000, temperature: 0.2, reasoning: { enabled: true, effort: 'minimal', exclude: true } },
+    sonnet: { label: 'Sonnet 4.6', model: 'anthropic/claude-sonnet-4.6', maxTokens: 16000, temperature: 0.2, reasoning: { enabled: true, effort: 'high', exclude: true }, premium: true },
+    gpt55: { label: 'GPT 5.5', model: 'openai/gpt-5.5', maxTokens: 16000, temperature: 0.2, reasoning: { enabled: true, effort: 'high', exclude: true }, premium: true },
+    glm5: { label: 'GLM 5', model: 'z-ai/glm-5', maxTokens: 16000, temperature: 0.2, reasoning: { enabled: true, effort: 'medium', exclude: true }, premium: true },
+    opus: { label: 'Opus 4.7', model: 'anthropic/claude-opus-4.7', maxTokens: 16000, temperature: 0.2, reasoning: { enabled: true, effort: 'high', exclude: true }, premium: true },
+    fable: { label: 'Fable 5', model: 'anthropic/claude-fable-5', maxTokens: 16000, temperature: 0.2, reasoning: { enabled: true, effort: 'high', exclude: true }, premium: true },
+    image: { label: 'Imagen', image: true, premium: true }
   };
 
   /* ───────────────────────── Utils ───────────────────────── */
@@ -542,21 +556,39 @@
 
       const history = convo.messages.slice(-HISTORY_LIMIT).map((m) => ({ role: m.role, content: m.content }));
 
-      // Pensar en automatico como Mady: clasifica la intencion y elige el modelo.
-      const route = await autoRoute(text, history);
-      if (route && route.action === 'block') {
-        const msg = 'No puedo ayudar con esa solicitud.';
-        bub.innerHTML = renderMarkdown(msg);
-        convo.messages.push({ id: uid(), role: 'assistant', content: msg, ts: Date.now() });
-        convo.updated = Date.now(); saveConvos(); renderConvoList(); syncPushOne(convo);
-        return;
+      // Modelo MANUAL forzado desde la barra de modelos (si no es 'auto').
+      const manual = state.manualModel !== 'auto' ? MANUAL_MODELS[state.manualModel] : null;
+      const manualAllowed = manual && (!manual.premium || canUsePremium());
+      let routeOpts = null;
+      if (manual && !manualAllowed) {
+        // Premium sin plan: aviso y caigo a automatico.
+        setComposerHint('Ese modelo es de un plan de pago. Usando modo automatico.');
+        state.manualModel = 'auto'; renderModelBar();
       }
-      if (route && route.tier === 'image') {
+      if (manualAllowed && manual.image) {
         await generateImage(text, convo, wrap, bub);
         return;
       }
-      const routeOpts = route ? { model: route.model, maxTokens: route.maxTokens, temperature: route.temperature, reasoning: route.reasoning } : null;
-      if (route && route.tier) bub.innerHTML = engineThinkingHtml(route.tier);
+      if (manualAllowed) {
+        routeOpts = { model: manual.model, maxTokens: manual.maxTokens, temperature: manual.temperature, reasoning: manual.reasoning };
+        bub.innerHTML = engineThinkingHtml('premium');
+      } else {
+        // Pensar en automatico como Mady: clasifica la intencion y elige el modelo.
+        const route = await autoRoute(text, history);
+        if (route && route.action === 'block') {
+          const msg = 'No puedo ayudar con esa solicitud.';
+          bub.innerHTML = renderMarkdown(msg);
+          convo.messages.push({ id: uid(), role: 'assistant', content: msg, ts: Date.now() });
+          convo.updated = Date.now(); saveConvos(); renderConvoList(); syncPushOne(convo);
+          return;
+        }
+        if (route && route.tier === 'image') {
+          await generateImage(text, convo, wrap, bub);
+          return;
+        }
+        routeOpts = route ? { model: route.model, maxTokens: route.maxTokens, temperature: route.temperature, reasoning: route.reasoning } : null;
+        if (route && route.tier) bub.innerHTML = engineThinkingHtml(route.tier);
+      }
 
       let started = false;
       const result = await streamChat(history, (full) => {
@@ -1066,6 +1098,22 @@
     return '<span class="gen-img-loading">' + (map[tier] || '✦ Pensando') + '<span class="dots"><i>.</i><i>.</i><i>.</i></span></span>';
   }
 
+  /* ─────────── Barra de modelos (selector manual) ─────────── */
+  let composerHintTimer = null;
+  function setComposerHint(msg) {
+    if (!el.composerHint) return;
+    const original = 'LTH IA puede equivocarse. Verifica información importante.';
+    el.composerHint.textContent = msg;
+    if (composerHintTimer) clearTimeout(composerHintTimer);
+    composerHintTimer = setTimeout(() => { if (el.composerHint) el.composerHint.textContent = original; }, 4000);
+  }
+  function renderModelBar() {
+    if (!el.modelBar) return;
+    el.modelBar.querySelectorAll('[data-model]').forEach((b) => {
+      b.classList.toggle('on', b.getAttribute('data-model') === state.manualModel);
+    });
+  }
+
   /* ─────────── Modo razonamiento (skill -> resolver -> verificar) ─────────── */
   function persistReason() { try { localStorage.setItem(REASON_KEY, state.reasoning ? '1' : '0'); } catch (_) {} }
   function renderReasonBtn() {
@@ -1341,6 +1389,18 @@
       send(el.input.value);
     });
     el.reasonBtn.addEventListener('click', () => { state.reasoning = !state.reasoning; persistReason(); renderReasonBtn(); });
+    if (el.modelBar) {
+      el.modelBar.addEventListener('click', (e) => {
+        const btn = e.target.closest('[data-model]');
+        if (!btn) return;
+        const id = btn.getAttribute('data-model');
+        const m = MANUAL_MODELS[id];
+        if (!m) return;
+        if (m.premium && !canUsePremium()) { setComposerHint('Ese modelo es de un plan de pago.'); return; }
+        state.manualModel = id;
+        renderModelBar();
+      });
+    }
     el.input.addEventListener('input', autoGrow);
     el.input.addEventListener('keydown', (e) => {
       if (e.key === 'Enter' && !e.shiftKey && !e.isComposing) { e.preventDefault(); el.composer.requestSubmit(); }
@@ -1422,6 +1482,8 @@
     // restaura de localStorage para que nunca se dispare solo el pipeline premium.
     state.reasoning = false;
     renderReasonBtn();
+    state.manualModel = 'auto';
+    renderModelBar();
     state.osConnected = null; // comprobando hasta el primer sondeo
     renderEngineBadge();
     if (state.engine === 'os') startEnginePresence();
@@ -1470,6 +1532,7 @@
     el.userName = $('#userName'); el.userEmail = $('#userEmail'); el.userAvatar = $('#userAvatar');
     el.messages = $('#messages'); el.welcome = $('#welcome'); el.suggestions = $('#suggestions');
     el.composer = $('#composer'); el.input = $('#input'); el.sendBtn = $('#sendBtn'); el.reasonBtn = $('#reasonBtn');
+    el.modelBar = $('#modelBar'); el.composerHint = $('#composerHint');
     el.icSend = el.sendBtn.querySelector('.ic-send'); el.icStop = el.sendBtn.querySelector('.ic-stop');
   }
 

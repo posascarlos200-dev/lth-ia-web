@@ -146,6 +146,16 @@
     <!-- Composer -->
     <form id="composer" class="composer">
       <div class="composer-modes">
+        <div class="model-bar" id="modelBar" role="tablist" aria-label="Modelo">
+          <button class="mode-chip on" data-model="auto" type="button">Auto</button>
+          <button class="mode-chip" data-model="flashlite" type="button">Flash Lite</button>
+          <button class="mode-chip" data-model="sonnet" type="button">Sonnet 4.6</button>
+          <button class="mode-chip" data-model="gpt55" type="button">GPT 5.5</button>
+          <button class="mode-chip" data-model="glm5" type="button">GLM 5</button>
+          <button class="mode-chip" data-model="opus" type="button">Opus 4.7</button>
+          <button class="mode-chip" data-model="fable" type="button">Fable 5</button>
+          <button class="mode-chip" data-model="image" type="button">Imagen</button>
+        </div>
         <button id="reasonBtn" class="mode-chip mode-chip-reason" type="button" aria-pressed="false" title="Modo razonamiento (Pro): la IA principal clasifica y mejora tu pedido, el modelo experto responde y un juez lo verifica y pule"><span class="reason-spark"></span>Razonar</button>
       </div>
       <div class="composer-inner">

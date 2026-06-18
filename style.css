@@ -347,7 +347,11 @@ input, textarea { font-family: inherit; }
 .ic-stop { fill: #001226; }
 .send-btn.stopping { background: linear-gradient(120deg, #ff7a93, var(--danger)); }
 .composer-hint { margin: 7px 4px 0; text-align: center; font-size: 10px; color: var(--text-dim); }
-.composer-modes { display: flex; gap: 7px; margin: 0 2px 7px; }
+.composer-modes { display: flex; gap: 7px; margin: 0 2px 7px; align-items: center; }
+.model-bar { display: flex; gap: 6px; overflow-x: auto; flex: 1 1 auto; scrollbar-width: none; padding-bottom: 2px; -webkit-overflow-scrolling: touch; }
+.model-bar::-webkit-scrollbar { display: none; }
+.model-bar .mode-chip { flex: 0 0 auto; }
+.composer-modes > .mode-chip-reason { flex: 0 0 auto; }
 .mode-chip { display: inline-flex; align-items: center; gap: 5px; font-size: 12px; padding: 7px 12px; border-radius: 999px; border: 1px solid var(--line); background: rgba(74,163,255,.05); color: var(--text-dim); transition: .15s; }
 .mode-chip:active { transform: scale(.97); }
 .mode-chip.on { color: #001226; border-color: transparent; background: linear-gradient(120deg, var(--cyan), var(--cyan-2)); box-shadow: 0 0 16px rgba(74,163,255,.3); font-weight: 700; }

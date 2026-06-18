@@ -11,7 +11,7 @@
       cheap: { id: 'cheap', primary: 'google/gemini-2.5-flash-lite', maxTokens: 4000, temperature: 0.2, reasoning: { enabled: true, effort: 'minimal', exclude: true }, fallbacks: ['google/gemini-2.5-flash'] },
       standard: { id: 'standard', primary: 'google/gemini-2.5-flash', maxTokens: 8000, temperature: 0.25, reasoning: { enabled: true, effort: 'low', exclude: true }, fallbacks: ['google/gemini-2.5-flash-lite'] },
       code: { id: 'code', primary: 'deepseek/deepseek-v4-pro', maxTokens: 16000, temperature: 0.2, reasoning: { enabled: true, effort: 'medium', exclude: true }, fallbacks: ['qwen/qwen3-coder-flash', 'google/gemini-2.5-flash'] },
-      premium: { id: 'premium', primary: 'z-ai/glm-5', maxTokens: 16000, temperature: 0.2, reasoning: { enabled: true, effort: 'medium', exclude: true }, fallbacks: ['google/gemini-2.5-flash'] },
+      premium: { id: 'premium', primary: 'z-ai/glm-5.2', maxTokens: 16000, temperature: 0.2, reasoning: { enabled: true, effort: 'medium', exclude: true }, fallbacks: ['google/gemini-2.5-flash'] },
       max: { id: 'max', primary: 'anthropic/claude-fable-5', maxTokens: 16000, temperature: 0.2, reasoning: { enabled: true, effort: 'high', exclude: true }, fallbacks: ['anthropic/claude-sonnet-4.6'] },
       image: { id: 'image', primary: 'google/gemini-3.1-flash-image-preview', maxTokens: 1200, temperature: 0.5, modalities: ['image', 'text'], imageConfig: { aspect_ratio: '1:1', image_size: '1K' }, reasoning: { enabled: true, effort: 'minimal', exclude: true }, fallbacks: ['google/gemini-2.5-flash-image'] },
       files: { id: 'files', primary: 'google/gemini-2.5-flash', maxTokens: 8000, temperature: 0.25, reasoning: { enabled: true, effort: 'low', exclude: true }, fallbacks: ['google/gemini-2.5-flash-lite'] },
