@@ -1316,14 +1316,12 @@
   async function toggleEngine() {
     if (state.engine === 'os') {
       state.engine = 'web'; persistEngine();
-      el.enginePinEntry.hidden = true;
       stopEnginePresence();
       setEngineUI(false, '', 'Motor web (estándar)');
       renderEngineBadge();
       return;
     }
     setEngineToggleVisual(false, 'busy');
-    el.enginePinEntry.hidden = true;
     el.engineStatus.className = 'engine-status';
     el.engineStatus.textContent = '🔎 Buscando tu PC con LTH OS…';
     const probe = await probeOsEngine();
@@ -1331,30 +1329,11 @@
       setEngineUI(false, 'warn', '⚠️ No se encontró tu PC. Enciende LTH OS y activa LTH Remote, en la misma cuenta.');
       return;
     }
-    // PC en línea: pedir el PIN de 6 dígitos que se muestra en LTH IA del PC.
-    el.engineStatus.className = 'engine-status';
-    el.engineStatus.textContent = '🔐 Tu PC está listo. En LTH IA del PC toca "vincular móvil" y escribe aquí el código.';
-    el.enginePinEntry.hidden = false;
-    el.enginePinInput.value = '';
-    try { el.enginePinInput.focus(); } catch (_) {}
-  }
-
-  async function connectEngineWithPin(pin) {
-    el.engineStatus.className = 'engine-status';
-    el.engineStatus.textContent = '⏳ Conectando con el motor…';
-    const row = await sendOsCommand('engine-unlock', { pin: pin, deviceId: osDeviceId() }, 12000);
-    if (row && row.status === 'done' && (row.result || {}).paired) {
-      state.engine = 'os'; persistEngine();
-      state.osConnected = true;
-      el.enginePinEntry.hidden = true;
-      setEngineUI(true, 'ok', '✅ Conectado al motor LTH OS');
-      renderEngineBadge(); startEnginePresence();
-      return true;
-    }
-    const err = (row && row.error) ? row.error : 'No se pudo conectar. Revisa el PIN.';
-    el.engineStatus.className = 'engine-status warn';
-    el.engineStatus.textContent = '⚠️ ' + err;
-    return false;
+    // PC en línea: se conecta solo (sin PIN). Misma cuenta = mismo motor.
+    state.engine = 'os'; persistEngine();
+    state.osConnected = true;
+    setEngineUI(true, 'ok', '✅ Conectado al motor LTH OS');
+    renderEngineBadge(); startEnginePresence();
   }
 
   function bindApp() {
@@ -1370,14 +1349,6 @@
     el.settingsClose.addEventListener('click', closeSettings);
     el.settingsModal.addEventListener('click', (e) => { if (e.target === el.settingsModal) closeSettings(); });
     el.engineToggle.addEventListener('click', toggleEngine);
-    const submitPin = async () => {
-      const pin = String(el.enginePinInput.value || '').replace(/\D/g, '').slice(0, 6);
-      if (pin.length !== 6) { el.engineStatus.className = 'engine-status warn'; el.engineStatus.textContent = '⚠️ El PIN debe tener 6 dígitos.'; return; }
-      el.enginePinSubmit.disabled = true;
-      try { await connectEngineWithPin(pin); } finally { el.enginePinSubmit.disabled = false; }
-    };
-    el.enginePinSubmit.addEventListener('click', submitPin);
-    el.enginePinInput.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); submitPin(); } });
     el.creditsBtn.addEventListener('click', () => { el.creditsPanel.hidden = !el.creditsPanel.hidden; });
     document.addEventListener('click', (e) => {
       if (!el.creditsPanel.hidden && !el.creditsPanel.contains(e.target) && !el.creditsBtn.contains(e.target)) el.creditsPanel.hidden = true;
@@ -1528,7 +1499,6 @@
     el.newChatBtn = $('#newChatBtn'); el.closeDrawerBtn = $('#closeDrawerBtn'); el.logoutBtn = $('#logoutBtn');
     el.settingsBtn = $('#settingsBtn'); el.settingsModal = $('#settingsModal'); el.settingsClose = $('#settingsClose');
     el.engineToggle = $('#engineToggle'); el.engineStatus = $('#engineStatus'); el.engineDot = $('#engineDot');
-    el.enginePinEntry = $('#enginePinEntry'); el.enginePinInput = $('#enginePinInput'); el.enginePinSubmit = $('#enginePinSubmit');
     el.userName = $('#userName'); el.userEmail = $('#userEmail'); el.userAvatar = $('#userAvatar');
     el.messages = $('#messages'); el.welcome = $('#welcome'); el.suggestions = $('#suggestions');
     el.composer = $('#composer'); el.input = $('#input'); el.sendBtn = $('#sendBtn'); el.reasonBtn = $('#reasonBtn');
