@@ -348,10 +348,32 @@ input, textarea { font-family: inherit; }
 .send-btn.stopping { background: linear-gradient(120deg, #ff7a93, var(--danger)); }
 .composer-hint { margin: 7px 4px 0; text-align: center; font-size: 10px; color: var(--text-dim); }
 .composer-modes { display: flex; gap: 7px; margin: 0 2px 7px; align-items: center; }
-.model-bar { display: flex; gap: 6px; overflow-x: auto; flex: 1 1 auto; scrollbar-width: none; padding-bottom: 2px; -webkit-overflow-scrolling: touch; }
-.model-bar::-webkit-scrollbar { display: none; }
-.model-bar .mode-chip { flex: 0 0 auto; }
 .composer-modes > .mode-chip-reason { flex: 0 0 auto; }
+
+/* Selector de modelo: un solo botón que despliega la lista HACIA ARRIBA. */
+.model-picker { position: relative; flex: 0 0 auto; }
+.model-picker-btn { gap: 6px; }
+.model-picker-btn .mp-ico { font-size: 11px; opacity: .8; }
+.model-picker-btn .mp-caret { font-size: 10px; opacity: .7; transition: transform .18s; }
+.model-picker-btn[aria-expanded="true"] .mp-caret { transform: rotate(180deg); }
+.model-menu {
+  position: absolute; bottom: calc(100% + 8px); left: 0; z-index: 40;
+  display: flex; flex-direction: column; gap: 2px; width: 230px; max-height: 46vh; overflow-y: auto;
+  padding: 6px; border-radius: 14px; border: 1px solid var(--line);
+  background: var(--panel, #0b1422); box-shadow: 0 12px 34px rgba(0,0,0,.45);
+  -webkit-overflow-scrolling: touch;
+}
+.model-menu[hidden] { display: none; }
+.model-opt {
+  display: flex; flex-direction: column; align-items: flex-start; gap: 1px;
+  text-align: left; padding: 9px 11px; border-radius: 10px; border: 1px solid transparent;
+  background: transparent; color: var(--text, #dce8f7); transition: .14s; cursor: pointer;
+}
+.model-opt:hover { background: rgba(74,163,255,.10); }
+.model-opt b { font-size: 13px; font-weight: 700; }
+.model-opt span { font-size: 11px; color: var(--text-dim, #8aa0bd); }
+.model-opt.on { border-color: rgba(74,163,255,.45); background: rgba(74,163,255,.14); }
+.model-opt.on b { color: var(--cyan-2, #4da3ff); }
 .mode-chip { display: inline-flex; align-items: center; gap: 5px; font-size: 12px; padding: 7px 12px; border-radius: 999px; border: 1px solid var(--line); background: rgba(74,163,255,.05); color: var(--text-dim); transition: .15s; }
 .mode-chip:active { transform: scale(.97); }
 .mode-chip.on { color: #001226; border-color: transparent; background: linear-gradient(120deg, var(--cyan), var(--cyan-2)); box-shadow: 0 0 16px rgba(74,163,255,.3); font-weight: 700; }

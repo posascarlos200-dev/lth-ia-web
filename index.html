@@ -146,15 +146,20 @@
     <!-- Composer -->
     <form id="composer" class="composer">
       <div class="composer-modes">
-        <div class="model-bar" id="modelBar" role="tablist" aria-label="Modelo">
-          <button class="mode-chip on" data-model="auto" type="button">Auto</button>
-          <button class="mode-chip" data-model="flashlite" type="button">Flash Lite</button>
-          <button class="mode-chip" data-model="sonnet" type="button">Sonnet 4.6</button>
-          <button class="mode-chip" data-model="gpt55" type="button">GPT 5.5</button>
-          <button class="mode-chip" data-model="glm5" type="button">GLM 5</button>
-          <button class="mode-chip" data-model="opus" type="button">Opus 4.7</button>
-          <button class="mode-chip" data-model="fable" type="button">Fable 5</button>
-          <button class="mode-chip" data-model="image" type="button">Imagen</button>
+        <div class="model-picker">
+          <button class="mode-chip model-picker-btn" id="modelPickerBtn" type="button" aria-haspopup="menu" aria-expanded="false" title="Elegir modelo">
+            <span class="mp-ico">◈</span><span id="modelPickerLabel">Auto</span><span class="mp-caret">▴</span>
+          </button>
+          <div class="model-menu" id="modelMenu" role="menu" hidden>
+            <button class="model-opt on" data-model="auto" type="button" role="menuitemradio"><b>Auto</b><span>Mady elige el mejor modelo</span></button>
+            <button class="model-opt" data-model="flashlite" type="button" role="menuitemradio"><b>Flash Lite</b><span>Rápido y económico</span></button>
+            <button class="model-opt" data-model="sonnet" type="button" role="menuitemradio"><b>Sonnet 4.6</b><span>Equilibrado · Pro</span></button>
+            <button class="model-opt" data-model="gpt55" type="button" role="menuitemradio"><b>GPT 5.5</b><span>Razonamiento fino · Pro</span></button>
+            <button class="model-opt" data-model="glm5" type="button" role="menuitemradio"><b>GLM 5</b><span>Fuerte y barato · Pro</span></button>
+            <button class="model-opt" data-model="opus" type="button" role="menuitemradio"><b>Opus 4.7</b><span>Lo más potente · Pro</span></button>
+            <button class="model-opt" data-model="fable" type="button" role="menuitemradio"><b>Fable 5</b><span>Proyectos grandes · Pro</span></button>
+            <button class="model-opt" data-model="image" type="button" role="menuitemradio"><b>Imagen</b><span>Generar imágenes · Pro</span></button>
+          </div>
         </div>
         <button id="reasonBtn" class="mode-chip mode-chip-reason" type="button" aria-pressed="false" title="Modo razonamiento (Pro): la IA principal clasifica y mejora tu pedido, el modelo experto responde y un juez lo verifica y pule"><span class="reason-spark"></span>Razonar</button>
       </div>

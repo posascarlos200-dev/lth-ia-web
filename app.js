@@ -1108,10 +1108,23 @@
     composerHintTimer = setTimeout(() => { if (el.composerHint) el.composerHint.textContent = original; }, 4000);
   }
   function renderModelBar() {
-    if (!el.modelBar) return;
-    el.modelBar.querySelectorAll('[data-model]').forEach((b) => {
-      b.classList.toggle('on', b.getAttribute('data-model') === state.manualModel);
-    });
+    const cur = MANUAL_MODELS[state.manualModel] || MANUAL_MODELS.auto;
+    if (el.modelPickerLabel) el.modelPickerLabel.textContent = cur.label || 'Auto';
+    if (el.modelMenu) {
+      el.modelMenu.querySelectorAll('[data-model]').forEach((b) => {
+        b.classList.toggle('on', b.getAttribute('data-model') === state.manualModel);
+      });
+    }
+  }
+  function openModelMenu() {
+    if (!el.modelMenu) return;
+    el.modelMenu.hidden = false;
+    el.modelPickerBtn.setAttribute('aria-expanded', 'true');
+  }
+  function closeModelMenu() {
+    if (!el.modelMenu) return;
+    el.modelMenu.hidden = true;
+    el.modelPickerBtn.setAttribute('aria-expanded', 'false');
   }
 
   /* ─────────── Modo razonamiento (skill -> resolver -> verificar) ─────────── */
@@ -1360,8 +1373,14 @@
       send(el.input.value);
     });
     el.reasonBtn.addEventListener('click', () => { state.reasoning = !state.reasoning; persistReason(); renderReasonBtn(); });
-    if (el.modelBar) {
-      el.modelBar.addEventListener('click', (e) => {
+    if (el.modelPickerBtn) {
+      el.modelPickerBtn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        if (el.modelMenu.hidden) openModelMenu(); else closeModelMenu();
+      });
+    }
+    if (el.modelMenu) {
+      el.modelMenu.addEventListener('click', (e) => {
         const btn = e.target.closest('[data-model]');
         if (!btn) return;
         const id = btn.getAttribute('data-model');
@@ -1370,6 +1389,11 @@
         if (m.premium && !canUsePremium()) { setComposerHint('Ese modelo es de un plan de pago.'); return; }
         state.manualModel = id;
         renderModelBar();
+        closeModelMenu();
+      });
+      document.addEventListener('click', (e) => {
+        if (el.modelMenu.hidden) return;
+        if (!el.modelMenu.contains(e.target) && e.target !== el.modelPickerBtn && !el.modelPickerBtn.contains(e.target)) closeModelMenu();
       });
     }
     el.input.addEventListener('input', autoGrow);
@@ -1502,7 +1526,7 @@
     el.userName = $('#userName'); el.userEmail = $('#userEmail'); el.userAvatar = $('#userAvatar');
     el.messages = $('#messages'); el.welcome = $('#welcome'); el.suggestions = $('#suggestions');
     el.composer = $('#composer'); el.input = $('#input'); el.sendBtn = $('#sendBtn'); el.reasonBtn = $('#reasonBtn');
-    el.modelBar = $('#modelBar'); el.composerHint = $('#composerHint');
+    el.modelPickerBtn = $('#modelPickerBtn'); el.modelPickerLabel = $('#modelPickerLabel'); el.modelMenu = $('#modelMenu'); el.composerHint = $('#composerHint');
     el.icSend = el.sendBtn.querySelector('.ic-send'); el.icStop = el.sendBtn.querySelector('.ic-stop');
   }
 
