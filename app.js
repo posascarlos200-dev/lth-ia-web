@@ -35,23 +35,31 @@
   const IMAGE_SYSTEM_PROMPT = 'Eres Mady, la asistente de LTH OS. Genera directamente la imagen que describe el usuario y acompanala con una frase breve en espanol. La imagen debe tratar EXACTAMENTE lo pedido; no agregues marcas, textos ni elementos no solicitados (nunca generes productos LTH si no se piden). Si el usuario pide texto dentro de la imagen, respetalo exactamente.';
   const PDF_SYSTEM_PROMPT = 'Eres Mady, la asistente de LTH OS. El usuario quiere un documento que se exportara a PDF. Redacta el documento COMPLETO en espanol, bien estructurado en Markdown simple: una primera linea con el titulo usando "# Titulo", luego secciones con "## Subtitulo", parrafos claros y listas con "- " cuando ayude. No uses tablas ni bloques de codigo ni HTML. Entrega solo el contenido del documento, sin preambulos como "aqui tienes" ni despedidas.';
 
-  // Modo razonamiento (Plan-and-Solve + Reflexion): skill de planeacion -> resolver -> verificar.
-  const REASON_PLAN_PROMPT = [
-    'Eres la SKILL DE RAZONAMIENTO de Mady (LTH OS). NO respondas la pregunta del usuario.',
-    'Tu trabajo es producir un PLAN de razonamiento breve y accionable para que otro modelo responda con maxima calidad:',
-    '1) Que pide exactamente el usuario (reformulalo en una linea).',
-    '2) Descomposicion en pasos de razonamiento.',
-    '3) Conocimiento o datos necesarios para responder bien.',
-    '4) Errores, sesgos o trampas a evitar.',
-    '5) Como debe estructurarse la respuesta final.',
-    'Si responder bien requiere informacion ACTUAL de internet (noticias, precios, lanzamientos, datos que cambian), termina con la linea exacta "NECESITA_WEB: SI"; de lo contrario "NECESITA_WEB: NO".',
-    'Responde en espanol, conciso, solo el plan.'
+  // Modo razonamiento premium: IA principal (clasifica + mejora prompt) -> especialista -> juez.
+  const ORCHESTRATOR_PROMPT = [
+    'Eres la IA PRINCIPAL del modo razonamiento de Mady (LTH OS). NO respondas la pregunta del usuario.',
+    'Tu trabajo: entender la intencion, clasificarla y preparar instrucciones limpias para el modelo especialista.',
+    'Categorias:',
+    '- "imagen": crear, editar o generar una imagen (logos, fotos, ilustraciones, banners).',
+    '- "codigo": programar, depurar, scripts o arquitectura de software.',
+    '- "chat_max": requiere informacion ACTUAL de internet, fuentes, precios, noticias, lanzamientos, versiones nuevas, documentacion actual o verificacion externa.',
+    '- "chat_simple": pregunta o charla que NO requiere internet ni verificacion externa (conocimiento general, explicaciones, redaccion).',
+    '- "razonamiento": razonamiento tecnico profundo, estrategia, logica compleja o decisiones de arquitectura (sin necesidad de web ni de generar codigo extenso).',
+    'Reglas:',
+    '1) Si la peticion es ambigua y no puedes elegir bien la categoria o falta un dato clave, pide aclaracion con 1-3 preguntas concisas (need_clarification=true). PERO si ya hiciste preguntas antes en esta conversacion y el usuario ya respondio, NO vuelvas a preguntar: decide y procede.',
+    '2) Si esta clara, reescribe la peticion en "improved_prompt": instrucciones limpias, completas y especificas para el especialista (objetivo, contexto relevante del chat, formato esperado y restricciones).',
+    '3) Devuelve SOLO JSON valido, sin texto fuera del JSON.',
+    'Formato exacto: { "need_clarification": false, "questions": "", "category": "chat_simple", "improved_prompt": "" }'
   ].join('\n');
-  const REASON_VERIFY_PROMPT = [
-    'Eres el VERIFICADOR FINAL de Mady (LTH OS). Te doy la PREGUNTA del usuario, el PLAN de razonamiento y un BORRADOR de respuesta.',
-    'Tu trabajo: comprobar que el borrador cumple el plan y responde de forma correcta, completa e integrada; detectar errores, vacios, contradicciones o partes sin conectar; corregir y MEJORAR.',
-    'Entrega UNICAMENTE la respuesta final pulida para el usuario, en espanol, bien estructurada en Markdown.',
-    'No expliques tu proceso, no menciones el plan ni el borrador ni que hubo una verificacion. Solo la respuesta final, lista para el usuario.'
+  const JUDGE_PROMPT = [
+    'Eres el JUEZ FINAL del modo razonamiento de Mady. Recibes la PETICION ORIGINAL del usuario, el PROMPT MEJORADO que se le dio al especialista y el BORRADOR que produjo (con sus fuentes si las hay).',
+    'Tu trabajo:',
+    '1) Juzga si el borrador cumple EXACTAMENTE el prompt mejorado y responde bien la peticion original.',
+    '2) Si falta optimizar algo o algo no cumple, APLICA TU MISMO las correcciones DIRECTAMENTE sobre el borrador, de forma INCREMENTAL: corrige solo lo que falla (codigo, datos, estructura, fuentes); NO reconstruyas todo desde cero ni borres lo que ya esta bien.',
+    '3) Entrega la RESPUESTA FINAL para el usuario, ordenada, clara y entendible (Markdown). Es la version corregida y pulida, lista para mostrar; NO menciones el borrador, el juez ni el proceso.',
+    'Devuelve SOLO JSON valido:',
+    '{ "veredicto": "APROBADO", "confianza": 90, "fuentes": [], "advertencia": "", "respuesta_final": "" }',
+    'veredicto in {APROBADO, APROBADO_CON_CORRECCIONES, RECHAZADO}. confianza 0-100. fuentes = URLs reales usadas (si aplica). advertencia = que no se pudo verificar (si aplica). respuesta_final = la respuesta final en Markdown para el usuario.'
   ].join('\n');
 
   // Motor LTH OS (PC): se enruta por la cola remote_commands (accion ia-ask),
@@ -1066,8 +1074,99 @@
   }
 
   function reasonStageHtml(stage) {
-    const map = { plan: '🧩 Planeando el razonamiento', solve: '🧠 Razonando a fondo', web: '🌐 Investigando en la web', verify: '🔎 Verificando y mejorando' };
+    const map = {
+      orchestrate: '🧭 Entendiendo tu pedido',
+      codigo: '💻 Programando',
+      chat_max: '🌐 Investigando en la web',
+      chat_simple: '✦ Pensando',
+      razonamiento: '🧠 Razonando a fondo',
+      judge: '🔎 Verificando y puliendo'
+    };
     return '<span class="gen-img-loading">' + (map[stage] || '🧠 Razonando') + '<span class="dots"><i>.</i><i>.</i><i>.</i></span></span>';
+  }
+
+  function parseReasonJson(raw) {
+    try { return JSON.parse(raw); } catch (_) {}
+    try { const m = String(raw || '').match(/\{[\s\S]*\}/); return m ? JSON.parse(m[0]) : {}; } catch (_) { return {}; }
+  }
+
+  function categorySpecialist(category, improved) {
+    const brief = '\n\nInstrucciones del orquestador (síguelas al pie de la letra):\n' + improved;
+    if (category === 'codigo') {
+      return { model: 'deepseek/deepseek-v4-pro', stage: 'codigo', temperature: 0.2, system: 'Eres un ingeniero de software senior. Entrega codigo correcto, integrado y ejecutable; prioriza la correctitud y la integracion real; explica lo esencial brevemente.' + brief };
+    }
+    if (category === 'chat_max') {
+      return { model: 'anthropic/claude-sonnet-4.6:online', stage: 'chat_max', temperature: 0.2, system: 'Eres Mady en modo investigacion con busqueda web. Usa SOLO datos reales y actuales de la web; NO inventes. CITA las fuentes (URLs) que uses. Separa hechos confirmados de inferencias y marca explicitamente lo que no se pudo verificar.' + brief };
+    }
+    if (category === 'razonamiento') {
+      return { model: 'anthropic/claude-opus-4.7', stage: 'razonamiento', temperature: 0.3, system: 'Eres Mady en razonamiento tecnico profundo. Razona con rigor, considera alternativas y justifica cada decision.' + brief };
+    }
+    return { model: 'openai/gpt-5.5', stage: 'chat_simple', temperature: 0.4, system: SYSTEM_PROMPT + brief };
+  }
+
+  function verdictFooterMarkdown(j) {
+    const v = String(j.veredicto || '').toUpperCase();
+    if (!v && j.confianza == null && !(Array.isArray(j.fuentes) && j.fuentes.length)) return '';
+    const label = v === 'APROBADO' ? '✅ Aprobado'
+      : v === 'APROBADO_CON_CORRECCIONES' ? '🛠️ Aprobado con correcciones'
+        : v === 'RECHAZADO' ? '⚠️ Rechazado' : '✓ Revisado';
+    const lines = [];
+    let head = '`' + label + '`';
+    if (j.confianza != null && isFinite(Number(j.confianza))) head += ' · Confianza ' + Math.round(Number(j.confianza)) + '%';
+    lines.push(head);
+    if (Array.isArray(j.fuentes) && j.fuentes.length) lines.push('**Fuentes:** ' + j.fuentes.slice(0, 6).map((s) => String(s)).join(' · '));
+    if (j.advertencia && String(j.advertencia).trim()) lines.push('⚠️ ' + String(j.advertencia).trim());
+    return '\n\n---\n' + lines.join('\n');
+  }
+
+  // Pipeline premium: IA principal (clasifica + mejora prompt) -> especialista -> juez GLM-5.2.
+  async function reasoningAnswer(text, convo, bub) {
+    const signal = state.abort && state.abort.signal;
+    const history = convo.messages.slice(-HISTORY_LIMIT).map((m) => ({ role: m.role, content: m.content }));
+
+    // 1) IA principal: entiende, clasifica y mejora el prompt (o pide aclaracion).
+    bub.innerHTML = reasonStageHtml('orchestrate');
+    const orchRaw = await reasonChat({ model: 'google/gemini-2.5-flash', system: ORCHESTRATOR_PROMPT, messages: history, maxTokens: 1400, temperature: 0.2 }, signal);
+    const orch = parseReasonJson(orchRaw);
+    if (orch.need_clarification && String(orch.questions || '').trim()) {
+      const q = String(orch.questions).trim();
+      bub.innerHTML = renderMarkdown(q);
+      convo.messages.push({ id: uid(), role: 'assistant', content: q, ts: Date.now() });
+      convo.updated = Date.now();
+      saveConvos(); renderConvoList(); syncPushOne(convo);
+      return;
+    }
+    const category = String(orch.category || 'chat_simple').toLowerCase();
+    const improved = String(orch.improved_prompt || text).trim();
+
+    // 2) imagen: flujo de imagen, sin juez (resultado visual).
+    if (category === 'imagen') {
+      await generateImage(improved, convo, null, bub);
+      return;
+    }
+
+    // 2) Especialista de la categoria produce el borrador.
+    const spec = categorySpecialist(category, improved);
+    bub.innerHTML = reasonStageHtml(spec.stage);
+    const draft = await reasonChat({ model: spec.model, system: spec.system, messages: history, maxTokens: 9000, temperature: spec.temperature }, signal);
+
+    // 3) Juez GLM-5.2: revisa, parchea incremental y presenta la respuesta final.
+    bub.innerHTML = reasonStageHtml('judge');
+    const judgeRaw = await reasonChat({
+      model: 'z-ai/glm-5.2',
+      system: JUDGE_PROMPT,
+      messages: [{ role: 'user', content: 'PETICION ORIGINAL:\n' + text + '\n\nPROMPT MEJORADO:\n' + improved + '\n\nBORRADOR DEL ESPECIALISTA:\n' + draft }],
+      maxTokens: 9000,
+      temperature: 0.1
+    }, signal);
+    const j = parseReasonJson(judgeRaw);
+    const finalText = String(j.respuesta_final || draft).trim();
+    const full = (finalText || '_(sin respuesta)_') + verdictFooterMarkdown(j);
+
+    bub.innerHTML = renderMarkdown(full);
+    convo.messages.push({ id: uid(), role: 'assistant', content: full, ts: Date.now() });
+    convo.updated = Date.now();
+    saveConvos(); renderConvoList(); syncPushOne(convo); fetchStatus();
   }
 
   async function reasonChat(opts, signal) {
@@ -1085,41 +1184,6 @@
       throw ApiError(data.error || 'Fallo una etapa del razonamiento.', data.status || res.status, data.credits);
     }
     return String(data.text || '').trim();
-  }
-
-  // Pipeline: skill de razonamiento (plan) -> el modelo resuelve -> la IA verifica y mejora.
-  async function reasoningAnswer(text, convo, bub) {
-    const signal = state.abort && state.abort.signal;
-    const history = convo.messages.slice(-HISTORY_LIMIT).map((m) => ({ role: m.role, content: m.content }));
-
-    // 1) Skill de razonamiento: traza el plan.
-    bub.innerHTML = reasonStageHtml('plan');
-    const planText = await reasonChat({ model: 'google/gemini-2.5-flash', system: REASON_PLAN_PROMPT, messages: [{ role: 'user', content: text }], maxTokens: 1400, temperature: 0.2 }, signal);
-    const needsWeb = /NECESITA_WEB:\s*SI/i.test(planText);
-
-    // 2) El modelo resuelve siguiendo el plan (busca en web si el plan lo pide).
-    bub.innerHTML = reasonStageHtml(needsWeb ? 'web' : 'solve');
-    const solveModel = needsWeb ? 'perplexity/sonar' : 'z-ai/glm-5';
-    const solveSystem = SYSTEM_PROMPT + '\n\nSigue este PLAN al pie de la letra y responde de forma completa, correcta y bien estructurada. Razona internamente; entrega solo la respuesta final.\n\nPLAN:\n' + planText;
-    const draft = await reasonChat({ model: solveModel, system: solveSystem, messages: history, maxTokens: 9000, temperature: 0.3 }, signal);
-
-    // 3) IA verificadora: revisa, integra, mejora y entrega la final (streaming).
-    bub.innerHTML = reasonStageHtml('verify');
-    let final = '';
-    const verifyMessages = [{ role: 'user', content: 'PREGUNTA:\n' + text + '\n\nPLAN:\n' + planText + '\n\nBORRADOR:\n' + draft }];
-    const result = await streamChat(verifyMessages, (full) => {
-      final = full;
-      bub.innerHTML = renderMarkdown(full);
-      bub.classList.add('cursor');
-      scrollDown();
-    }, signal, { model: 'z-ai/glm-5', maxTokens: 9000, temperature: 0.25, system: REASON_VERIFY_PROMPT });
-
-    bub.classList.remove('cursor');
-    const finalText = String(result.text || final || draft).trim();
-    bub.innerHTML = renderMarkdown(finalText || '_(sin respuesta)_');
-    convo.messages.push({ id: uid(), role: 'assistant', content: finalText, ts: Date.now() });
-    convo.updated = Date.now();
-    saveConvos(); renderConvoList(); syncPushOne(convo); fetchStatus();
   }
 
   function mergeCredits(base, extra) {
