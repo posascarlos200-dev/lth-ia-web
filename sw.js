@@ -1,7 +1,7 @@
 /* Service worker de LTH IA Web.
    Cachea solo el shell estatico para instalacion/offline. NUNCA toca las
    llamadas a Supabase (auth, edge function, REST): esas van siempre a la red. */
-const CACHE = 'lth-ia-web-v12';
+const CACHE = 'lth-ia-web-v13';
 const SHELL = [
   './',
   './index.html',
@@ -10,7 +10,8 @@ const SHELL = [
   './config.js',
   './icon.png',
   './manifest.webmanifest',
-  './vendor/jspdf.umd.min.js'
+  './vendor/jspdf.umd.min.js',
+  './vendor/lth-router.js'
 ];
 
 self.addEventListener('install', (event) => {

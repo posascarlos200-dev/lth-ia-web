@@ -193,8 +193,16 @@
   }
 
   // Envia el historial y procesa el stream SSE. onDelta(text), devuelve {text, credits}.
-  async function streamChat(messages, onDelta, signal) {
-    const res = await callEdge({ action: 'stream', system: SYSTEM_PROMPT, messages }, signal);
+  // routeOpts opcional = modelo/params elegidos por el auto-router.
+  async function streamChat(messages, onDelta, signal, routeOpts) {
+    const payload = { action: 'stream', system: SYSTEM_PROMPT, messages };
+    if (routeOpts && routeOpts.model) {
+      payload.model = routeOpts.model;
+      if (routeOpts.maxTokens) payload.maxTokens = routeOpts.maxTokens;
+      if (routeOpts.temperature != null) payload.temperature = routeOpts.temperature;
+      if (routeOpts.reasoning) payload.reasoning = routeOpts.reasoning;
+    }
+    const res = await callEdge(payload, signal);
     const ct = (res.headers.get('content-type') || '').toLowerCase();
     if (!ct.includes('text/event-stream')) {
       const data = await res.json().catch(() => ({}));
@@ -497,13 +505,30 @@
       }
 
       const history = convo.messages.slice(-HISTORY_LIMIT).map((m) => ({ role: m.role, content: m.content }));
+
+      // Pensar en automatico como Mady: clasifica la intencion y elige el modelo.
+      const route = await autoRoute(text, history);
+      if (route && route.action === 'block') {
+        const msg = 'No puedo ayudar con esa solicitud.';
+        bub.innerHTML = renderMarkdown(msg);
+        convo.messages.push({ id: uid(), role: 'assistant', content: msg, ts: Date.now() });
+        convo.updated = Date.now(); saveConvos(); renderConvoList(); syncPushOne(convo);
+        return;
+      }
+      if (route && route.tier === 'image') {
+        await generateImage(text, convo, wrap, bub);
+        return;
+      }
+      const routeOpts = route ? { model: route.model, maxTokens: route.maxTokens, temperature: route.temperature, reasoning: route.reasoning } : null;
+      if (route && route.tier) bub.innerHTML = engineThinkingHtml(route.tier);
+
       let started = false;
       const result = await streamChat(history, (full) => {
         if (!started) { started = true; bub.classList.add('cursor'); }
         bub.innerHTML = renderMarkdown(full);
         bub.classList.add('cursor');
         scrollDown();
-      }, state.abort.signal);
+      }, state.abort.signal, routeOpts);
 
       bub.classList.remove('cursor');
       const finalText = result.text || '';
@@ -972,6 +997,37 @@
     };
     state.presenceTimer = setInterval(tick, 40000);
     void tick();
+  }
+
+  /* ─────────── Auto-router (pensar en automatico como Mady del OS) ─────────── */
+  async function autoRoute(text, history) {
+    const R = window.LTHRouter;
+    const plan = String((state.credits && state.credits.plan) || 'free').toLowerCase();
+    // Solo planes de pago: el free tiene un unico modelo, no hay que enrutar.
+    if (!R || !['pro', 'studio', 'ultra'].includes(plan)) return null;
+    try {
+      const input = R.buildClassifierInput({ userMessage: text, history: (history || []).slice(-4), userPlan: plan, manualMode: 'auto' });
+      const res = await callEdge({
+        action: 'chat',
+        model: R.MODEL_CONFIG.router.model,
+        maxTokens: R.MODEL_CONFIG.router.maxTokens,
+        temperature: 0,
+        response_format: R.MODEL_CONFIG.router.responseFormat,
+        system: R.getClassifierPrompt(),
+        messages: [{ role: 'user', content: input }]
+      }, state.abort && state.abort.signal);
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok || data.success === false) return null;
+      let raw = {};
+      try { const m = String(data.text || '').match(/\{[\s\S]*\}/); raw = m ? JSON.parse(m[0]) : {}; } catch (_) { raw = {}; }
+      const decision = R.validateDecision(raw, { manualMode: 'auto' });
+      return R.chooseModel(decision, { userPlan: plan, manualMode: 'auto' });
+    } catch (_) { return null; }
+  }
+
+  function engineThinkingHtml(tier) {
+    const map = { code: '💻 Programando', premium: '🧠 Razonando', web: '🌐 Buscando en la web', files: '📎 Analizando', standard: '✦ Pensando', cheap: '✦ Escribiendo' };
+    return '<span class="gen-img-loading">' + (map[tier] || '✦ Pensando') + '<span class="dots"><i>.</i><i>.</i><i>.</i></span></span>';
   }
 
   function mergeCredits(base, extra) {
