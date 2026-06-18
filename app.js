@@ -1097,7 +1097,12 @@
       return { model: 'deepseek/deepseek-v4-pro', stage: 'codigo', temperature: 0.2, system: 'Eres un ingeniero de software senior. Entrega codigo correcto, integrado y ejecutable; prioriza la correctitud y la integracion real; explica lo esencial brevemente.' + brief };
     }
     if (category === 'chat_max') {
-      return { model: 'anthropic/claude-sonnet-4.6:online', stage: 'chat_max', temperature: 0.2, system: 'Eres Mady en modo investigacion con busqueda web. Usa SOLO datos reales y actuales de la web; NO inventes. CITA las fuentes (URLs) que uses. Separa hechos confirmados de inferencias y marca explicitamente lo que no se pudo verificar.' + brief };
+      const hoy = new Date().toLocaleDateString('es', { day: '2-digit', month: 'long', year: 'numeric' });
+      return {
+        model: 'anthropic/claude-sonnet-4.6:online', stage: 'chat_max', temperature: 0.2,
+        plugins: [{ id: 'web', max_results: 6 }],
+        system: 'Eres Mady en modo investigacion con BUSQUEDA WEB ACTIVA. Hoy es ' + hoy + ' (estamos en el ano 2026; NUNCA trates esta fecha como futura ni digas que no puedes acceder a internet). DEBES usar los resultados de la busqueda web que recibes para responder con datos REALES y ACTUALES. CITA las fuentes (URLs reales) que uses. Separa hechos confirmados de inferencias y marca explicitamente lo que no se pudo verificar.' + brief
+      };
     }
     if (category === 'razonamiento') {
       return { model: 'anthropic/claude-opus-4.7', stage: 'razonamiento', temperature: 0.3, system: 'Eres Mady en razonamiento tecnico profundo. Razona con rigor, considera alternativas y justifica cada decision.' + brief };
@@ -1171,7 +1176,7 @@
     // 2) Especialista de la categoria produce el borrador.
     const spec = categorySpecialist(category, improved);
     bub.innerHTML = reasonStageHtml(spec.stage);
-    const draft = await reasonChat({ model: spec.model, system: spec.system, messages: history, maxTokens: 9000, temperature: spec.temperature }, signal);
+    const draft = await reasonChat({ model: spec.model, system: spec.system, messages: history, maxTokens: 9000, temperature: spec.temperature, plugins: spec.plugins }, signal);
 
     // 3) Juez GLM-5.2: revisa, parchea incremental y presenta la respuesta final.
     bub.innerHTML = reasonStageHtml('judge');
@@ -1194,14 +1199,16 @@
   }
 
   async function reasonChat(opts, signal) {
-    const res = await callEdge({
+    const payload = {
       action: 'chat',
       model: opts.model,
       system: opts.system,
       messages: opts.messages,
       maxTokens: opts.maxTokens || 4000,
       temperature: opts.temperature != null ? opts.temperature : 0.3
-    }, signal);
+    };
+    if (opts.plugins && opts.plugins.length) payload.plugins = opts.plugins;
+    const res = await callEdge(payload, signal);
     const data = await res.json().catch(() => ({}));
     if (!res.ok || data.success === false) {
       if (data && data.credits) { state.credits = mergeCredits(state.credits, data.credits); renderCredits(); }
