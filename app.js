@@ -1417,7 +1417,10 @@
     el.userAvatar.textContent = (name[0] || 'L').toUpperCase();
 
     try { state.engine = localStorage.getItem(ENGINE_KEY) === 'os' ? 'os' : 'web'; } catch (_) { state.engine = 'web'; }
-    try { state.reasoning = localStorage.getItem(REASON_KEY) === '1'; } catch (_) { state.reasoning = false; }
+    // El Modo Razonamiento (4 factores) es 100% MANUAL: arranca SIEMPRE apagado en
+    // cada carga y solo corre cuando el usuario pulsa "Razonar" en esa sesion. No se
+    // restaura de localStorage para que nunca se dispare solo el pipeline premium.
+    state.reasoning = false;
     renderReasonBtn();
     state.osConnected = null; // comprobando hasta el primer sondeo
     renderEngineBadge();
