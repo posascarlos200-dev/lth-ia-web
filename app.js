@@ -35,11 +35,31 @@
   const IMAGE_SYSTEM_PROMPT = 'Eres Mady, la asistente de LTH OS. Genera directamente la imagen que describe el usuario y acompanala con una frase breve en espanol. La imagen debe tratar EXACTAMENTE lo pedido; no agregues marcas, textos ni elementos no solicitados (nunca generes productos LTH si no se piden). Si el usuario pide texto dentro de la imagen, respetalo exactamente.';
   const PDF_SYSTEM_PROMPT = 'Eres Mady, la asistente de LTH OS. El usuario quiere un documento que se exportara a PDF. Redacta el documento COMPLETO en espanol, bien estructurado en Markdown simple: una primera linea con el titulo usando "# Titulo", luego secciones con "## Subtitulo", parrafos claros y listas con "- " cuando ayude. No uses tablas ni bloques de codigo ni HTML. Entrega solo el contenido del documento, sin preambulos como "aqui tienes" ni despedidas.';
 
+  // Modo razonamiento (Plan-and-Solve + Reflexion): skill de planeacion -> resolver -> verificar.
+  const REASON_PLAN_PROMPT = [
+    'Eres la SKILL DE RAZONAMIENTO de Mady (LTH OS). NO respondas la pregunta del usuario.',
+    'Tu trabajo es producir un PLAN de razonamiento breve y accionable para que otro modelo responda con maxima calidad:',
+    '1) Que pide exactamente el usuario (reformulalo en una linea).',
+    '2) Descomposicion en pasos de razonamiento.',
+    '3) Conocimiento o datos necesarios para responder bien.',
+    '4) Errores, sesgos o trampas a evitar.',
+    '5) Como debe estructurarse la respuesta final.',
+    'Si responder bien requiere informacion ACTUAL de internet (noticias, precios, lanzamientos, datos que cambian), termina con la linea exacta "NECESITA_WEB: SI"; de lo contrario "NECESITA_WEB: NO".',
+    'Responde en espanol, conciso, solo el plan.'
+  ].join('\n');
+  const REASON_VERIFY_PROMPT = [
+    'Eres el VERIFICADOR FINAL de Mady (LTH OS). Te doy la PREGUNTA del usuario, el PLAN de razonamiento y un BORRADOR de respuesta.',
+    'Tu trabajo: comprobar que el borrador cumple el plan y responde de forma correcta, completa e integrada; detectar errores, vacios, contradicciones o partes sin conectar; corregir y MEJORAR.',
+    'Entrega UNICAMENTE la respuesta final pulida para el usuario, en espanol, bien estructurada en Markdown.',
+    'No expliques tu proceso, no menciones el plan ni el borrador ni que hubo una verificacion. Solo la respuesta final, lista para el usuario.'
+  ].join('\n');
+
   // Motor LTH OS (PC): se enruta por la cola remote_commands (accion ia-ask),
   // igual que LTH Remote. El Mady completo del PC responde.
   const REMOTE_CMD_URL = SB_URL + '/rest/v1/remote_commands';
   const ENGINE_KEY = 'lth_ia_web_engine_v1';
   const OSDEV_KEY = 'lth_ia_web_osdevice_v1';
+  const REASON_KEY = 'lth_ia_web_reason_v1';
   const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
   /* ───────────────────────── Estado ───────────────────────── */
@@ -56,7 +76,8 @@
     authMode: 'login',
     engine: 'web',
     osConnected: null,   // null = comprobando, true = conectado, false = sin conexion
-    presenceTimer: null
+    presenceTimer: null,
+    reasoning: false
   };
 
   /* ───────────────────────── Utils ───────────────────────── */
@@ -195,7 +216,7 @@
   // Envia el historial y procesa el stream SSE. onDelta(text), devuelve {text, credits}.
   // routeOpts opcional = modelo/params elegidos por el auto-router.
   async function streamChat(messages, onDelta, signal, routeOpts) {
-    const payload = { action: 'stream', system: SYSTEM_PROMPT, messages };
+    const payload = { action: 'stream', system: (routeOpts && routeOpts.system) || SYSTEM_PROMPT, messages };
     if (routeOpts && routeOpts.model) {
       payload.model = routeOpts.model;
       if (routeOpts.maxTokens) payload.maxTokens = routeOpts.maxTokens;
@@ -502,6 +523,12 @@
         const ok = await askPcEngine(text, convo, bub);
         if (ok) return;
         bub.innerHTML = '<span class="typing"><i></i><i></i><i></i></span>';
+      }
+
+      // Modo razonamiento: skill -> resolver -> verificar (solo planes de pago).
+      if (state.reasoning && canUsePremium()) {
+        await reasoningAnswer(text, convo, bub);
+        return;
       }
 
       const history = convo.messages.slice(-HISTORY_LIMIT).map((m) => ({ role: m.role, content: m.content }));
@@ -1030,6 +1057,71 @@
     return '<span class="gen-img-loading">' + (map[tier] || '✦ Pensando') + '<span class="dots"><i>.</i><i>.</i><i>.</i></span></span>';
   }
 
+  /* ─────────── Modo razonamiento (skill -> resolver -> verificar) ─────────── */
+  function persistReason() { try { localStorage.setItem(REASON_KEY, state.reasoning ? '1' : '0'); } catch (_) {} }
+  function renderReasonBtn() {
+    if (!el.reasonBtn) return;
+    el.reasonBtn.classList.toggle('on', !!state.reasoning);
+    el.reasonBtn.setAttribute('aria-pressed', state.reasoning ? 'true' : 'false');
+  }
+
+  function reasonStageHtml(stage) {
+    const map = { plan: '🧩 Planeando el razonamiento', solve: '🧠 Razonando a fondo', web: '🌐 Investigando en la web', verify: '🔎 Verificando y mejorando' };
+    return '<span class="gen-img-loading">' + (map[stage] || '🧠 Razonando') + '<span class="dots"><i>.</i><i>.</i><i>.</i></span></span>';
+  }
+
+  async function reasonChat(opts, signal) {
+    const res = await callEdge({
+      action: 'chat',
+      model: opts.model,
+      system: opts.system,
+      messages: opts.messages,
+      maxTokens: opts.maxTokens || 4000,
+      temperature: opts.temperature != null ? opts.temperature : 0.3
+    }, signal);
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok || data.success === false) {
+      if (data && data.credits) { state.credits = mergeCredits(state.credits, data.credits); renderCredits(); }
+      throw ApiError(data.error || 'Fallo una etapa del razonamiento.', data.status || res.status, data.credits);
+    }
+    return String(data.text || '').trim();
+  }
+
+  // Pipeline: skill de razonamiento (plan) -> el modelo resuelve -> la IA verifica y mejora.
+  async function reasoningAnswer(text, convo, bub) {
+    const signal = state.abort && state.abort.signal;
+    const history = convo.messages.slice(-HISTORY_LIMIT).map((m) => ({ role: m.role, content: m.content }));
+
+    // 1) Skill de razonamiento: traza el plan.
+    bub.innerHTML = reasonStageHtml('plan');
+    const planText = await reasonChat({ model: 'google/gemini-2.5-flash', system: REASON_PLAN_PROMPT, messages: [{ role: 'user', content: text }], maxTokens: 1400, temperature: 0.2 }, signal);
+    const needsWeb = /NECESITA_WEB:\s*SI/i.test(planText);
+
+    // 2) El modelo resuelve siguiendo el plan (busca en web si el plan lo pide).
+    bub.innerHTML = reasonStageHtml(needsWeb ? 'web' : 'solve');
+    const solveModel = needsWeb ? 'perplexity/sonar' : 'z-ai/glm-5';
+    const solveSystem = SYSTEM_PROMPT + '\n\nSigue este PLAN al pie de la letra y responde de forma completa, correcta y bien estructurada. Razona internamente; entrega solo la respuesta final.\n\nPLAN:\n' + planText;
+    const draft = await reasonChat({ model: solveModel, system: solveSystem, messages: history, maxTokens: 9000, temperature: 0.3 }, signal);
+
+    // 3) IA verificadora: revisa, integra, mejora y entrega la final (streaming).
+    bub.innerHTML = reasonStageHtml('verify');
+    let final = '';
+    const verifyMessages = [{ role: 'user', content: 'PREGUNTA:\n' + text + '\n\nPLAN:\n' + planText + '\n\nBORRADOR:\n' + draft }];
+    const result = await streamChat(verifyMessages, (full) => {
+      final = full;
+      bub.innerHTML = renderMarkdown(full);
+      bub.classList.add('cursor');
+      scrollDown();
+    }, signal, { model: 'z-ai/glm-5', maxTokens: 9000, temperature: 0.25, system: REASON_VERIFY_PROMPT });
+
+    bub.classList.remove('cursor');
+    const finalText = String(result.text || final || draft).trim();
+    bub.innerHTML = renderMarkdown(finalText || '_(sin respuesta)_');
+    convo.messages.push({ id: uid(), role: 'assistant', content: finalText, ts: Date.now() });
+    convo.updated = Date.now();
+    saveConvos(); renderConvoList(); syncPushOne(convo); fetchStatus();
+  }
+
   function mergeCredits(base, extra) {
     if (!extra) return base;
     const b = base || {};
@@ -1153,6 +1245,7 @@
       if (state.busy) { if (state.abort) state.abort.abort(); return; }
       send(el.input.value);
     });
+    el.reasonBtn.addEventListener('click', () => { state.reasoning = !state.reasoning; persistReason(); renderReasonBtn(); });
     el.input.addEventListener('input', autoGrow);
     el.input.addEventListener('keydown', (e) => {
       if (e.key === 'Enter' && !e.shiftKey && !e.isComposing) { e.preventDefault(); el.composer.requestSubmit(); }
@@ -1229,6 +1322,8 @@
     el.userAvatar.textContent = (name[0] || 'L').toUpperCase();
 
     try { state.engine = localStorage.getItem(ENGINE_KEY) === 'os' ? 'os' : 'web'; } catch (_) { state.engine = 'web'; }
+    try { state.reasoning = localStorage.getItem(REASON_KEY) === '1'; } catch (_) { state.reasoning = false; }
+    renderReasonBtn();
     state.osConnected = null; // comprobando hasta el primer sondeo
     renderEngineBadge();
     if (state.engine === 'os') startEnginePresence();
@@ -1276,7 +1371,7 @@
     el.enginePinEntry = $('#enginePinEntry'); el.enginePinInput = $('#enginePinInput'); el.enginePinSubmit = $('#enginePinSubmit');
     el.userName = $('#userName'); el.userEmail = $('#userEmail'); el.userAvatar = $('#userAvatar');
     el.messages = $('#messages'); el.welcome = $('#welcome'); el.suggestions = $('#suggestions');
-    el.composer = $('#composer'); el.input = $('#input'); el.sendBtn = $('#sendBtn');
+    el.composer = $('#composer'); el.input = $('#input'); el.sendBtn = $('#sendBtn'); el.reasonBtn = $('#reasonBtn');
     el.icSend = el.sendBtn.querySelector('.ic-send'); el.icStop = el.sendBtn.querySelector('.ic-stop');
   }
 
