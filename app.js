@@ -1075,14 +1075,14 @@
 
   function reasonStageHtml(stage) {
     const map = {
-      orchestrate: '🧭 Entendiendo tu pedido',
-      codigo: '💻 Programando',
-      chat_max: '🌐 Investigando en la web',
-      chat_simple: '✦ Pensando',
-      razonamiento: '🧠 Razonando a fondo',
-      judge: '🔎 Verificando y puliendo'
+      orchestrate: 'Entendiendo tu pedido',
+      codigo: 'Programando la solución',
+      chat_max: 'Investigando en la web',
+      chat_simple: 'Pensando la respuesta',
+      razonamiento: 'Razonando a fondo',
+      judge: 'Verificando y puliendo'
     };
-    return '<span class="gen-img-loading">' + (map[stage] || '🧠 Razonando') + '<span class="dots"><i>.</i><i>.</i><i>.</i></span></span>';
+    return '<span class="reason-live"><span class="reason-orb"></span><span class="reason-label">' + escapeHtml(map[stage] || 'Razonando') + '</span><span class="reason-dots"><i></i><i></i><i></i></span></span>';
   }
 
   function parseReasonJson(raw) {

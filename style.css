@@ -351,6 +351,21 @@ input, textarea { font-family: inherit; }
 .mode-chip { display: inline-flex; align-items: center; gap: 5px; font-size: 12px; padding: 7px 12px; border-radius: 999px; border: 1px solid var(--line); background: rgba(74,163,255,.05); color: var(--text-dim); transition: .15s; }
 .mode-chip:active { transform: scale(.97); }
 .mode-chip.on { color: #001226; border-color: transparent; background: linear-gradient(120deg, var(--cyan), var(--cyan-2)); box-shadow: 0 0 16px rgba(74,163,255,.3); font-weight: 700; }
+/* Botón Razonar (premium) */
+.mode-chip-reason { display: inline-flex; align-items: center; gap: 7px; letter-spacing: .4px; }
+.reason-spark { width: 10px; height: 10px; flex: none; border-radius: 50%; background: radial-gradient(circle at 35% 35%, #d8c9ff, #7a5cff 60%, #3aa0ff); box-shadow: 0 0 8px rgba(150,120,255,.6); }
+.mode-chip-reason.on { color: #fff; border-color: transparent; background: linear-gradient(120deg, #7a5cff, #3aa0ff); box-shadow: 0 0 20px rgba(150,120,255,.4); font-weight: 700; }
+.mode-chip-reason.on .reason-spark { background: radial-gradient(circle at 35% 35%, #fff, #d8c9ff); box-shadow: 0 0 10px rgba(255,255,255,.7); }
+/* Indicador de razonamiento en vivo (premium, sin emojis) */
+.reason-live { display: inline-flex; align-items: center; gap: 9px; font-size: 13.5px; color: #cfe2ff; }
+.reason-orb { width: 11px; height: 11px; flex: none; border-radius: 50%; background: radial-gradient(circle at 35% 32%, #eaf3ff, #7a5cff 55%, #3aa0ff); box-shadow: 0 0 14px rgba(120,110,255,.55); animation: reasonOrb 1.2s ease-in-out infinite; }
+@keyframes reasonOrb { 0%,100% { transform: scale(.82); opacity: .75; } 50% { transform: scale(1.18); opacity: 1; } }
+.reason-label { background: linear-gradient(90deg, #9ec5ff, #c9bbff, #9ec5ff); background-size: 200% 100%; -webkit-background-clip: text; background-clip: text; color: transparent; animation: reasonShine 2.4s linear infinite; }
+@keyframes reasonShine { to { background-position: 200% 0; } }
+.reason-live .reason-dots { display: inline-flex; gap: 3px; }
+.reason-live .reason-dots i { width: 4px; height: 4px; border-radius: 50%; background: #8aa9ff; opacity: .4; animation: blink 1.2s infinite; }
+.reason-live .reason-dots i:nth-child(2) { animation-delay: .2s; }
+.reason-live .reason-dots i:nth-child(3) { animation-delay: .4s; }
 @media (min-width: 880px) { .composer-modes { max-width: 820px; margin-inline: auto; } }
 
 /* ════════ PC / pantallas anchas ════════ */
