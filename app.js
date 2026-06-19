@@ -1123,16 +1123,24 @@
     composerHintTimer = setTimeout(() => { if (el.composerHint) el.composerHint.textContent = original; }, 4000);
   }
   function renderModelBar() {
-    const free = isFreePlan();
-    // En el plan free solo existe un modelo visible: "Mady Canont Free".
-    if (free) state.manualModel = 'free';
-    else if (state.manualModel === 'free') state.manualModel = 'auto';
-    const cur = MANUAL_MODELS[state.manualModel] || MANUAL_MODELS.auto;
-    if (el.modelPickerLabel) el.modelPickerLabel.textContent = cur.label || 'Auto';
+    const plan = String((state.credits && state.credits.plan) || 'free').toLowerCase();
+    const free = plan === 'free';
+    // Los modelos NO manuales (modo automatico) se muestran como una sola marca por plan.
+    const brand = 'Mady Canont ' + plan.charAt(0).toUpperCase() + plan.slice(1);
+    MANUAL_MODELS.free.label = brand;
+    // La opcion de marca (id 'free') es el modo automatico para todos los planes.
+    if (free || state.manualModel === 'auto') state.manualModel = 'free';
+    const cur = MANUAL_MODELS[state.manualModel] || MANUAL_MODELS.free;
+    if (el.modelPickerLabel) el.modelPickerLabel.textContent = cur.label || brand;
     if (el.modelMenu) {
       el.modelMenu.querySelectorAll('[data-model]').forEach((b) => {
         const id = b.getAttribute('data-model');
-        b.hidden = free ? id !== 'free' : id === 'free';
+        if (id === 'free') {
+          const t = b.querySelector('b'); if (t) t.textContent = brand;
+          const s = b.querySelector('span'); if (s) s.textContent = 'Mady elige el mejor modelo';
+        }
+        // 'auto' literal se oculta siempre (lo reemplaza la marca). En free solo se ve la marca.
+        b.hidden = id === 'auto' ? true : (free ? id !== 'free' : false);
         b.classList.toggle('on', id === state.manualModel);
       });
     }
