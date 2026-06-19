@@ -61,6 +61,7 @@
           <span class="btn-spinner" hidden></span>
         </button>
         <p id="authMsg" class="auth-msg" role="status" aria-live="polite"></p>
+        <button id="forgotPasswordBtn" class="auth-link" type="button">Olvidé mi contraseña</button>
         <button id="havePinBtn" class="auth-link" type="button">Ya tengo un PIN</button>
       </form>
 
@@ -97,6 +98,22 @@
         <button id="pinBackBtn" class="auth-link" type="button">Volver</button>
       </form>
 
+      <form id="resetForm" class="auth-form pin-form" hidden novalidate>
+        <p class="invite-status-tag">RECUPERACIÓN MANUAL</p>
+        <h2 id="resetTitle">Restablecer contraseña</h2>
+        <p id="resetIntro" class="pin-intro">Solicita un PIN. El administrador lo enviará manualmente a tu correo.</p>
+        <label class="field"><span>Correo</span><input id="resetEmail" type="email" autocomplete="email" required /></label>
+        <div id="resetTurnstile" class="turnstile-wrap"><div id="resetTurnstileWidget"></div></div>
+        <div id="resetPinFields" hidden>
+          <label class="field"><span>PIN de 6 dígitos</span><input id="resetPin" class="pin-code" type="text" inputmode="numeric" autocomplete="one-time-code" maxlength="6" /></label>
+          <label class="field"><span>Nueva contraseña</span><input id="resetPassword" type="password" autocomplete="new-password" minlength="12" /></label>
+          <div class="password-rules"><strong>Contraseña segura</strong><span>12 caracteres, mayúscula, minúscula, número y símbolo.</span></div>
+        </div>
+        <button id="resetSubmit" class="btn-primary" type="submit"><span class="reset-btn-label">Solicitar PIN</span><span class="reset-spinner btn-spinner" hidden></span></button>
+        <p id="resetMsg" class="auth-msg" role="status" aria-live="polite"></p>
+        <button id="resetHavePinBtn" class="auth-link" type="button">Ya tengo el PIN</button>
+        <button id="resetBackBtn" class="auth-link" type="button">Volver al inicio de sesión</button>
+      </form>
       <p id="authFoot" class="auth-foot">LTH Mady está en producción · acceso nuevo solo por invitación</p>
     </div>
   </section>

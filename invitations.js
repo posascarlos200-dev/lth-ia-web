@@ -37,6 +37,8 @@
     if (!res.ok || data.success === false) {
       const error = new Error(data.error || 'No se pudo procesar la invitación.');
       error.status = data.status || res.status;
+      error.retryAfter = Number(data.retryAfter || 0);
+      error.attemptsRemaining = data.attemptsRemaining;
       throw error;
     }
     return data;
