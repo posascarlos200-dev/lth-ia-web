@@ -101,12 +101,24 @@
       <form id="resetForm" class="auth-form pin-form" hidden novalidate>
         <p class="invite-status-tag">RECUPERACIÓN MANUAL</p>
         <h2 id="resetTitle">Restablecer contraseña</h2>
-        <p id="resetIntro" class="pin-intro">Solicita un PIN. El administrador lo enviará manualmente a tu correo.</p>
+        <p id="resetIntro" class="pin-intro">Escribe tu correo. El administrador te enviará un PIN manualmente.</p>
         <label class="field"><span>Correo</span><input id="resetEmail" type="email" autocomplete="email" required /></label>
         <div id="resetTurnstile" class="turnstile-wrap"><div id="resetTurnstileWidget"></div></div>
+        <div id="resetNotice" class="reset-notice" hidden></div>
         <div id="resetPinFields" hidden>
-          <label class="field"><span>PIN de 6 dígitos</span><input id="resetPin" class="pin-code" type="text" inputmode="numeric" autocomplete="one-time-code" maxlength="6" /></label>
-          <label class="field"><span>Nueva contraseña</span><input id="resetPassword" type="password" autocomplete="new-password" minlength="12" /></label>
+          <label class="field"><span>PIN de 6 dígitos</span><input id="resetPin" class="pin-code" type="text" inputmode="numeric" autocomplete="one-time-code" maxlength="6" placeholder="000000" /></label>
+          <label class="field"><span>Nueva contraseña</span>
+            <div class="password-field">
+              <input id="resetPassword" type="password" autocomplete="new-password" minlength="12" placeholder="••••••••••••" />
+              <button type="button" class="password-toggle" data-target="resetPassword" aria-label="Mostrar contraseña">Ver</button>
+            </div>
+          </label>
+          <label class="field"><span>Repite la contraseña</span>
+            <div class="password-field">
+              <input id="resetPasswordConfirm" type="password" autocomplete="new-password" minlength="12" placeholder="••••••••••••" />
+              <button type="button" class="password-toggle" data-target="resetPasswordConfirm" aria-label="Mostrar contraseña">Ver</button>
+            </div>
+          </label>
           <div class="password-rules"><strong>Contraseña segura</strong><span>12 caracteres, mayúscula, minúscula, número y símbolo.</span></div>
         </div>
         <button id="resetSubmit" class="btn-primary" type="submit"><span class="reset-btn-label">Solicitar PIN</span><span class="reset-spinner btn-spinner" hidden></span></button>

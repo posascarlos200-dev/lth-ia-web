@@ -1591,6 +1591,19 @@
     try { value ? localStorage.setItem(key, JSON.stringify(value)) : localStorage.removeItem(key); } catch (_) {}
   }
 
+  function setResetNotice(text) {
+    el.resetNotice.textContent = text || '';
+    el.resetNotice.hidden = !text;
+  }
+
+  function resetPasswordToggles() {
+    el.resetForm.querySelectorAll('.password-toggle').forEach((btn) => {
+      const input = el.resetForm.querySelector('#' + btn.getAttribute('data-target'));
+      if (input) input.type = 'password';
+      btn.textContent = 'Ver'; btn.setAttribute('aria-label', 'Mostrar contraseña');
+    });
+  }
+
   function showResetForm(complete) {
     stopInvitePolling();
     el.authTabs.hidden = true; el.authForm.hidden = true; el.invitePanel.hidden = true; el.pinForm.hidden = true; el.resetForm.hidden = false;
@@ -1598,8 +1611,16 @@
     el.resetPinFields.hidden = !complete; el.resetTurnstile.hidden = !!complete;
     el.resetHavePinBtn.hidden = !!complete; el.resetBtnLabel.textContent = complete ? 'Cambiar contraseña' : 'Solicitar PIN';
     el.resetMsg.textContent = '';
+    el.resetTitle.textContent = complete ? 'Introduce tu PIN' : 'Restablecer contraseña';
+    el.resetIntro.textContent = complete
+      ? 'Escribe el PIN que te hemos enviado a tu correo y define tu nueva contraseña.'
+      : 'Escribe tu correo. El administrador te enviará un PIN manualmente.';
+    setResetNotice(complete ? 'El PIN puede llegar durante las próximas 12 horas. Tienes un máximo de 5 intentos.' : '');
+    el.resetPin.value = ''; el.resetPassword.value = ''; el.resetPasswordConfirm.value = '';
+    resetPasswordToggles();
     if (!complete) INVITES.renderTurnstile('resetTurnstileWidget', CFG.TURNSTILE_SITE_KEY).catch((error) => { el.resetMsg.textContent = error.message; });
     const tracker = resetTracker(); if (tracker && tracker.email) el.resetEmail.value = tracker.email;
+    setTimeout(() => { (complete ? el.resetPin : el.resetEmail).focus(); }, 0);
   }
 
   async function handleResetSubmit(event) {
@@ -1615,7 +1636,8 @@
         if (data.reset && data.reset.requestToken) resetTracker({ email, requestToken: data.reset.requestToken });
         INVITES.resetTurnstile('resetTurnstileWidget'); state.resetStage = 'status';
         el.resetBtnLabel.textContent = 'Actualizar estado';
-        el.resetMsg.textContent = 'Solicitud recibida. El PIN se enviará manualmente; normalmente dentro de 24 horas.';
+        setResetNotice('El PIN puede llegar durante las próximas 12 horas. Lo enviamos manualmente a tu correo.');
+        el.resetMsg.textContent = 'Solicitud recibida. Cuando recibas el PIN, pulsa “Ya tengo el PIN”.';
       } else if (state.resetStage === 'status') {
         const tracker = resetTracker();
         if (!tracker || !tracker.requestToken) { showResetForm(true); return; }
@@ -1625,8 +1647,10 @@
       } else {
         const pin = String(el.resetPin.value || '').replace(/\D/g, '');
         const password = String(el.resetPassword.value || '');
+        const confirm = String(el.resetPasswordConfirm.value || '');
         if (!/^\d{6}$/.test(pin)) throw new Error('Escribe el PIN de 6 dígitos.');
         const problem = INVITES.passwordError(password, email); if (problem) throw new Error(problem);
+        if (password !== confirm) throw new Error('Las contraseñas no coinciden.');
         await inviteCall('password.complete', { email, pin, newPassword: password });
         resetTracker(null); setAuthMode('login'); el.authEmail.value = email; el.authPassword.value = '';
         authMessage('Contraseña actualizada. Ya puedes iniciar sesión.', true);
@@ -1754,6 +1778,7 @@
     el.pinSpinner = el.pinSubmit.querySelector('.pin-spinner'); el.pinMsg = $('#pinMsg'); el.pinBackBtn = $('#pinBackBtn');
     el.forgotPasswordBtn = $('#forgotPasswordBtn'); el.resetForm = $('#resetForm'); el.resetEmail = $('#resetEmail');
     el.resetTurnstile = $('#resetTurnstile'); el.resetPinFields = $('#resetPinFields'); el.resetPin = $('#resetPin'); el.resetPassword = $('#resetPassword');
+    el.resetPasswordConfirm = $('#resetPasswordConfirm'); el.resetNotice = $('#resetNotice'); el.resetTitle = $('#resetTitle'); el.resetIntro = $('#resetIntro');
     el.resetSubmit = $('#resetSubmit'); el.resetBtnLabel = el.resetSubmit.querySelector('.reset-btn-label'); el.resetSpinner = el.resetSubmit.querySelector('.reset-spinner');
     el.resetMsg = $('#resetMsg'); el.resetHavePinBtn = $('#resetHavePinBtn'); el.resetBackBtn = $('#resetBackBtn');
     el.menuBtn = $('#menuBtn'); el.statusDot = $('#statusDot'); el.modelLabel = $('#modelLabel'); el.engineBadge = $('#engineBadge');
@@ -1788,6 +1813,14 @@
     el.resetHavePinBtn.addEventListener('click', () => showResetForm(true));
     el.resetBackBtn.addEventListener('click', () => setAuthMode('login'));
     el.resetPin.addEventListener('input', () => { el.resetPin.value = el.resetPin.value.replace(/\D/g, '').slice(0, 6); });
+    el.resetForm.querySelectorAll('.password-toggle').forEach((btn) => btn.addEventListener('click', () => {
+      const input = el.resetForm.querySelector('#' + btn.getAttribute('data-target'));
+      if (!input) return;
+      const show = input.type === 'password';
+      input.type = show ? 'text' : 'password';
+      btn.textContent = show ? 'Ocultar' : 'Ver';
+      btn.setAttribute('aria-label', show ? 'Ocultar contraseña' : 'Mostrar contraseña');
+    }));
     el.havePinBtn.addEventListener('click', () => showPinPanel(el.authEmail.value));
     el.pinBackBtn.addEventListener('click', () => setAuthMode('login'));
     el.inviteLoginBtn.addEventListener('click', () => setAuthMode('login'));
