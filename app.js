@@ -550,6 +550,123 @@
     return 'MEMORIA DEL CHAT (interna; debes respetarla y no inventar datos fuera de ella):\n' + lines.join('\n') + '\nSi falta un dato importante o ves una posible contradiccion, pide aclaracion breve antes de inventar.';
   }
 
+  function inferTranslationLanguage(text) {
+    const raw = normalizeWhitespace(text).toLowerCase();
+    const patterns = [
+      { rx: /\b(?:al?|a) ingles\b|\bto english\b/, value: 'ingles' },
+      { rx: /\b(?:al?|a) espanol\b|\b(?:al?|a) espa[nñ]ol\b|\bto spanish\b/, value: 'espanol' },
+      { rx: /\b(?:al?|a) portugues\b|\b(?:al?|a) portugu[eê]s\b/, value: 'portugues' },
+      { rx: /\b(?:al?|a) frances\b|\b(?:al?|a) franc[eé]s\b|\bto french\b/, value: 'frances' },
+      { rx: /\b(?:al?|a) italiano\b|\bto italian\b/, value: 'italiano' },
+      { rx: /\b(?:al?|a) aleman\b|\b(?:al?|a) alem[aá]n\b|\bto german\b/, value: 'aleman' }
+    ];
+    const hit = patterns.find((item) => item.rx.test(raw));
+    return hit ? hit.value : '';
+  }
+
+  function inferRewriteTone(text) {
+    const raw = normalizeWhitespace(text).toLowerCase();
+    if (/\bformal\b/.test(raw)) return 'formal';
+    if (/\bprofesional\b|\bejecutiv[oa]\b/.test(raw)) return 'profesional';
+    if (/\bamable\b|\bcercan[oa]\b/.test(raw)) return 'amable';
+    if (/\bcorto\b|\bbreve\b|\bconcis[oa]\b/.test(raw)) return 'breve';
+    return 'claro y natural';
+  }
+
+  function hasRecentRichContext(convo) {
+    const normalized = normalizeConvo(convo);
+    const recent = normalized && Array.isArray(normalized.messages) ? normalized.messages.slice(-3) : [];
+    return recent.some((msg) => String(msg && msg.content || '').trim().length >= 80);
+  }
+
+  function detectFreeSkillIntent(text, convoInput) {
+    const raw = normalizeWhitespace(text);
+    if (!raw) return null;
+    const lower = raw.toLowerCase();
+    const definitions = [
+      { kind: 'translate', label: 'traduccion fiel', tier: 'standard', match: /\b(traduce|traducelo|traducir|traduccion|translate)\b/ },
+      { kind: 'rewrite', label: 'reescritura y mejora', tier: 'standard', match: /\b(corrige|corrigelo|mejora|mejoralo|reescribe|redacta mejor|hazlo mas formal|hazlo m[aá]s formal|pul[eé]lo)\b/ },
+      { kind: 'summarize', label: 'resumen y sintesis', tier: 'files', match: /\b(resume|resumelo|resumir|resumen|sintetiza|sintesis|puntos clave)\b/ },
+      { kind: 'compare', label: 'comparacion guiada', tier: 'standard', match: /\b(compara|comparacion|comparaci[oó]n|diferencias?|ventajas?|desventajas?)\b|\bvs\b|\bversus\b/ },
+      { kind: 'extract', label: 'extraccion de puntos accionables', tier: 'files', match: /\b(extrae|saca|lista|checklist|to do|todo list|acciones clave|tareas clave)\b/ },
+      { kind: 'plan', label: 'plan paso a paso', tier: 'standard', match: /\b(plan|pasos|roadmap|guia|gu[ií]a|como empiezo|c[oó]mo empiezo|estrategia|orden recomendado)\b/ },
+      { kind: 'decide', label: 'recomendacion y decision', tier: 'standard', match: /\b(recomienda|cu[aá]l conviene|que me recomiendas|qu[eé] me recomiendas|vale la pena|me conviene|elijo|escojo)\b/ },
+      { kind: 'troubleshoot', label: 'diagnostico y solucion', tier: 'code', match: /\b(no funciona|error|falla|bug|arregla|soluciona|diagnostica|diagnosticar|por que falla|por qu[eé] falla)\b/ },
+      { kind: 'explain', label: 'explicacion guiada', tier: 'standard', match: /\b(explica|explicame|qu[eé] significa|que significa|c[oó]mo funciona|como funciona|ens[eé]name|ensename)\b/ }
+    ];
+    const found = definitions.find((item) => item.match.test(lower));
+    if (!found) return null;
+    const wordCount = raw.split(/\s+/).filter(Boolean).length;
+    const hasInlinePayload = /\n/.test(String(text || '')) || /:\s*[\s\S]{16,}$/.test(String(text || '')) || /["'][^"']{16,}["']/.test(raw);
+    const hasVsPair = /\bvs\b|\bversus\b|\bentre\b/.test(lower);
+    return {
+      kind: found.kind,
+      label: found.label,
+      tier: found.tier,
+      wordCount,
+      hasInlinePayload,
+      hasRecentContext: hasRecentRichContext(convoInput),
+      targetLanguage: found.kind === 'translate' ? inferTranslationLanguage(raw) : '',
+      rewriteTone: found.kind === 'rewrite' ? inferRewriteTone(raw) : '',
+      hasVsPair,
+      dependsOnSource: ['translate', 'rewrite', 'summarize', 'extract'].includes(found.kind)
+    };
+  }
+
+  function buildFreeSkillClarification(skill) {
+    if (!skill) return '';
+    if (skill.kind === 'compare' && skill.wordCount <= 6 && !skill.hasVsPair) {
+      return 'Puedo compararlo, pero necesito que me digas cuales son las dos opciones exactas que quieres poner frente a frente.';
+    }
+    if (skill.kind === 'translate' && skill.wordCount <= 7 && (!skill.hasInlinePayload && !skill.hasRecentContext)) {
+      return 'Puedo traducirlo, pero pegame aqui el texto exacto y dime a que idioma lo quieres llevar.';
+    }
+    if (skill.dependsOnSource && skill.wordCount <= 7 && !skill.hasInlinePayload && !skill.hasRecentContext) {
+      const map = {
+        rewrite: 'Puedo mejorarlo o corregirlo, pero necesito que pegues aqui el texto exacto.',
+        summarize: 'Puedo resumirlo, pero necesito que pegues aqui el texto, nota o contenido que quieres resumir.',
+        extract: 'Puedo sacar los puntos clave, pero necesito el texto o contenido base para trabajar.'
+      };
+      return map[skill.kind] || '';
+    }
+    return '';
+  }
+
+  function buildFreeSkillSystem(baseSystem, skill) {
+    if (!skill) return baseSystem;
+    const rules = ['HABILIDAD ACTIVA PARA ESTE TURNO: ' + skill.label + '.'];
+    if (skill.kind === 'summarize') {
+      rules.push('Responde con una sintesis fiel: primero 1-2 lineas de resumen y luego 3-6 puntos clave si aportan valor.');
+      rules.push('No agregues informacion que no este en el texto o en el contexto reciente del chat.');
+    } else if (skill.kind === 'rewrite') {
+      rules.push('Devuelve directamente la version mejorada del texto, sin prefacios ni explicaciones extra, salvo que el usuario pida comentarios.');
+      rules.push('Conserva significado, nombres, cifras, fechas y restricciones.');
+      rules.push('Tono preferido: ' + (skill.rewriteTone || 'claro y natural') + '.');
+    } else if (skill.kind === 'translate') {
+      rules.push('Traduce con fidelidad y conserva nombres propios, cifras, fechas y formato util.');
+      rules.push('Idioma objetivo preferido: ' + (skill.targetLanguage || 'el que indique el usuario; si no es obvio, pregunta una sola vez de forma breve') + '.');
+    } else if (skill.kind === 'compare') {
+      rules.push('Organiza la respuesta como: opcion A, opcion B, diferencias clave y recomendacion final.');
+      rules.push('Si una conclusion depende de un supuesto, dilo explicitamente.');
+    } else if (skill.kind === 'extract') {
+      rules.push('Extrae solo los puntos accionables o claves realmente presentes en el contenido.');
+      rules.push('Entregalos en lista limpia y priorizada si aplica.');
+    } else if (skill.kind === 'plan') {
+      rules.push('Responde con pasos numerados, en orden practico, y cierra con el primer paso accionable que deberia hacer el usuario hoy.');
+    } else if (skill.kind === 'decide') {
+      rules.push('Da una recomendacion clara al inicio y luego 2-4 razones concretas.');
+      rules.push('Si faltan datos clave para decidir bien, dilo sin inventar.');
+    } else if (skill.kind === 'troubleshoot') {
+      rules.push('Responde con: problema probable, que revisar primero, pasos de diagnostico y arreglo sugerido.');
+      rules.push('Si faltan datos tecnicos minimos, pide solo los imprescindibles.');
+    } else if (skill.kind === 'explain') {
+      rules.push('Explica de lo simple a lo concreto y usa un ejemplo breve si ayuda.');
+      rules.push('Evita jerga innecesaria y deja clara la idea principal temprano.');
+    }
+    rules.push('Adapta el formato de salida a la habilidad activa y evita respuestas genericas.');
+    return baseSystem + '\n\n' + rules.join('\n');
+  }
+
   function composeSystemWithMemory(baseSystem, convo, query) {
     const brainBlock = buildBrainContextBlock(convo, query);
     return brainBlock ? (baseSystem + '\n\n' + brainBlock) : baseSystem;
@@ -651,7 +768,7 @@
     }
   }
 
-  window.LTH_IA_TEST_API = { normalizeBrain, extractBrainFromUserMessage, buildBrainContextBlock, detectCrisisIntent };
+  window.LTH_IA_TEST_API = { normalizeBrain, extractBrainFromUserMessage, buildBrainContextBlock, detectCrisisIntent, detectFreeSkillIntent, buildFreeSkillSystem, buildFreeSkillClarification };
 
   function loadConvos() {
     try {
@@ -957,6 +1074,7 @@
       const manual = (state.manualModel !== 'auto' && state.manualModel !== 'free') ? MANUAL_MODELS[state.manualModel] : null;
       const manualAllowed = manual && (!manual.premium || canUsePremium());
       let routeOpts = null;
+      let freeSkill = null;
       if (manual && !manualAllowed) {
         setComposerHint('Ese modelo es de un plan de pago. Usando modo automatico.');
         state.manualModel = 'auto'; renderModelBar();
@@ -985,6 +1103,22 @@
         }
         routeOpts = route ? { model: route.model, maxTokens: route.maxTokens, temperature: route.temperature, reasoning: route.reasoning, system: route.system } : null;
         if (route && route.tier) bub.innerHTML = engineThinkingHtml(route.tier);
+        if (!routeOpts && isFreePlan()) {
+          freeSkill = detectFreeSkillIntent(text, convo);
+          const clarification = buildFreeSkillClarification(freeSkill);
+          if (clarification) {
+            bub.innerHTML = renderMarkdown(clarification);
+            markAssistantTurn(convo, clarification, 'Aclaracion de habilidad free');
+            convo.messages.push({ id: uid(), role: 'assistant', content: clarification, ts: Date.now() });
+            convo.updated = Date.now(); saveConvos(); renderConvoList(); syncPushOne(convo);
+            void maybeUpdateConvoBrain(convo);
+            return;
+          }
+          if (freeSkill) {
+            routeOpts = { system: buildFreeSkillSystem(SYSTEM_PROMPT, freeSkill) };
+            bub.innerHTML = engineThinkingHtml(freeSkill.tier || 'standard');
+          }
+        }
       }
 
       let started = false;
