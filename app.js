@@ -68,6 +68,7 @@
   const ENGINE_KEY = 'lth_ia_web_engine_v1';
   const OSDEV_KEY = 'lth_ia_web_osdevice_v1';
   const REASON_KEY = 'lth_ia_web_reason_v1';
+  const THEME_KEY = 'lth_ia_web_theme_v1';
   const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
   /* ───────────────────────── Estado ───────────────────────── */
@@ -1130,6 +1131,18 @@
   }
   function closeProModal() { if (el.proModal) el.proModal.hidden = true; }
 
+  // Tema claro / oscuro (por defecto oscuro). Aplica a toda la app y se recuerda.
+  function applyTheme(theme) {
+    const light = theme === 'light';
+    document.body.classList.toggle('light', light);
+    if (el.themeSeg) el.themeSeg.querySelectorAll('[data-theme]').forEach((b) => {
+      b.classList.toggle('on', b.getAttribute('data-theme') === (light ? 'light' : 'dark'));
+    });
+    const meta = document.querySelector('meta[name="theme-color"]');
+    if (meta) meta.setAttribute('content', light ? '#eef0f8' : '#02060a');
+    try { localStorage.setItem(THEME_KEY, light ? 'light' : 'dark'); } catch (_) {}
+  }
+
   function openModelMenu() {
     if (!el.modelMenu) return;
     el.modelMenu.hidden = false;
@@ -1390,6 +1403,10 @@
       if (!canUsePremium()) { showProModal('reasoning'); return; }
       state.reasoning = !state.reasoning; persistReason(); renderReasonBtn();
     });
+    if (el.themeSeg) el.themeSeg.addEventListener('click', (e) => {
+      const b = e.target.closest('[data-theme]');
+      if (b) applyTheme(b.getAttribute('data-theme'));
+    });
     if (el.proClose) el.proClose.addEventListener('click', closeProModal);
     if (el.proModal) el.proModal.addEventListener('click', (e) => { if (e.target === el.proModal) closeProModal(); });
     if (el.proBuyBtn) el.proBuyBtn.addEventListener('click', () => {
@@ -1553,11 +1570,13 @@
     el.composer = $('#composer'); el.input = $('#input'); el.sendBtn = $('#sendBtn'); el.reasonBtn = $('#reasonBtn');
     el.modelPickerBtn = $('#modelPickerBtn'); el.modelPickerLabel = $('#modelPickerLabel'); el.modelMenu = $('#modelMenu'); el.composerHint = $('#composerHint');
     el.proModal = $('#proModal'); el.proClose = $('#proClose'); el.proBuyBtn = $('#proBuyBtn'); el.proSub = $('#proSub');
+    el.themeSeg = $('#themeSeg');
     el.icSend = el.sendBtn.querySelector('.ic-send'); el.icStop = el.sendBtn.querySelector('.ic-stop');
   }
 
   async function init() {
     cache();
+    try { applyTheme(localStorage.getItem(THEME_KEY) === 'light' ? 'light' : 'dark'); } catch (_) { applyTheme('dark'); }
     if (!SB_URL || !SB_KEY) { authMessage('Falta configurar Supabase en config.js.'); return; }
     document.querySelectorAll('[data-auth-tab]').forEach((t) => t.addEventListener('click', () => setAuthMode(t.getAttribute('data-auth-tab'))));
     el.authForm.addEventListener('submit', handleAuthSubmit);
