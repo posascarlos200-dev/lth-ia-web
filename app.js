@@ -1467,10 +1467,12 @@
     el.authForm.hidden = false;
     el.invitePanel.hidden = true;
     el.pinForm.hidden = true;
+    el.resetForm.hidden = true;
     document.querySelectorAll('[data-auth-tab]').forEach((t) => t.classList.toggle('on', t.getAttribute('data-auth-tab') === mode));
     const signup = mode === 'signup';
     el.passwordRules.hidden = !signup;
     el.turnstileWrap.hidden = !signup;
+    el.forgotPasswordBtn.hidden = signup;
     el.authBtnLabel.textContent = signup ? 'Solicitar invitación' : 'Entrar';
     el.authPassword.setAttribute('autocomplete', signup ? 'new-password' : 'current-password');
     el.authFoot.textContent = signup
@@ -1523,6 +1525,7 @@
     el.authTabs.hidden = true;
     el.authForm.hidden = true;
     el.pinForm.hidden = true;
+    el.resetForm.hidden = true;
     el.invitePanel.hidden = false;
     el.inviteStatusIcon.textContent = vm.icon;
     el.inviteStatusTitle.textContent = vm.title;
@@ -1582,6 +1585,55 @@
     }
   }
 
+  function resetTracker(value) {
+    const key = 'lth_ia_password_reset_tracker_v1';
+    if (value === undefined) { try { return JSON.parse(localStorage.getItem(key) || 'null'); } catch (_) { return null; } }
+    try { value ? localStorage.setItem(key, JSON.stringify(value)) : localStorage.removeItem(key); } catch (_) {}
+  }
+
+  function showResetForm(complete) {
+    stopInvitePolling();
+    el.authTabs.hidden = true; el.authForm.hidden = true; el.invitePanel.hidden = true; el.pinForm.hidden = true; el.resetForm.hidden = false;
+    state.resetStage = complete ? 'complete' : 'request';
+    el.resetPinFields.hidden = !complete; el.resetTurnstile.hidden = !!complete;
+    el.resetHavePinBtn.hidden = !!complete; el.resetBtnLabel.textContent = complete ? 'Cambiar contraseña' : 'Solicitar PIN';
+    el.resetMsg.textContent = '';
+    if (!complete) INVITES.renderTurnstile('resetTurnstileWidget', CFG.TURNSTILE_SITE_KEY).catch((error) => { el.resetMsg.textContent = error.message; });
+    const tracker = resetTracker(); if (tracker && tracker.email) el.resetEmail.value = tracker.email;
+  }
+
+  async function handleResetSubmit(event) {
+    event.preventDefault();
+    const email = String(el.resetEmail.value || '').trim().toLowerCase();
+    if (!email) { el.resetMsg.textContent = 'Escribe tu correo.'; return; }
+    el.resetSubmit.disabled = true; el.resetSpinner.hidden = false; el.resetMsg.textContent = '';
+    try {
+      if (state.resetStage === 'request') {
+        const token = INVITES.turnstileToken('resetTurnstileWidget');
+        if (!token) throw new Error('Completa la verificación de seguridad.');
+        const data = await inviteCall('password.request', { email, turnstileToken: token });
+        if (data.reset && data.reset.requestToken) resetTracker({ email, requestToken: data.reset.requestToken });
+        INVITES.resetTurnstile('resetTurnstileWidget'); state.resetStage = 'status';
+        el.resetBtnLabel.textContent = 'Actualizar estado';
+        el.resetMsg.textContent = 'Solicitud recibida. El PIN se enviará manualmente; normalmente dentro de 24 horas.';
+      } else if (state.resetStage === 'status') {
+        const tracker = resetTracker();
+        if (!tracker || !tracker.requestToken) { showResetForm(true); return; }
+        const data = await inviteCall('password.status', { requestToken: tracker.requestToken });
+        if (data.reset.status === 'code_sent') showResetForm(true);
+        else el.resetMsg.textContent = data.reset.status === 'code_ready' ? 'El PIN ya fue generado; falta marcarlo como enviado.' : 'La solicitud sigue pendiente de revisión.';
+      } else {
+        const pin = String(el.resetPin.value || '').replace(/\D/g, '');
+        const password = String(el.resetPassword.value || '');
+        if (!/^\d{6}$/.test(pin)) throw new Error('Escribe el PIN de 6 dígitos.');
+        const problem = INVITES.passwordError(password, email); if (problem) throw new Error(problem);
+        await inviteCall('password.complete', { email, pin, newPassword: password });
+        resetTracker(null); setAuthMode('login'); el.authEmail.value = email; el.authPassword.value = '';
+        authMessage('Contraseña actualizada. Ya puedes iniciar sesión.', true);
+      }
+    } catch (error) { el.resetMsg.textContent = error.message || 'No se pudo completar la solicitud.'; }
+    finally { el.resetSubmit.disabled = false; el.resetSpinner.hidden = true; }
+  }
   async function ensureWebAccess(session) {
     const data = await inviteCall('invite.accessStatus', {}, session.access_token);
     if (data.allowed) return true;
@@ -1623,7 +1675,8 @@
 
     setAuthBusy(true); authMessage('');
     try {
-      const data = await authFetch('/token?grant_type=password', { email, password });
+      const login = await inviteCall('auth.login', { email, password });
+      const data = login.session;
       const session = normalizeSession(data);
       if (!session) throw new Error('No se pudo iniciar sesión.');
       saveSession(session);
@@ -1699,6 +1752,10 @@
     el.inviteExpiry = $('#inviteExpiry'); el.inviteRefreshBtn = $('#inviteRefreshBtn'); el.inviteLoginBtn = $('#inviteLoginBtn');
     el.pinForm = $('#pinForm'); el.pinEmail = $('#pinEmail'); el.pinCode = $('#pinCode'); el.pinSubmit = $('#pinSubmit');
     el.pinSpinner = el.pinSubmit.querySelector('.pin-spinner'); el.pinMsg = $('#pinMsg'); el.pinBackBtn = $('#pinBackBtn');
+    el.forgotPasswordBtn = $('#forgotPasswordBtn'); el.resetForm = $('#resetForm'); el.resetEmail = $('#resetEmail');
+    el.resetTurnstile = $('#resetTurnstile'); el.resetPinFields = $('#resetPinFields'); el.resetPin = $('#resetPin'); el.resetPassword = $('#resetPassword');
+    el.resetSubmit = $('#resetSubmit'); el.resetBtnLabel = el.resetSubmit.querySelector('.reset-btn-label'); el.resetSpinner = el.resetSubmit.querySelector('.reset-spinner');
+    el.resetMsg = $('#resetMsg'); el.resetHavePinBtn = $('#resetHavePinBtn'); el.resetBackBtn = $('#resetBackBtn');
     el.menuBtn = $('#menuBtn'); el.statusDot = $('#statusDot'); el.modelLabel = $('#modelLabel'); el.engineBadge = $('#engineBadge');
     el.creditsBtn = $('#creditsBtn'); el.planTag = $('#planTag');
     el.usageFill = $('#usageFill'); el.usageVal = $('#usageVal'); el.usageLabel = $('#usageLabel');
@@ -1726,6 +1783,11 @@
     document.querySelectorAll('[data-auth-tab]').forEach((t) => t.addEventListener('click', () => setAuthMode(t.getAttribute('data-auth-tab'))));
     el.authForm.addEventListener('submit', handleAuthSubmit);
     el.pinForm.addEventListener('submit', handlePinSubmit);
+    el.resetForm.addEventListener('submit', handleResetSubmit);
+    el.forgotPasswordBtn.addEventListener('click', () => showResetForm(false));
+    el.resetHavePinBtn.addEventListener('click', () => showResetForm(true));
+    el.resetBackBtn.addEventListener('click', () => setAuthMode('login'));
+    el.resetPin.addEventListener('input', () => { el.resetPin.value = el.resetPin.value.replace(/\D/g, '').slice(0, 6); });
     el.havePinBtn.addEventListener('click', () => showPinPanel(el.authEmail.value));
     el.pinBackBtn.addEventListener('click', () => setAuthMode('login'));
     el.inviteLoginBtn.addEventListener('click', () => setAuthMode('login'));

@@ -56,3 +56,17 @@ node ..\..\scripts\test-lth-ia-web-invitations.js
 ```
 
 El registro real permanece desactivado localmente mientras `TURNSTILE_SITE_KEY` esté vacío. El inicio de sesión existente se mantiene visible.
+
+## Recuperación manual de contraseña
+
+- El usuario pulsa **Olvidé mi contraseña**, valida Turnstile y crea una solicitud.
+- LTH-OS-Admin muestra la solicitud en **Pendientes > Restablecer contraseñas**.
+- Solo `owner` puede generar el PIN, verlo una vez, marcarlo como enviado, rechazarlo o reabrirlo.
+- La vigencia de 24 horas comienza al marcar el PIN como enviado. Cinco PIN incorrectos bloquean la solicitud.
+- La nueva contraseña exige 12 caracteres, mayúscula, minúscula, número y símbolo. El PIN y los identificadores de red se almacenan con HMAC; la contraseña nunca se guarda en tablas ni logs.
+
+## Protección del inicio de sesión
+
+El login pasa por `auth.login` en `lth-ia-invites`. Cada intento tiene una espera mínima uniforme de 900 ms. Cinco fallos dentro de 15 minutos bloquean temporalmente por 15 minutos tanto el correo como la IP. Un inicio correcto limpia los contadores. La interfaz nunca decide el bloqueo: siempre lo aplica el servidor.
+
+Acciones públicas nuevas: `auth.login`, `password.request`, `password.status` y `password.complete`.
