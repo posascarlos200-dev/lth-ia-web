@@ -1116,6 +1116,20 @@
       });
     }
   }
+  // Banner de upsell a Plan Pro (cuando un usuario free toca algo premium).
+  function showProModal(context) {
+    if (!el.proModal) return;
+    if (el.proSub) {
+      el.proSub.innerHTML = context === 'reasoning'
+        ? 'El <b>Modo Razonamiento</b> es del <b>plan Pro</b>. Cámbiate y deja que un experto + un juez verifiquen cada respuesta.'
+        : context === 'model'
+          ? 'Ese <b>modelo</b> es del <b>plan Pro</b>. Desbloquéalo y elige el motor que quieras.'
+          : 'Esta función es del <b>plan Pro</b>. Cámbiate y obtén lo mejor de LTH IA.';
+    }
+    el.proModal.hidden = false;
+  }
+  function closeProModal() { if (el.proModal) el.proModal.hidden = true; }
+
   function openModelMenu() {
     if (!el.modelMenu) return;
     el.modelMenu.hidden = false;
@@ -1372,7 +1386,18 @@
       if (state.busy) { if (state.abort) state.abort.abort(); return; }
       send(el.input.value);
     });
-    el.reasonBtn.addEventListener('click', () => { state.reasoning = !state.reasoning; persistReason(); renderReasonBtn(); });
+    el.reasonBtn.addEventListener('click', () => {
+      if (!canUsePremium()) { showProModal('reasoning'); return; }
+      state.reasoning = !state.reasoning; persistReason(); renderReasonBtn();
+    });
+    if (el.proClose) el.proClose.addEventListener('click', closeProModal);
+    if (el.proModal) el.proModal.addEventListener('click', (e) => { if (e.target === el.proModal) closeProModal(); });
+    if (el.proBuyBtn) el.proBuyBtn.addEventListener('click', () => {
+      // Compra aún bloqueada: por ahora solo marketing.
+      el.proBuyBtn.textContent = 'Disponible muy pronto ✨';
+      el.proBuyBtn.disabled = true;
+      setTimeout(() => { el.proBuyBtn.textContent = 'Comprar plan Pro'; el.proBuyBtn.disabled = false; }, 2200);
+    });
     if (el.modelPickerBtn) {
       el.modelPickerBtn.addEventListener('click', (e) => {
         e.stopPropagation();
@@ -1386,7 +1411,7 @@
         const id = btn.getAttribute('data-model');
         const m = MANUAL_MODELS[id];
         if (!m) return;
-        if (m.premium && !canUsePremium()) { setComposerHint('Ese modelo es de un plan de pago.'); return; }
+        if (m.premium && !canUsePremium()) { closeModelMenu(); showProModal('model'); return; }
         state.manualModel = id;
         renderModelBar();
         closeModelMenu();
@@ -1527,6 +1552,7 @@
     el.messages = $('#messages'); el.welcome = $('#welcome'); el.suggestions = $('#suggestions');
     el.composer = $('#composer'); el.input = $('#input'); el.sendBtn = $('#sendBtn'); el.reasonBtn = $('#reasonBtn');
     el.modelPickerBtn = $('#modelPickerBtn'); el.modelPickerLabel = $('#modelPickerLabel'); el.modelMenu = $('#modelMenu'); el.composerHint = $('#composerHint');
+    el.proModal = $('#proModal'); el.proClose = $('#proClose'); el.proBuyBtn = $('#proBuyBtn'); el.proSub = $('#proSub');
     el.icSend = el.sendBtn.querySelector('.ic-send'); el.icStop = el.sendBtn.querySelector('.ic-stop');
   }
 
