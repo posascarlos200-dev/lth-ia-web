@@ -33,9 +33,9 @@
         <p class="brand-sub">Tu asistente <b>Mady</b> · directa desde el ecosistema LTH OS</p>
       </div>
 
-      <div class="auth-tabs">
+      <div class="auth-tabs" id="authTabs">
         <button class="auth-tab on" data-auth-tab="login" type="button">Entrar</button>
-        <button class="auth-tab" data-auth-tab="signup" type="button">Crear cuenta</button>
+        <button class="auth-tab" data-auth-tab="signup" type="button">Solicitar acceso</button>
       </div>
 
       <form id="authForm" class="auth-form" autocomplete="on" novalidate>
@@ -45,21 +45,59 @@
         </label>
         <label class="field">
           <span>Contraseña</span>
-          <input id="authPassword" type="password" autocomplete="current-password" placeholder="••••••••" minlength="6" required />
+          <input id="authPassword" type="password" autocomplete="current-password" placeholder="••••••••••••" minlength="12" required />
         </label>
-        <label class="field" id="authNameField" hidden>
-          <span>Nombre (opcional)</span>
-          <input id="authName" type="text" autocomplete="name" placeholder="Cómo te llama Mady" />
-        </label>
+        <div id="passwordRules" class="password-rules" hidden>
+          <strong>Contraseña segura</strong>
+          <span>12 caracteres, mayúscula, minúscula, número y símbolo.</span>
+        </div>
+        <div id="turnstileWrap" class="turnstile-wrap" hidden>
+          <div id="turnstileWidget"></div>
+          <small>Protección contra registros automáticos.</small>
+        </div>
 
         <button id="authSubmit" class="btn-primary" type="submit">
           <span class="btn-label">Entrar</span>
           <span class="btn-spinner" hidden></span>
         </button>
-        <p id="authMsg" class="auth-msg" role="status"></p>
+        <p id="authMsg" class="auth-msg" role="status" aria-live="polite"></p>
+        <button id="havePinBtn" class="auth-link" type="button">Ya tengo un PIN</button>
       </form>
 
-      <p class="auth-foot">Plan <b>free</b> incluido · sin tarjeta · chatea con Mady ya mismo</p>
+      <section id="invitePanel" class="invite-panel" hidden aria-live="polite">
+        <div id="inviteStatusIcon" class="invite-status-icon">◌</div>
+        <p id="inviteStatusTag" class="invite-status-tag">ACCESO POR INVITACIÓN</p>
+        <h2 id="inviteStatusTitle">Solicitud pendiente</h2>
+        <p id="inviteStatusText"></p>
+        <div id="inviteMaskedEmail" class="masked-email"></div>
+        <p id="inviteExpiry" class="invite-expiry"></p>
+        <div class="invite-panel-actions">
+          <button id="inviteRefreshBtn" class="btn-primary" type="button">Actualizar estado</button>
+          <button id="inviteLoginBtn" class="auth-link" type="button">Volver a iniciar sesión</button>
+        </div>
+      </section>
+
+      <form id="pinForm" class="auth-form pin-form" hidden novalidate>
+        <p class="invite-status-tag">VERIFICACIÓN MANUAL</p>
+        <h2>Introduce tu PIN</h2>
+        <p id="pinIntro" class="pin-intro">Escribe el código de 6 dígitos que enviamos a tu correo.</p>
+        <label class="field">
+          <span>Correo</span>
+          <input id="pinEmail" type="email" inputmode="email" autocomplete="email" placeholder="tu@correo.com" required />
+        </label>
+        <label class="field">
+          <span>PIN de 6 dígitos</span>
+          <input id="pinCode" class="pin-code" type="text" inputmode="numeric" autocomplete="one-time-code" maxlength="6" pattern="[0-9]{6}" placeholder="000000" required />
+        </label>
+        <button id="pinSubmit" class="btn-primary" type="submit">
+          <span class="pin-btn-label">Verificar cuenta</span>
+          <span class="pin-spinner btn-spinner" hidden></span>
+        </button>
+        <p id="pinMsg" class="auth-msg" role="status" aria-live="polite"></p>
+        <button id="pinBackBtn" class="auth-link" type="button">Volver</button>
+      </form>
+
+      <p id="authFoot" class="auth-foot">LTH Mady está en producción · acceso nuevo solo por invitación</p>
     </div>
   </section>
 
@@ -220,9 +258,11 @@
     </div>
   </main>
 
+  <script src="https://challenges.cloudflare.com/turnstile/v0/api.js?render=explicit" async defer></script>
   <script src="./config.js"></script>
   <script src="./vendor/jspdf.umd.min.js"></script>
   <script src="./vendor/lth-router.js"></script>
+  <script src="./invitations.js"></script>
   <script src="./app.js"></script>
 </body>
 </html>
