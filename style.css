@@ -67,7 +67,9 @@ input, textarea { font-family: inherit; }
 /* ════════ PANTALLA DE ACCESO ════════ */
 .auth-screen {
   position: relative; z-index: 2;
-  min-height: 100%; display: grid; place-items: center;
+  height: 100vh; height: 100dvh;
+  overflow-y: auto; -webkit-overflow-scrolling: touch;
+  display: flex; flex-direction: column; align-items: center;
   padding: calc(28px + var(--safe-top)) 20px calc(28px + var(--safe-bot));
 }
 /* display:grid de arriba anula el [hidden] del navegador; hay que forzar el
@@ -75,6 +77,7 @@ input, textarea { font-family: inherit; }
 .auth-screen[hidden] { display: none; }
 .auth-card {
   width: 100%; max-width: 400px;
+  margin: auto 0; flex: none;
   background: var(--panel);
   border: 1px solid var(--line-strong);
   border-radius: 22px;
