@@ -125,4 +125,15 @@ assert.equal(ddg[0].url, 'https://duckduckgo.com/Nikola_Tesla');
 assert.match(ddg[1].title, /Corriente alterna/);
 assert.equal(api.parseDuckDuckGoResults(null, 'x').length, 0);
 
-console.log('free-research-layer: 17/17 OK');
+// Deteccion determinista de intencion web en vivo (fuerza tier web en pro/auto)
+assert.equal(typeof api.detectLiveWebIntent, 'function');
+assert.equal(api.detectLiveWebIntent('cuanto esta el bitcoin'), true);
+assert.equal(api.detectLiveWebIntent('cuánto está el bitcoin'), true);
+assert.equal(api.detectLiveWebIntent('que noticias hay en texas'), true);
+assert.equal(api.detectLiveWebIntent('precio del dolar hoy'), true);
+assert.equal(api.detectLiveWebIntent('clima en tegucigalpa'), true);
+assert.equal(api.detectLiveWebIntent('explicame la teoria de la relatividad'), false);
+assert.equal(api.detectLiveWebIntent('hola como estas'), false);
+assert.equal(api.detectLiveWebIntent('traduce hola al ingles'), false);
+
+console.log('free-research-layer: 26/26 OK');

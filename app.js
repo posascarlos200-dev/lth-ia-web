@@ -1335,7 +1335,7 @@
     ]).catch(() => {});
   }
 
-  window.LTH_IA_TEST_API = { normalizeBrain, extractBrainFromUserMessage, buildBrainContextBlock, detectCrisisIntent, detectFreeSkillIntent, buildFreeSkillSystem, buildFreeSkillClarification, normalizeResearchQuery, detectFreeResearchIntent, buildFreeResearchContextBlock, buildDeviceMemoryRecallBlock, mergeConvoCollections, serializeConvoForCache, extractEntities, detectBrainConflicts, mergeBrain, parseDuckDuckGoResults };
+  window.LTH_IA_TEST_API = { normalizeBrain, extractBrainFromUserMessage, buildBrainContextBlock, detectCrisisIntent, detectFreeSkillIntent, buildFreeSkillSystem, buildFreeSkillClarification, normalizeResearchQuery, detectFreeResearchIntent, buildFreeResearchContextBlock, buildDeviceMemoryRecallBlock, mergeConvoCollections, serializeConvoForCache, extractEntities, detectBrainConflicts, mergeBrain, parseDuckDuckGoResults, detectLiveWebIntent };
 
   async function loadConvos() {
     state.convos = loadCachedConvos();
@@ -2198,10 +2198,29 @@
   }
 
   /* â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ Auto-router (pensar en automatico como Mady del OS) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
+  // Deteccion determinista de "necesita internet en vivo" (precios, noticias, clima,
+  // actualidad). El clasificador LLM falla con frases cortas como "cuanto esta el bitcoin",
+  // asi que esto FUERZA el tier web (perplexity/sonar) sin depender del modelo barato.
+  function detectLiveWebIntent(text) {
+    const raw = normalizeForSearch(text);
+    if (!raw) return false;
+    if (/\b(precio|precios|cotizacion|cotiza|tipo de cambio|a cuanto|cuanto (cuesta|vale|esta|anda)|valor (de|del|actual))\b/.test(raw)) return true;
+    if (/\b(bitcoin|btc|ethereum|eth|dolar|euro|peso|cripto|criptomoneda|accion|acciones|bolsa|nasdaq|sp500)\b/.test(raw) && /\b(cuanto|precio|vale|esta|cotiza|valor|hoy|ahora|cambio)\b/.test(raw)) return true;
+    if (/\b(noticias?|que paso|ultima hora|ultimas noticias|hoy|esta semana|actualmente|en este momento|ahora mismo|reciente|recientes|ultimo lanzamiento|version mas nueva|que hay de nuevo)\b/.test(raw)) return true;
+    if (/\b(clima|el tiempo en|pronostico|temperatura en|resultado|marcador|quien gano|quien va ganando)\b/.test(raw)) return true;
+    if (/\b(busca en internet|buscar en internet|investiga|googlea|en la web|busca informacion)\b/.test(raw)) return true;
+    return false;
+  }
+
+  function forcedWebRoute(R, plan) {
+    return R.chooseModel(R.validateDecision({ category: 'business', target_tier: 'standard', needs_web: true, confidence: 0.9 }, { manualMode: 'auto' }), { userPlan: plan, manualMode: 'auto' });
+  }
+
   async function autoRoute(text, convo) {
     const R = window.LTHRouter;
     const plan = String((state.credits && state.credits.plan) || 'free').toLowerCase();
     if (!R || !['pro', 'studio', 'ultra'].includes(plan)) return null;
+    const forceWeb = detectLiveWebIntent(text);
     try {
       const brainBlock = buildBrainContextBlock(convo, text);
       const input = R.buildClassifierInput({
@@ -2220,12 +2239,19 @@
         messages: [{ role: 'user', content: input }]
       }, state.abort && state.abort.signal);
       const data = await res.json().catch(() => ({}));
-      if (!res.ok || data.success === false) return null;
+      if (!res.ok || data.success === false) return forceWeb ? forcedWebRoute(R, plan) : null;
       let raw = {};
       try { const m = String(data.text || '').match(/\{[\s\S]*\}/); raw = m ? JSON.parse(m[0]) : {}; } catch (_) { raw = {}; }
       const decision = R.validateDecision(raw, { manualMode: 'auto' });
+      // Override en vivo: si claramente pide datos actuales, gana la ruta web aunque el
+      // clasificador la haya mandado a standard/premium (pero respeta codigo/imagen/bloqueo).
+      if (forceWeb && decision.category !== 'image_generation' && decision.category !== 'image_editing' && decision.category !== 'code' && decision.category !== 'debug' && decision.target_tier !== 'blocked') {
+        decision.needs_web = true;
+        if (decision.target_tier === 'premium') decision.target_tier = 'standard';
+        if (decision.category === 'reasoning' || decision.category === 'app_architecture') decision.category = 'business';
+      }
       return R.chooseModel(decision, { userPlan: plan, manualMode: 'auto' });
-    } catch (_) { return null; }
+    } catch (_) { return forceWeb ? forcedWebRoute(R, plan) : null; }
   }
 
   function engineThinkingHtml(tier) {
