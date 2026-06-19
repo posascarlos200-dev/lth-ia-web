@@ -97,6 +97,7 @@
   // Selector de modelo manual (barra de modelos, igual que en LTH OS). 'auto' deja
   // que el router elija. Los premium requieren plan de pago (el server tambien lo valida).
   const MANUAL_MODELS = {
+    free: { label: 'Mady Canont Free' },
     auto: { label: 'Auto' },
     flashlite: { label: 'Flash Lite', model: 'google/gemini-2.5-flash-lite', maxTokens: 4000, temperature: 0.2, reasoning: { enabled: true, effort: 'minimal', exclude: true } },
     sonnet: { label: 'Sonnet 4.6', model: 'anthropic/claude-sonnet-4.6', maxTokens: 16000, temperature: 0.2, reasoning: { enabled: true, effort: 'high', exclude: true }, premium: true },
@@ -237,8 +238,9 @@
         if (data.modelLabel || data.model) state.modelLabel = data.modelLabel || data.model;
         // En el plan free se muestra una marca propia, no el nombre del modelo real.
         const plan = String((state.credits && state.credits.plan) || 'free').toLowerCase();
-        if (plan === 'free') state.modelLabel = 'Mady Canont free';
+        if (plan === 'free') state.modelLabel = 'Mady Canont Free';
         renderCredits();
+        renderModelBar();
       }
     } catch (_) {}
   }
@@ -564,8 +566,9 @@
 
       const history = convo.messages.slice(-HISTORY_LIMIT).map((m) => ({ role: m.role, content: m.content }));
 
-      // Modelo MANUAL forzado desde la barra de modelos (si no es 'auto').
-      const manual = state.manualModel !== 'auto' ? MANUAL_MODELS[state.manualModel] : null;
+      // Modelo MANUAL forzado desde la barra de modelos (si no es 'auto' ni 'free').
+      // 'free' es solo una etiqueta del plan Free: se comporta como 'auto' (el servidor fuerza el modelo del plan).
+      const manual = (state.manualModel !== 'auto' && state.manualModel !== 'free') ? MANUAL_MODELS[state.manualModel] : null;
       const manualAllowed = manual && (!manual.premium || canUsePremium());
       let routeOpts = null;
       if (manual && !manualAllowed) {
@@ -648,6 +651,10 @@
   function canUsePremium() {
     const plan = String((state.credits && state.credits.plan) || 'free').toLowerCase();
     return ['pro', 'studio', 'ultra'].includes(plan) && (state.credits ? state.credits.plan_active !== false : true);
+  }
+
+  function isFreePlan() {
+    return String((state.credits && state.credits.plan) || 'free').toLowerCase() === 'free';
   }
 
   function looksLikePdfRequest(text) {
@@ -1116,11 +1123,17 @@
     composerHintTimer = setTimeout(() => { if (el.composerHint) el.composerHint.textContent = original; }, 4000);
   }
   function renderModelBar() {
+    const free = isFreePlan();
+    // En el plan free solo existe un modelo visible: "Mady Canont Free".
+    if (free) state.manualModel = 'free';
+    else if (state.manualModel === 'free') state.manualModel = 'auto';
     const cur = MANUAL_MODELS[state.manualModel] || MANUAL_MODELS.auto;
     if (el.modelPickerLabel) el.modelPickerLabel.textContent = cur.label || 'Auto';
     if (el.modelMenu) {
       el.modelMenu.querySelectorAll('[data-model]').forEach((b) => {
-        b.classList.toggle('on', b.getAttribute('data-model') === state.manualModel);
+        const id = b.getAttribute('data-model');
+        b.hidden = free ? id !== 'free' : id === 'free';
+        b.classList.toggle('on', id === state.manualModel);
       });
     }
   }
