@@ -1655,10 +1655,21 @@
       if (state.resetStage === 'request') {
         const token = INVITES.turnstileToken('resetTurnstileWidget');
         if (!token) throw new Error('Completa la verificación de seguridad.');
-        const data = await inviteCall('password.request', { email, turnstileToken: token });
-        if (data.reset && data.reset.requestToken) resetTracker({ email, requestToken: data.reset.requestToken });
+        let alreadyRequested = false;
+        try {
+          const data = await inviteCall('password.request', { email, turnstileToken: token });
+          if (data.reset && data.reset.requestToken) resetTracker({ email, requestToken: data.reset.requestToken });
+        } catch (err) {
+          // Si ya hay una solicitud previa (p.ej. tope de solicitudes), no es un fallo real:
+          // pasamos igual a introducir el PIN, que es lo unico que falta.
+          const tracker = resetTracker();
+          if (!(tracker && tracker.email)) throw err;
+          alreadyRequested = true;
+        }
         showResetForm(true);
-        el.resetMsg.textContent = 'Solicitud enviada. Revisa tu bandeja de entrada (y la carpeta de spam) y escribe el PIN aquí.';
+        el.resetMsg.textContent = alreadyRequested
+          ? 'Ya tenías una solicitud activa. Escribe el PIN que te enviamos a tu correo.'
+          : 'Solicitud enviada. Revisa tu bandeja de entrada (y la carpeta de spam) y escribe el PIN aquí.';
         el.resetMsg.classList.add('ok');
       } else {
         const pin = String(el.resetPin.value || '').replace(/\D/g, '');
