@@ -1,10 +1,10 @@
-/* ════════════════════════════════════════════════════════════
-   LTH IA Web · app.js
+﻿/* â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+   LTH IA Web Â· app.js
    Chat movil con Mady. Auth Supabase (email/password) + edge
    function lth-ia-cloud (stream SSE) + historial sincronizado
    con la tabla ia_conversations (compartido con PC y LTH Remote).
    Sin dependencias, sin build: archivos estaticos.
-   ════════════════════════════════════════════════════════════ */
+   â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â• */
 (() => {
   'use strict';
 
@@ -25,6 +25,13 @@
   const BRAIN_MIN_MESSAGES = 4;
   const BRAIN_UPDATE_INTERVAL = 2;
   const BRAIN_UPDATE_MODEL = 'google/gemini-2.5-flash-lite';
+  const FREE_RESEARCH_TIMEOUT_MS = 4500;
+  const FREE_RESEARCH_MAX_SOURCES = 3;
+  const LOCAL_MEMORY_DB_NAME = 'lth_ia_web_local_memory_v1';
+  const LOCAL_MEMORY_DB_VERSION = 1;
+  const LOCAL_MEMORY_STORE = 'conversations';
+  const LOCAL_RECALL_MAX_SNIPPETS = 4;
+  const LOCAL_RECALL_RECENT_SKIP = 8;
 
   const SYSTEM_PROMPT = [
     'Eres LTH IA, tambien llamada Mady: la asistente oficial del ecosistema LTH OS, hablando desde la web movil del usuario.',
@@ -77,7 +84,7 @@
   const THEME_KEY = 'lth_ia_web_theme_v1';
   const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
-  /* ───────────────────────── Estado ───────────────────────── */
+  /* â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ Estado â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
   const state = {
     session: null,     // { access_token, refresh_token, expires_at, user }
     user: null,
@@ -112,7 +119,7 @@
     image: { label: 'Imagen', image: true, premium: true }
   };
 
-  /* ───────────────────────── Utils ───────────────────────── */
+  /* â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ Utils â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
   const $ = (sel) => document.querySelector(sel);
   const el = {};
   const nowSec = () => Math.floor(Date.now() / 1000);
@@ -164,7 +171,7 @@
     return html || '<p></p>';
   }
 
-  /* ───────────────────────── Sesion ───────────────────────── */
+  /* â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ Sesion â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
   function saveSession(s) {
     state.session = s;
     state.user = s && s.user ? s.user : state.user;
@@ -217,7 +224,7 @@
     return null;
   }
 
-  /* ─────────────────── Edge function (IA) ─────────────────── */
+  /* â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ Edge function (IA) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
   function ApiError(message, status, credits) {
     const e = new Error(message); e.status = status; e.credits = credits; return e;
   }
@@ -299,7 +306,7 @@
     return { text: full, credits };
   }
 
-  /* ─────────────────── Conversaciones ─────────────────── */
+  /* â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ Conversaciones â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
 
 
   const brainUpdatePending = new Set();
@@ -554,11 +561,11 @@
     const raw = normalizeWhitespace(text).toLowerCase();
     const patterns = [
       { rx: /\b(?:al?|a) ingles\b|\bto english\b/, value: 'ingles' },
-      { rx: /\b(?:al?|a) espanol\b|\b(?:al?|a) espa[nñ]ol\b|\bto spanish\b/, value: 'espanol' },
-      { rx: /\b(?:al?|a) portugues\b|\b(?:al?|a) portugu[eê]s\b/, value: 'portugues' },
-      { rx: /\b(?:al?|a) frances\b|\b(?:al?|a) franc[eé]s\b|\bto french\b/, value: 'frances' },
+      { rx: /\b(?:al?|a) espanol\b|\b(?:al?|a) espa[nÃ±]ol\b|\bto spanish\b/, value: 'espanol' },
+      { rx: /\b(?:al?|a) portugues\b|\b(?:al?|a) portugu[eÃª]s\b/, value: 'portugues' },
+      { rx: /\b(?:al?|a) frances\b|\b(?:al?|a) franc[eÃ©]s\b|\bto french\b/, value: 'frances' },
       { rx: /\b(?:al?|a) italiano\b|\bto italian\b/, value: 'italiano' },
-      { rx: /\b(?:al?|a) aleman\b|\b(?:al?|a) alem[aá]n\b|\bto german\b/, value: 'aleman' }
+      { rx: /\b(?:al?|a) aleman\b|\b(?:al?|a) alem[aÃ¡]n\b|\bto german\b/, value: 'aleman' }
     ];
     const hit = patterns.find((item) => item.rx.test(raw));
     return hit ? hit.value : '';
@@ -585,14 +592,14 @@
     const lower = raw.toLowerCase();
     const definitions = [
       { kind: 'translate', label: 'traduccion fiel', tier: 'standard', match: /\b(traduce|traducelo|traducir|traduccion|translate)\b/ },
-      { kind: 'rewrite', label: 'reescritura y mejora', tier: 'standard', match: /\b(corrige|corrigelo|mejora|mejoralo|reescribe|redacta mejor|hazlo mas formal|hazlo m[aá]s formal|pul[eé]lo)\b/ },
+      { kind: 'rewrite', label: 'reescritura y mejora', tier: 'standard', match: /\b(corrige|corrigelo|mejora|mejoralo|reescribe|redacta mejor|hazlo mas formal|hazlo m[aÃ¡]s formal|pul[eÃ©]lo)\b/ },
       { kind: 'summarize', label: 'resumen y sintesis', tier: 'files', match: /\b(resume|resumelo|resumir|resumen|sintetiza|sintesis|puntos clave)\b/ },
-      { kind: 'compare', label: 'comparacion guiada', tier: 'standard', match: /\b(compara|comparacion|comparaci[oó]n|diferencias?|ventajas?|desventajas?)\b|\bvs\b|\bversus\b/ },
+      { kind: 'compare', label: 'comparacion guiada', tier: 'standard', match: /\b(compara|comparacion|comparaci[oÃ³]n|diferencias?|ventajas?|desventajas?)\b|\bvs\b|\bversus\b/ },
       { kind: 'extract', label: 'extraccion de puntos accionables', tier: 'files', match: /\b(extrae|saca|lista|checklist|to do|todo list|acciones clave|tareas clave)\b/ },
-      { kind: 'plan', label: 'plan paso a paso', tier: 'standard', match: /\b(plan|pasos|roadmap|guia|gu[ií]a|como empiezo|c[oó]mo empiezo|estrategia|orden recomendado)\b/ },
-      { kind: 'decide', label: 'recomendacion y decision', tier: 'standard', match: /\b(recomienda|cu[aá]l conviene|que me recomiendas|qu[eé] me recomiendas|vale la pena|me conviene|elijo|escojo)\b/ },
-      { kind: 'troubleshoot', label: 'diagnostico y solucion', tier: 'code', match: /\b(no funciona|error|falla|bug|arregla|soluciona|diagnostica|diagnosticar|por que falla|por qu[eé] falla)\b/ },
-      { kind: 'explain', label: 'explicacion guiada', tier: 'standard', match: /\b(explica|explicame|qu[eé] significa|que significa|c[oó]mo funciona|como funciona|ens[eé]name|ensename)\b/ }
+      { kind: 'plan', label: 'plan paso a paso', tier: 'standard', match: /\b(plan|pasos|roadmap|guia|gu[iÃ­]a|como empiezo|c[oÃ³]mo empiezo|estrategia|orden recomendado)\b/ },
+      { kind: 'decide', label: 'recomendacion y decision', tier: 'standard', match: /\b(recomienda|cu[aÃ¡]l conviene|que me recomiendas|qu[eÃ©] me recomiendas|vale la pena|me conviene|elijo|escojo)\b/ },
+      { kind: 'troubleshoot', label: 'diagnostico y solucion', tier: 'code', match: /\b(no funciona|error|falla|bug|arregla|soluciona|diagnostica|diagnosticar|por que falla|por qu[eÃ©] falla)\b/ },
+      { kind: 'explain', label: 'explicacion guiada', tier: 'standard', match: /\b(explica|explicame|qu[eÃ©] significa|que significa|c[oÃ³]mo funciona|como funciona|ens[eÃ©]name|ensename)\b/ }
     ];
     const found = definitions.find((item) => item.match.test(lower));
     if (!found) return null;
@@ -667,9 +674,151 @@
     return baseSystem + '\n\n' + rules.join('\n');
   }
 
+
+  function inferResearchLanguage(text) {
+    const raw = normalizeWhitespace(text);
+    if (!raw) return 'es';
+    const englishHints = /\b(the|what|who|when|where|history|about|explain|today|latest|price|news)\b/i;
+    return englishHints.test(raw) ? 'en' : 'es';
+  }
+
+  function normalizeResearchQuery(text) {
+    const raw = normalizeWhitespace(text);
+    if (!raw) return '';
+    let cleaned = raw
+      .replace(/^por favor\s+/i, '')
+      .replace(/^(investiga|busca|averigua|dime|explica(?:me)?|cuentame|cu[eÃ©]ntame|resumeme|res[uÃº]meme|quiero saber|necesito saber)\s+/i, '')
+      .replace(/^(qu[eÃ©] es|que es|quien es|qui[eÃ©]n es|que fue|qu[eÃ©] fue|quien fue|qui[eÃ©]n fue|que sabes de|qu[eÃ©] sabes de)\s+/i, '')
+      .replace(/\?+$/g, '')
+      .trim();
+    return clipText(cleaned || raw, 140);
+  }
+
+  function detectFreeResearchIntent(text) {
+    const raw = normalizeWhitespace(text);
+    if (!raw) return { matched: false, query: '', freshness: 'stable', lang: 'es' };
+    const lower = raw.toLowerCase();
+    const stable = /\b(investiga|busca|averigua|qu[eÃ©] es|que es|quien es|qui[eÃ©]n es|quien fue|qui[eÃ©]n fue|historia de|origen de|datos de|informacion sobre|informaci[oÃ³]n sobre|explica|explicame|expl[iÃ­]came)\b/;
+    const volatile = /\b(hoy|actual|actuales|actualizada|actualizado|reciente|recientes|ultimas|Ãºltimas|ultimos|Ãºltimos|noticia|noticias|precio|precios|cotizacion|cotizaci[oÃ³]n|resultado|resultados|marcador|version mas nueva|versi[oÃ³]n m[aÃ¡]s nueva|ultimo lanzamiento|Ãºltimo lanzamiento)\b/;
+    const entityShape = /\b([A-Z][a-z]+\s+[A-Z][a-z]+|bitcoin|tesla|openai|microsoft|google|claude|gemini|wikipedia)\b/;
+    const matched = stable.test(lower) || volatile.test(lower) || (entityShape.test(raw) && /\?$/.test(raw));
+    return {
+      matched,
+      query: normalizeResearchQuery(raw),
+      freshness: volatile.test(lower) ? 'volatile' : 'stable',
+      lang: inferResearchLanguage(raw)
+    };
+  }
+
+  function stripHtmlTags(value) {
+    return normalizeWhitespace(String(value == null ? '' : value).replace(/<[^>]+>/g, ' '));
+  }
+
+  function buildFreeResearchContextBlock(research) {
+    if (!research || !Array.isArray(research.sources) || !research.sources.length) return '';
+    const lines = [
+      'INVESTIGACION FREE (fuentes publicas recuperadas por la web; usalas antes de responder):',
+      '- Consulta del usuario normalizada: ' + clipText(research.query || '', 140)
+    ];
+    if (research.freshness === 'volatile') {
+      lines.push('- Advertencia: esta consulta parece sensible al tiempo. No afirmes precios, noticias o hechos de ultimo minuto como confirmados si las fuentes no lo muestran claramente.');
+    }
+    research.sources.slice(0, FREE_RESEARCH_MAX_SOURCES).forEach((item, index) => {
+      lines.push('- Fuente ' + (index + 1) + ': ' + clipText(item.title || 'Fuente', 120) + ' | ' + clipText(item.source || 'web', 40) + ' | ' + clipText(item.url || '', 220));
+      lines.push('  Resumen: ' + clipText(item.summary || '', 420));
+    });
+    lines.push('Reglas: responde usando primero estas fuentes, separa hechos confirmados de inferencias y cita las URLs al final cuando uses datos de ellas. Si falta verificacion, dilo claramente.');
+    return lines.join('\n');
+  }
+
+  function buildFreeResearchSystem(baseSystem, research) {
+    const block = buildFreeResearchContextBlock(research);
+    return block ? (baseSystem + '\n\n' + block) : baseSystem;
+  }
+
+  async function fetchJsonWithTimeout(url, options, timeoutMs, outerSignal) {
+    const ctrl = typeof AbortController === 'function' ? new AbortController() : null;
+    const timer = ctrl ? setTimeout(() => { try { ctrl.abort(); } catch (_) {} }, timeoutMs || FREE_RESEARCH_TIMEOUT_MS) : null;
+    const signal = ctrl ? ctrl.signal : outerSignal;
+    if (outerSignal && ctrl) {
+      if (outerSignal.aborted) { if (timer) clearTimeout(timer); throw new Error('aborted'); }
+      outerSignal.addEventListener('abort', () => { try { ctrl.abort(); } catch (_) {} }, { once: true });
+    }
+    try {
+      const res = await fetch(url, Object.assign({}, options || {}, { signal }));
+      if (!res.ok) return null;
+      return await res.json().catch(() => null);
+    } finally {
+      if (timer) clearTimeout(timer);
+    }
+  }
+
+  async function searchWikipedia(query, lang, signal) {
+    const url = 'https://' + lang + '.wikipedia.org/w/api.php?action=query&list=search&srsearch=' + encodeURIComponent(query) + '&utf8=1&format=json&origin=*';
+    const data = await fetchJsonWithTimeout(url, { headers: { Accept: 'application/json' } }, FREE_RESEARCH_TIMEOUT_MS, signal).catch(() => null);
+    const rows = data && data.query && Array.isArray(data.query.search) ? data.query.search : [];
+    return rows.slice(0, FREE_RESEARCH_MAX_SOURCES).map((item) => ({
+      title: String(item.title || '').trim(),
+      snippet: stripHtmlTags(item.snippet || ''),
+      lang
+    })).filter((item) => item.title);
+  }
+
+  async function fetchWikipediaSummary(title, lang, signal) {
+    const url = 'https://' + lang + '.wikipedia.org/api/rest_v1/page/summary/' + encodeURIComponent(String(title || '').replace(/\s+/g, '_'));
+    const data = await fetchJsonWithTimeout(url, { headers: { Accept: 'application/json' } }, FREE_RESEARCH_TIMEOUT_MS, signal).catch(() => null);
+    if (!data) return null;
+    const summary = clipText(data.extract || '', 420);
+    const pageUrl = data.content_urls && data.content_urls.desktop && data.content_urls.desktop.page ? data.content_urls.desktop.page : ('https://' + lang + '.wikipedia.org/wiki/' + encodeURIComponent(String(title || '').replace(/\s+/g, '_')));
+    if (!summary) return null;
+    return {
+      title: String(data.title || title || '').trim(),
+      summary,
+      url: pageUrl,
+      source: 'Wikipedia ' + lang.toUpperCase(),
+      lang
+    };
+  }
+
+  async function runFreeResearch(text, signal) {
+    const intent = detectFreeResearchIntent(text);
+    if (!intent.matched || !intent.query) return null;
+    const languages = intent.lang === 'en' ? ['en', 'es'] : ['es', 'en'];
+    const sources = [];
+    const seen = new Set();
+    for (const lang of languages) {
+      const hits = await searchWikipedia(intent.query, lang, signal).catch(() => []);
+      for (const hit of hits) {
+        const key = (hit.title || '').toLowerCase();
+        if (!key || seen.has(key)) continue;
+        seen.add(key);
+        const summary = await fetchWikipediaSummary(hit.title, lang, signal).catch(() => null);
+        if (summary) {
+          sources.push(summary);
+        } else if (hit.snippet) {
+          sources.push({
+            title: hit.title,
+            summary: clipText(hit.snippet, 260),
+            url: 'https://' + lang + '.wikipedia.org/wiki/' + encodeURIComponent(String(hit.title || '').replace(/\s+/g, '_')),
+            source: 'Wikipedia ' + lang.toUpperCase(),
+            lang
+          });
+        }
+        if (sources.length >= FREE_RESEARCH_MAX_SOURCES) break;
+      }
+      if (sources.length >= FREE_RESEARCH_MAX_SOURCES) break;
+    }
+    if (!sources.length) return null;
+    return { query: intent.query, freshness: intent.freshness, lang: intent.lang, sources };
+  }
+
   function composeSystemWithMemory(baseSystem, convo, query) {
+    const blocks = [];
     const brainBlock = buildBrainContextBlock(convo, query);
-    return brainBlock ? (baseSystem + '\n\n' + brainBlock) : baseSystem;
+    const deviceBlock = buildDeviceMemoryRecallBlock(convo, query);
+    if (brainBlock) blocks.push(brainBlock);
+    if (deviceBlock) blocks.push(deviceBlock);
+    return blocks.length ? (baseSystem + '\n\n' + blocks.join('\n\n')) : baseSystem;
   }
 
   function buildCloudMessages(convo, purpose) {
@@ -768,23 +917,284 @@
     }
   }
 
-  window.LTH_IA_TEST_API = { normalizeBrain, extractBrainFromUserMessage, buildBrainContextBlock, detectCrisisIntent, detectFreeSkillIntent, buildFreeSkillSystem, buildFreeSkillClarification };
 
-  function loadConvos() {
+  const memoryStopWords = new Set(['que', 'como', 'para', 'sobre', 'esto', 'esta', 'este', 'estos', 'estas', 'donde', 'cuando', 'quien', 'cual', 'porque', 'por', 'una', 'uno', 'unos', 'unas', 'del', 'las', 'los', 'con', 'sin', 'muy', 'mas', 'mÃ¡s', 'sus', 'mis', 'tus', 'hay', 'aqui', 'ahi', 'ese', 'esa', 'eso', 'fue', 'era', 'ser', 'soy', 'eres', 'somos', 'son', 'the', 'what', 'when', 'where', 'who', 'with', 'from', 'this', 'that']);
+  let devicePersistTimer = null;
+  let localMemoryDbPromise = null;
+
+  function normalizeForSearch(value) {
+    return String(value == null ? '' : value)
+      .toLowerCase()
+      .normalize('NFD')
+      .replace(/[\u0300-\u036f]/g, '')
+      .replace(/[^a-z0-9\s]/g, ' ')
+      .replace(/\s+/g, ' ')
+      .trim();
+  }
+
+  function currentUserScopeId() {
+    const user = (state.session && state.session.user) || state.user || null;
+    if (user && (user.id || user.email)) return String(user.id || user.email);
+    return 'guest';
+  }
+
+  function scopedLocalKey(baseKey) {
+    return baseKey + '__' + currentUserScopeId();
+  }
+
+  function convoStoreKey(id, userId) {
+    return String(userId || currentUserScopeId()) + '::' + String(id || '');
+  }
+
+  function canUseIndexedDb() {
+    return typeof indexedDB !== 'undefined' && !!indexedDB && typeof indexedDB.open === 'function';
+  }
+
+  function idbRequest(req) {
+    return new Promise((resolve, reject) => {
+      req.onsuccess = () => resolve(req.result);
+      req.onerror = () => reject(req.error || new Error('IndexedDB request failed'));
+    });
+  }
+
+  function idbTransactionDone(tx) {
+    return new Promise((resolve, reject) => {
+      tx.oncomplete = () => resolve(true);
+      tx.onerror = () => reject(tx.error || new Error('IndexedDB transaction failed'));
+      tx.onabort = () => reject(tx.error || new Error('IndexedDB transaction aborted'));
+    });
+  }
+
+  function openLocalMemoryDb() {
+    if (!canUseIndexedDb()) return Promise.resolve(null);
+    if (localMemoryDbPromise) return localMemoryDbPromise;
+    localMemoryDbPromise = new Promise((resolve, reject) => {
+      const req = indexedDB.open(LOCAL_MEMORY_DB_NAME, LOCAL_MEMORY_DB_VERSION);
+      req.onupgradeneeded = () => {
+        const db = req.result;
+        if (!db.objectStoreNames.contains(LOCAL_MEMORY_STORE)) {
+          const store = db.createObjectStore(LOCAL_MEMORY_STORE, { keyPath: 'key' });
+          store.createIndex('user_id', 'user_id', { unique: false });
+          store.createIndex('updated', 'updated', { unique: false });
+        }
+      };
+      req.onsuccess = () => resolve(req.result);
+      req.onerror = () => reject(req.error || new Error('No se pudo abrir IndexedDB'));
+    }).catch(() => null);
+    return localMemoryDbPromise;
+  }
+
+  function mergeMessageLists(baseMessages, incomingMessages) {
+    const out = [];
+    const seen = new Set();
+    const pushOne = (msg) => {
+      const m = normalizeStoredMessage(msg);
+      if (!m) return;
+      const key = m.role + '|' + (Number(m.ts) || 0) + '|' + String(m.content || '').slice(0, 120);
+      if (seen.has(key)) return;
+      seen.add(key);
+      out.push(m);
+    };
+    (Array.isArray(baseMessages) ? baseMessages : []).forEach(pushOne);
+    (Array.isArray(incomingMessages) ? incomingMessages : []).forEach(pushOne);
+    out.sort((a, b) => (Number(a.ts) || 0) - (Number(b.ts) || 0));
+    return out;
+  }
+
+  function mergeConvoPair(left, right) {
+    const a = normalizeConvo(left);
+    const b = normalizeConvo(right);
+    if (!a) return b;
+    if (!b) return a;
+    const newer = (Number(a.updated || 0) >= Number(b.updated || 0)) ? a : b;
+    const older = newer === a ? b : a;
+    return normalizeConvo({
+      id: newer.id || older.id,
+      title: clipText(newer.title || older.title || 'Chat', 160),
+      created: newer.created || older.created || new Date().toISOString(),
+      updated: Math.max(Number(a.updated || 0), Number(b.updated || 0), 0),
+      messages: mergeMessageLists(older.messages, newer.messages),
+      brain: mergeBrain(older.brain, newer.brain)
+    });
+  }
+
+  function mergeConvoCollections(baseList, incomingList) {
+    const map = new Map();
+    const addOne = (convo) => {
+      const normalized = normalizeConvo(convo);
+      if (!normalized || !normalized.id) return;
+      const existing = map.get(normalized.id);
+      map.set(normalized.id, existing ? mergeConvoPair(existing, normalized) : normalized);
+    };
+    (Array.isArray(baseList) ? baseList : []).forEach(addOne);
+    (Array.isArray(incomingList) ? incomingList : []).forEach(addOne);
+    return Array.from(map.values()).sort((a, b) => (Number(b.updated || 0) - Number(a.updated || 0)));
+  }
+
+  function serializeConvoForCache(convo) {
+    const normalized = normalizeConvo(convo);
+    if (!normalized) return null;
+    return normalizeConvo(Object.assign({}, normalized, { messages: normalized.messages.slice(-HISTORY_LIMIT) }));
+  }
+
+  async function loadConvosFromDevice() {
+    const userId = currentUserScopeId();
+    if (!userId || userId === 'guest') return [];
+    const db = await openLocalMemoryDb();
+    if (!db) return [];
     try {
-      const parsed = JSON.parse(localStorage.getItem(CONVO_KEY) || '[]');
-      state.convos = Array.isArray(parsed) ? parsed.map(normalizeConvo).filter(Boolean) : [];
+      const tx = db.transaction(LOCAL_MEMORY_STORE, 'readonly');
+      const store = tx.objectStore(LOCAL_MEMORY_STORE);
+      let rows = [];
+      if (store.indexNames && store.indexNames.contains('user_id')) {
+        rows = await idbRequest(store.index('user_id').getAll(userId)).catch(() => []);
+      } else {
+        rows = await idbRequest(store.getAll()).catch(() => []);
+        rows = rows.filter((row) => row && row.user_id === userId);
+      }
+      await idbTransactionDone(tx).catch(() => {});
+      return (Array.isArray(rows) ? rows : []).map((row) => normalizeConvo(row && row.convo)).filter(Boolean);
     } catch (_) {
-      state.convos = [];
+      return [];
     }
-    try { const t = JSON.parse(localStorage.getItem(TOMB_KEY) || '[]'); state.tombstones = Array.isArray(t) ? t.map(String) : []; } catch (_) { state.tombstones = []; }
+  }
+
+  async function persistConvosToDevice(convos) {
+    const userId = currentUserScopeId();
+    if (!userId || userId === 'guest') return false;
+    const db = await openLocalMemoryDb();
+    if (!db) return false;
+    const list = (Array.isArray(convos) ? convos : []).map(normalizeConvo).filter(Boolean);
+    try {
+      const tx = db.transaction(LOCAL_MEMORY_STORE, 'readwrite');
+      const store = tx.objectStore(LOCAL_MEMORY_STORE);
+      for (const convo of list) {
+        store.put({ key: convoStoreKey(convo.id, userId), user_id: userId, updated: Number(convo.updated || Date.now()) || Date.now(), convo });
+      }
+      await idbTransactionDone(tx);
+      return true;
+    } catch (_) {
+      return false;
+    }
+  }
+
+  async function deleteConvoFromDevice(id) {
+    const userId = currentUserScopeId();
+    if (!id || !userId || userId === 'guest') return false;
+    const db = await openLocalMemoryDb();
+    if (!db) return false;
+    try {
+      const tx = db.transaction(LOCAL_MEMORY_STORE, 'readwrite');
+      tx.objectStore(LOCAL_MEMORY_STORE).delete(convoStoreKey(id, userId));
+      await idbTransactionDone(tx);
+      return true;
+    } catch (_) {
+      return false;
+    }
+  }
+
+  function schedulePersistDeviceConvos() {
+    if (devicePersistTimer) clearTimeout(devicePersistTimer);
+    devicePersistTimer = setTimeout(() => {
+      devicePersistTimer = null;
+      persistConvosToDevice(state.convos).catch(() => {});
+    }, 40);
+  }
+
+  function loadCachedConvos() {
+    const scopedKey = scopedLocalKey(CONVO_KEY);
+    const fallbackKey = CONVO_KEY;
+    try {
+      const raw = localStorage.getItem(scopedKey);
+      const fallback = raw == null ? localStorage.getItem(fallbackKey) : raw;
+      const parsed = JSON.parse(fallback || '[]');
+      return Array.isArray(parsed) ? parsed.map(normalizeConvo).filter(Boolean) : [];
+    } catch (_) {
+      return [];
+    }
+  }
+
+  function loadCachedTombstones() {
+    const scopedKey = scopedLocalKey(TOMB_KEY);
+    const fallbackKey = TOMB_KEY;
+    try {
+      const raw = localStorage.getItem(scopedKey);
+      const fallback = raw == null ? localStorage.getItem(fallbackKey) : raw;
+      const parsed = JSON.parse(fallback || '[]');
+      return Array.isArray(parsed) ? parsed.map(String) : [];
+    } catch (_) {
+      return [];
+    }
+  }
+
+  function tokenizeRecallTerms(text) {
+    return normalizeForSearch(text).split(/\s+/).filter((term) => term && term.length >= 3 && !memoryStopWords.has(term)).slice(0, 12);
+  }
+
+  function scoreRecallCandidate(message, queryNorm, terms) {
+    const contentNorm = normalizeForSearch(message && message.content);
+    if (!contentNorm) return 0;
+    let score = message && message.role === 'user' ? 2 : 1;
+    for (const term of terms) {
+      if (contentNorm.includes(term)) score += 4;
+    }
+    if (/\b(recuerda|recuerdas|antes|dije|hablamos|nombre|apellido|cafe|casa|pdf|imagen|archivo|objetivo|compromiso)\b/.test(queryNorm) && message && message.role === 'user') score += 2;
+    if (/\b(nombre|apellido|llamo|soy|prefiero|cafe|casa|pdf|imagen|archivo|recuerdame|meta)\b/.test(contentNorm)) score += 1;
+    return score;
+  }
+
+  function buildDeviceMemoryRecallBlock(convo, query) {
+    const normalized = normalizeConvo(convo);
+    const rawQuery = normalizeWhitespace(query);
+    if (!normalized || !rawQuery) return '';
+    const messages = Array.isArray(normalized.messages) ? normalized.messages : [];
+    if (messages.length <= LOCAL_RECALL_RECENT_SKIP) return '';
+    const olderMessages = messages.slice(0, Math.max(0, messages.length - LOCAL_RECALL_RECENT_SKIP));
+    const queryNorm = normalizeForSearch(rawQuery);
+    const terms = tokenizeRecallTerms(rawQuery);
+    const explicitRecall = /\b(recuerda|recuerdas|recorda|antes|dije|hablamos|mi nombre|mi apellido|mi cafe|mi objetivo|pdf|imagen|archivo)\b/.test(queryNorm);
+    if (!explicitRecall && terms.length < 2) return '';
+    const ranked = olderMessages.map((msg, index) => ({ msg, index, score: scoreRecallCandidate(msg, queryNorm, terms) }))
+      .filter((item) => item.score > 0)
+      .sort((a, b) => (b.score - a.score) || (b.index - a.index))
+      .slice(0, LOCAL_RECALL_MAX_SNIPPETS);
+    if (!ranked.length) return '';
+    const lines = ['MEMORIA LOCAL DEL DISPOSITIVO (fragmentos antiguos relevantes del mismo chat; usalos solo como contexto fiel):'];
+    ranked.forEach((item) => {
+      lines.push('- ' + (item.msg.role === 'user' ? 'Usuario' : 'Asistente') + ': ' + clipText(item.msg.content, 240));
+    });
+    lines.push('Si estos fragmentos chocan con el mensaje actual o con la memoria del chat, pide aclaracion breve antes de asumir algo.');
+    return lines.join('\n');
+  }
+
+  async function deleteConvoEverywhere(id) {
+    await deleteConvoFromDevice(id).catch(() => {});
+    const token = await ensureToken().catch(() => null);
+    if (!token) return;
+    const headers = { apikey: SB_KEY, Authorization: 'Bearer ' + token, Prefer: 'return=minimal' };
+    const encodedId = encodeURIComponent(String(id || ''));
+    await Promise.allSettled([
+      fetch(REST_URL + '?id=eq.' + encodedId, { method: 'DELETE', headers }),
+      fetch(MEDIA_REST_URL + '?conversation_id=eq.' + encodedId, { method: 'DELETE', headers }),
+      fetch(FEEDBACK_REST_URL + '?conversation_id=eq.' + encodedId, { method: 'DELETE', headers })
+    ]).catch(() => {});
+  }
+
+  window.LTH_IA_TEST_API = { normalizeBrain, extractBrainFromUserMessage, buildBrainContextBlock, detectCrisisIntent, detectFreeSkillIntent, buildFreeSkillSystem, buildFreeSkillClarification, normalizeResearchQuery, detectFreeResearchIntent, buildFreeResearchContextBlock, buildDeviceMemoryRecallBlock, mergeConvoCollections, serializeConvoForCache };
+
+  async function loadConvos() {
+    state.convos = loadCachedConvos();
+    state.tombstones = loadCachedTombstones();
+    const deviceConvos = await loadConvosFromDevice();
+    if (deviceConvos.length) state.convos = mergeConvoCollections(state.convos, deviceConvos);
   }
   function saveConvos() {
     try {
-      localStorage.setItem(CONVO_KEY, JSON.stringify(state.convos.slice(0, 40).map((convo) => normalizeConvo(convo)).filter(Boolean)));
+      localStorage.setItem(scopedLocalKey(CONVO_KEY), JSON.stringify(state.convos.slice(0, 40).map(serializeConvoForCache).filter(Boolean)));
     } catch (_) {}
+    schedulePersistDeviceConvos();
   }
-  function saveTombstones() { try { localStorage.setItem(TOMB_KEY, JSON.stringify(state.tombstones.slice(-300))); } catch (_) {} }
+  function saveTombstones() { try { localStorage.setItem(scopedLocalKey(TOMB_KEY), JSON.stringify(state.tombstones.slice(-300))); } catch (_) {} }
   function activeConvo() {
     const convo = state.convos.find((c) => c.id === state.activeId) || null;
     return convo ? normalizeConvo(convo) : null;
@@ -811,15 +1221,10 @@
     if (!state.tombstones.includes(id)) { state.tombstones.push(id); saveTombstones(); }
     state.convos = state.convos.filter((c) => c.id !== id);
     if (state.activeId === id) state.activeId = state.convos[0] ? state.convos[0].id : null;
-    saveConvos(); renderConvoList(); renderMessages();
-    // Propaga el borrado a la nube (best-effort).
-    ensureToken().then((token) => {
-      if (!token) return;
-      fetch(REST_URL + '?id=eq.' + encodeURIComponent(id), {
-        method: 'DELETE',
-        headers: { apikey: SB_KEY, Authorization: 'Bearer ' + token, Prefer: 'return=minimal' }
-      }).catch(() => {});
-    });
+    saveConvos();
+    deleteConvoFromDevice(id).catch(() => {});
+    renderConvoList(); renderMessages();
+    deleteConvoEverywhere(id).catch(() => {});
   }
 
   async function syncPull() {
@@ -896,7 +1301,7 @@
     } catch (_) {}
   }
 
-  /* ───────────────────────── Render ───────────────────────── */
+  /* â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ Render â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
   function setStatusDot(mode) {
     if (!el.statusDot) return;
     el.statusDot.classList.remove('busy', 'off');
@@ -907,7 +1312,7 @@
   function renderCredits() {
     const c = state.credits;
     el.modelLabel.textContent = state.modelLabel || 'LTH IA';
-    if (!c) { el.planTag.textContent = '—'; el.usageVal.textContent = '—'; el.usageFill.style.width = '0%'; return; }
+    if (!c) { el.planTag.textContent = 'â€”'; el.usageVal.textContent = 'â€”'; el.usageFill.style.width = '0%'; return; }
     const plan = String(c.plan || 'free');
     el.planTag.textContent = plan;
 
@@ -929,7 +1334,7 @@
     el.usageFill.classList.toggle('danger', alertPct >= 95);
 
     // Panel detallado (settings): semana (principal) + mes + ventana. Solo %.
-    el.cpPlan.textContent = plan.toUpperCase() + (c.plan_active ? '' : ' · inactivo');
+    el.cpPlan.textContent = plan.toUpperCase() + (c.plan_active ? '' : ' Â· inactivo');
     const setBar = (barEl, txtEl, pct) => {
       const p = clampPct(pct);
       barEl.style.width = p + '%';
@@ -997,11 +1402,11 @@
   function showError(text) {
     const d = document.createElement('div');
     d.className = 'msg-err';
-    d.innerHTML = '<b>⚠ ' + escapeHtml(text) + '</b>';
+    d.innerHTML = '<b>âš  ' + escapeHtml(text) + '</b>';
     el.messages.appendChild(d); scrollDown();
   }
 
-  /* ───────────────────────── Enviar ───────────────────────── */
+  /* â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ Enviar â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
   async function send(text) {
     text = String(text || '').trim();
     if (!text || state.busy) return;
@@ -1104,19 +1509,29 @@
         routeOpts = route ? { model: route.model, maxTokens: route.maxTokens, temperature: route.temperature, reasoning: route.reasoning, system: route.system } : null;
         if (route && route.tier) bub.innerHTML = engineThinkingHtml(route.tier);
         if (!routeOpts && isFreePlan()) {
-          freeSkill = detectFreeSkillIntent(text, convo);
-          const clarification = buildFreeSkillClarification(freeSkill);
-          if (clarification) {
-            bub.innerHTML = renderMarkdown(clarification);
-            markAssistantTurn(convo, clarification, 'Aclaracion de habilidad free');
-            convo.messages.push({ id: uid(), role: 'assistant', content: clarification, ts: Date.now() });
-            convo.updated = Date.now(); saveConvos(); renderConvoList(); syncPushOne(convo);
-            void maybeUpdateConvoBrain(convo);
-            return;
+          const researchIntent = detectFreeResearchIntent(text);
+          if (researchIntent.matched) {
+            bub.innerHTML = engineThinkingHtml('web');
+            const research = await runFreeResearch(text, state.abort && state.abort.signal);
+            if (research && research.sources && research.sources.length) {
+              routeOpts = { system: buildFreeResearchSystem(SYSTEM_PROMPT, research) };
+            }
           }
-          if (freeSkill) {
-            routeOpts = { system: buildFreeSkillSystem(SYSTEM_PROMPT, freeSkill) };
-            bub.innerHTML = engineThinkingHtml(freeSkill.tier || 'standard');
+          if (!routeOpts) {
+            freeSkill = detectFreeSkillIntent(text, convo);
+            const clarification = buildFreeSkillClarification(freeSkill);
+            if (clarification) {
+              bub.innerHTML = renderMarkdown(clarification);
+              markAssistantTurn(convo, clarification, 'Aclaracion de habilidad free');
+              convo.messages.push({ id: uid(), role: 'assistant', content: clarification, ts: Date.now() });
+              convo.updated = Date.now(); saveConvos(); renderConvoList(); syncPushOne(convo);
+              void maybeUpdateConvoBrain(convo);
+              return;
+            }
+            if (freeSkill) {
+              routeOpts = { system: buildFreeSkillSystem(SYSTEM_PROMPT, freeSkill) };
+              bub.innerHTML = engineThinkingHtml(freeSkill.tier || 'standard');
+            }
           }
         }
       }
@@ -1163,13 +1578,13 @@
     }
   }
 
-  /* ─────────────────── Imagenes (motor compartido) ─────────────────── */
+  /* â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ Imagenes (motor compartido) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
   const mediaCache = {};
 
   function looksLikeImageRequest(text) {
     const t = String(text || '').toLowerCase();
     if (/\b(no (generes|crees|hagas)|sin)\b[^.]{0,24}\b(imagen|foto|logo)\b/.test(t)) return false;
-    return /\b(gener[ao]|crea(me|la)?|haz(me|la)?|dibuj[ao]|dise[nñ]a|ilustra|render(iza)?|imagina|pinta)\b[^.]{0,44}\b(imagen|imagenes|foto|fotos|ilustracion|dibujo|logo|logotipo|banner|portada|wallpaper|fondo|render|poster|afiche|icono|avatar|arte|grafico)\b/.test(t)
+    return /\b(gener[ao]|crea(me|la)?|haz(me|la)?|dibuj[ao]|dise[nÃ±]a|ilustra|render(iza)?|imagina|pinta)\b[^.]{0,44}\b(imagen|imagenes|foto|fotos|ilustracion|dibujo|logo|logotipo|banner|portada|wallpaper|fondo|render|poster|afiche|icono|avatar|arte|grafico)\b/.test(t)
       || /\b(imagen|ilustracion|dibujo|logo|banner|portada|wallpaper|render|poster|afiche)\b\s+(de|del|para|con|sobre)\b/.test(t)
       || /^\s*(imagen|foto|dibujo|logo)\s*[:\-]/.test(t);
   }
@@ -1227,7 +1642,7 @@
         imgEl.src = rows[0].data_base64;
       } else {
         imgEl.remove();
-        if (capEl) capEl.textContent = '🗑️ Imagen expirada (se borran a las 24 h)';
+        if (capEl) capEl.textContent = 'ðŸ—‘ï¸ Imagen expirada (se borran a las 24 h)';
       }
     } catch (_) {}
   }
@@ -1300,7 +1715,7 @@
     img.addEventListener('click', () => { if (img.src) window.open(img.src, '_blank'); });
     const cap = document.createElement('figcaption');
     cap.className = 'media-note';
-    cap.textContent = '🕒 Se guarda 24 h · toca para ampliar';
+    cap.textContent = 'ðŸ•’ Se guarda 24 h Â· toca para ampliar';
     fig.appendChild(img); fig.appendChild(cap);
     bub.appendChild(fig);
     loadMediaImage(img, cap, item.id);
@@ -1312,19 +1727,19 @@
     const ic = document.createElement('div'); ic.className = 'pdf-ic'; ic.textContent = 'PDF';
     const meta = document.createElement('div'); meta.className = 'pdf-meta';
     const name = document.createElement('strong'); name.textContent = item.title || 'Documento';
-    const note = document.createElement('span'); note.className = 'media-note'; note.textContent = '🕒 Se guarda 24 h';
+    const note = document.createElement('span'); note.className = 'media-note'; note.textContent = 'ðŸ•’ Se guarda 24 h';
     meta.appendChild(name); meta.appendChild(note);
     const actions = document.createElement('div'); actions.className = 'pdf-actions';
     const view = document.createElement('button'); view.type = 'button'; view.className = 'pdf-btn'; view.textContent = 'Ver';
     const dl = document.createElement('button'); dl.type = 'button'; dl.className = 'pdf-btn ghost'; dl.textContent = 'Descargar';
     view.addEventListener('click', async () => {
       const data = await fetchMediaData(item.id);
-      if (!data) { note.textContent = '🗑️ PDF expirado (se borran a las 24 h)'; return; }
+      if (!data) { note.textContent = 'ðŸ—‘ï¸ PDF expirado (se borran a las 24 h)'; return; }
       openData(data);
     });
     dl.addEventListener('click', async () => {
       const data = await fetchMediaData(item.id);
-      if (!data) { note.textContent = '🗑️ PDF expirado (se borran a las 24 h)'; return; }
+      if (!data) { note.textContent = 'ðŸ—‘ï¸ PDF expirado (se borran a las 24 h)'; return; }
       downloadData(data, (item.title || 'documento').slice(0, 60) + '.pdf');
     });
     actions.appendChild(view); actions.appendChild(dl);
@@ -1444,7 +1859,7 @@
 
     doc.setFillColor(6, 16, 28); doc.rect(0, 0, pageW, 70, 'F');
     doc.setTextColor(120, 180, 255); doc.setFont('helvetica', 'bold'); doc.setFontSize(16);
-    doc.text('LTH IA · Mady', margin, 34);
+    doc.text('LTH IA Â· Mady', margin, 34);
     doc.setTextColor(150, 175, 205); doc.setFont('helvetica', 'normal'); doc.setFontSize(9);
     doc.text(new Date().toLocaleString('es'), margin, 52);
 
@@ -1461,7 +1876,7 @@
       const bullet = line.match(/^\s*[-*]\s+(.*)$/);
       const num = line.match(/^\s*(\d+[.)])\s+(.*)$/);
       if (h) { size = h[1].length === 1 ? 14 : (h[1].length === 2 ? 12.5 : 11.5); bold = true; text = h[2]; y += 6; }
-      else if (bullet) { text = '•  ' + bullet[1]; indent = 14; }
+      else if (bullet) { text = 'â€¢  ' + bullet[1]; indent = 14; }
       else if (num) { text = num[1] + '  ' + num[2]; indent = 14; }
       text = text.replace(/\*\*(.+?)\*\*/g, '$1').replace(/\*(.+?)\*/g, '$1').replace(/`(.+?)`/g, '$1');
       doc.setFont('helvetica', bold ? 'bold' : 'normal'); doc.setFontSize(size); doc.setTextColor(28, 36, 48);
@@ -1516,7 +1931,7 @@
     void maybeUpdateConvoBrain(convo);
   }
 
-  /* ─────────────────── Motor LTH OS (PC) ─────────────────── */
+  /* â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ Motor LTH OS (PC) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
   function osDeviceId() {
     let id = '';
     try { id = localStorage.getItem(OSDEV_KEY) || ''; } catch (_) {}
@@ -1603,9 +2018,9 @@
     if (!b) return;
     if (state.engine !== 'os') { b.hidden = true; return; }
     b.hidden = false;
-    if (state.osConnected === true) { b.className = 'engine-badge on'; b.textContent = '● LTH OS'; }
-    else if (state.osConnected === false) { b.className = 'engine-badge off'; b.textContent = '● LTH OS sin conexión'; }
-    else { b.className = 'engine-badge'; b.textContent = '● LTH OS…'; } // comprobando conexion
+    if (state.osConnected === true) { b.className = 'engine-badge on'; b.textContent = 'â— LTH OS'; }
+    else if (state.osConnected === false) { b.className = 'engine-badge off'; b.textContent = 'â— LTH OS sin conexiÃ³n'; }
+    else { b.className = 'engine-badge'; b.textContent = 'â— LTH OSâ€¦'; } // comprobando conexion
   }
 
   function stopEnginePresence() {
@@ -1627,7 +2042,7 @@
     void tick();
   }
 
-  /* ─────────── Auto-router (pensar en automatico como Mady del OS) ─────────── */
+  /* â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ Auto-router (pensar en automatico como Mady del OS) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
   async function autoRoute(text, convo) {
     const R = window.LTHRouter;
     const plan = String((state.credits && state.credits.plan) || 'free').toLowerCase();
@@ -1659,15 +2074,15 @@
   }
 
   function engineThinkingHtml(tier) {
-    const map = { code: '💻 Programando', premium: '🧠 Razonando', web: '🌐 Buscando en la web', files: '📎 Analizando', standard: '✦ Pensando', cheap: '✦ Escribiendo' };
-    return '<span class="gen-img-loading">' + (map[tier] || '✦ Pensando') + '<span class="dots"><i>.</i><i>.</i><i>.</i></span></span>';
+    const map = { code: 'ðŸ’» Programando', premium: 'ðŸ§  Razonando', web: 'ðŸŒ Buscando en la web', files: 'ðŸ“Ž Analizando', standard: 'âœ¦ Pensando', cheap: 'âœ¦ Escribiendo' };
+    return '<span class="gen-img-loading">' + (map[tier] || 'âœ¦ Pensando') + '<span class="dots"><i>.</i><i>.</i><i>.</i></span></span>';
   }
 
-  /* ─────────── Barra de modelos (selector manual) ─────────── */
+  /* â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ Barra de modelos (selector manual) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
   let composerHintTimer = null;
   function setComposerHint(msg) {
     if (!el.composerHint) return;
-    const original = 'LTH IA puede equivocarse. Verifica información importante.';
+    const original = 'LTH IA puede equivocarse. Verifica informaciÃ³n importante.';
     el.composerHint.textContent = msg;
     if (composerHintTimer) clearTimeout(composerHintTimer);
     composerHintTimer = setTimeout(() => { if (el.composerHint) el.composerHint.textContent = original; }, 4000);
@@ -1700,10 +2115,10 @@
     if (!el.proModal) return;
     if (el.proSub) {
       el.proSub.innerHTML = context === 'reasoning'
-        ? 'El <b>Modo Razonamiento</b> es del <b>plan Pro</b>. Cámbiate y deja que un experto + un juez verifiquen cada respuesta.'
+        ? 'El <b>Modo Razonamiento</b> es del <b>plan Pro</b>. CÃ¡mbiate y deja que un experto + un juez verifiquen cada respuesta.'
         : context === 'model'
-          ? 'Ese <b>modelo</b> es del <b>plan Pro</b>. Desbloquéalo y elige el motor que quieras.'
-          : 'Esta función es del <b>plan Pro</b>. Cámbiate y obtén lo mejor de LTH IA.';
+          ? 'Ese <b>modelo</b> es del <b>plan Pro</b>. DesbloquÃ©alo y elige el motor que quieras.'
+          : 'Esta funciÃ³n es del <b>plan Pro</b>. CÃ¡mbiate y obtÃ©n lo mejor de LTH IA.';
     }
     el.proModal.hidden = false;
   }
@@ -1732,7 +2147,7 @@
     el.modelPickerBtn.setAttribute('aria-expanded', 'false');
   }
 
-  /* ─────────── Modo razonamiento (skill -> resolver -> verificar) ─────────── */
+  /* â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ Modo razonamiento (skill -> resolver -> verificar) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
   function persistReason() { try { localStorage.setItem(REASON_KEY, state.reasoning ? '1' : '0'); } catch (_) {} }
   function renderReasonBtn() {
     if (!el.reasonBtn) return;
@@ -1743,7 +2158,7 @@
   function reasonStageHtml(stage) {
     const map = {
       orchestrate: 'Entendiendo tu pedido',
-      codigo: 'Programando la solución',
+      codigo: 'Programando la soluciÃ³n',
       chat_max: 'Investigando en la web',
       chat_simple: 'Pensando la respuesta',
       razonamiento: 'Razonando a fondo',
@@ -1758,7 +2173,7 @@
   }
 
   function categorySpecialist(category, improved) {
-    const brief = '\n\nInstrucciones del orquestador (síguelas al pie de la letra):\n' + improved;
+    const brief = '\n\nInstrucciones del orquestador (sÃ­guelas al pie de la letra):\n' + improved;
     if (category === 'codigo') {
       return { model: 'deepseek/deepseek-v4-pro', stage: 'codigo', temperature: 0.2, system: 'Eres un ingeniero de software senior. Entrega codigo correcto, integrado y ejecutable; prioriza la correctitud y la integracion real; explica lo esencial brevemente.' + brief };
     }
@@ -1903,7 +2318,7 @@
     el.icSend.hidden = on; el.icStop.hidden = !on;
   }
 
-  /* ───────────────────────── UI binding ───────────────────────── */
+  /* â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ UI binding â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
   function autoGrow() {
     el.input.style.height = 'auto';
     el.input.style.height = Math.min(el.input.scrollHeight, 130) + 'px';
@@ -1912,13 +2327,13 @@
   function openDrawer() { el.drawer.hidden = false; el.scrim.hidden = false; }
   function closeDrawer() { el.drawer.hidden = true; el.scrim.hidden = true; }
 
-  /* ─────────────────── Configuración ─────────────────── */
+  /* â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ ConfiguraciÃ³n â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
   function openSettings() {
     el.settingsModal.hidden = false;
     const on = state.engine === 'os';
     setEngineToggleVisual(on);
     el.engineStatus.className = 'engine-status' + (on ? ' ok' : '');
-    el.engineStatus.textContent = on ? '✅ Motor LTH OS activado' : 'Motor web (estándar)';
+    el.engineStatus.textContent = on ? 'âœ… Motor LTH OS activado' : 'Motor web (estÃ¡ndar)';
   }
   function closeSettings() { el.settingsModal.hidden = true; }
   function persistEngine() { try { localStorage.setItem(ENGINE_KEY, state.engine); } catch (_) {} }
@@ -1935,22 +2350,22 @@
     if (state.engine === 'os') {
       state.engine = 'web'; persistEngine();
       stopEnginePresence();
-      setEngineUI(false, '', 'Motor web (estándar)');
+      setEngineUI(false, '', 'Motor web (estÃ¡ndar)');
       renderEngineBadge();
       return;
     }
     setEngineToggleVisual(false, 'busy');
     el.engineStatus.className = 'engine-status';
-    el.engineStatus.textContent = '🔎 Buscando tu PC con LTH OS…';
+    el.engineStatus.textContent = 'ðŸ”Ž Buscando tu PC con LTH OSâ€¦';
     const probe = await probeOsEngine();
     if (!probe.ok) {
-      setEngineUI(false, 'warn', '⚠️ No se encontró tu PC. Enciende LTH OS y activa LTH Remote, en la misma cuenta.');
+      setEngineUI(false, 'warn', 'âš ï¸ No se encontrÃ³ tu PC. Enciende LTH OS y activa LTH Remote, en la misma cuenta.');
       return;
     }
-    // PC en línea: se conecta solo (sin PIN). Misma cuenta = mismo motor.
+    // PC en lÃ­nea: se conecta solo (sin PIN). Misma cuenta = mismo motor.
     state.engine = 'os'; persistEngine();
     state.osConnected = true;
-    setEngineUI(true, 'ok', '✅ Conectado al motor LTH OS');
+    setEngineUI(true, 'ok', 'âœ… Conectado al motor LTH OS');
     renderEngineBadge(); startEnginePresence();
   }
 
@@ -1988,8 +2403,8 @@
     if (el.proClose) el.proClose.addEventListener('click', closeProModal);
     if (el.proModal) el.proModal.addEventListener('click', (e) => { if (e.target === el.proModal) closeProModal(); });
     if (el.proBuyBtn) el.proBuyBtn.addEventListener('click', () => {
-      // Compra aún bloqueada: por ahora solo marketing.
-      el.proBuyBtn.textContent = 'Disponible muy pronto ✨';
+      // Compra aÃºn bloqueada: por ahora solo marketing.
+      el.proBuyBtn.textContent = 'Disponible muy pronto âœ¨';
       el.proBuyBtn.disabled = true;
       setTimeout(() => { el.proBuyBtn.textContent = 'Comprar plan Pro'; el.proBuyBtn.disabled = false; }, 2200);
     });
@@ -2021,11 +2436,11 @@
       if (e.key === 'Enter' && !e.shiftKey && !e.isComposing) { e.preventDefault(); el.composer.requestSubmit(); }
     });
     el.suggestions.querySelectorAll('button').forEach((b) => {
-      b.addEventListener('click', () => { el.input.value = b.textContent.replace(/…$/, ''); autoGrow(); el.input.focus(); });
+      b.addEventListener('click', () => { el.input.value = b.textContent.replace(/â€¦$/, ''); autoGrow(); el.input.focus(); });
     });
   }
 
-  /* ───────────────────────── Auth UI ───────────────────────── */
+  /* â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ Auth UI â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
   function stopInvitePolling() {
     if (state.inviteTimer) clearInterval(state.inviteTimer);
     state.inviteTimer = null;
@@ -2044,14 +2459,14 @@
     el.passwordRules.hidden = !signup;
     el.turnstileWrap.hidden = !signup;
     el.forgotPasswordBtn.hidden = signup;
-    el.authBtnLabel.textContent = signup ? 'Solicitar invitación' : 'Entrar';
+    el.authBtnLabel.textContent = signup ? 'Solicitar invitaciÃ³n' : 'Entrar';
     el.authPassword.setAttribute('autocomplete', signup ? 'new-password' : 'current-password');
     el.authFoot.textContent = signup
-      ? 'LTH Mady está en producción · revisamos cada solicitud manualmente'
+      ? 'LTH Mady estÃ¡ en producciÃ³n Â· revisamos cada solicitud manualmente'
       : 'Acceso protegido por Supabase Auth';
     el.authMsg.textContent = ''; el.authMsg.classList.remove('ok');
     if (signup) {
-      if (!CFG.TURNSTILE_SITE_KEY) authMessage('El registro todavía no está activado: falta configurar Turnstile.');
+      if (!CFG.TURNSTILE_SITE_KEY) authMessage('El registro todavÃ­a no estÃ¡ activado: falta configurar Turnstile.');
       else INVITES.renderTurnstile('turnstileWidget', CFG.TURNSTILE_SITE_KEY).catch((error) => authMessage(error.message));
     }
   }
@@ -2073,7 +2488,7 @@
   }
 
   async function inviteCall(action, body, token) {
-    if (!INVITES) throw new Error('El módulo de invitaciones no está disponible.');
+    if (!INVITES) throw new Error('El mÃ³dulo de invitaciones no estÃ¡ disponible.');
     return INVITES.call(INVITE_FN_URL, SB_KEY, action, body, token);
   }
 
@@ -2090,7 +2505,7 @@
       INVITES.clearTracker();
       setAuthMode('login');
       if (rawEmail) el.authEmail.value = rawEmail;
-      authMessage('Cuenta verificada. Inicia sesión con tu contraseña.', true);
+      authMessage('Cuenta verificada. Inicia sesiÃ³n con tu contraseÃ±a.', true);
       return;
     }
     el.authTabs.hidden = true;
@@ -2103,7 +2518,7 @@
     el.inviteStatusText.textContent = vm.text;
     el.inviteMaskedEmail.textContent = info.email || 'Correo registrado';
     el.inviteExpiry.textContent = info.expiresAt ? 'Vence: ' + new Date(info.expiresAt).toLocaleString('es-MX') : '';
-    el.authFoot.textContent = 'Nunca solicitaremos tu contraseña por correo';
+    el.authFoot.textContent = 'Nunca solicitaremos tu contraseÃ±a por correo';
     if (['pending', 'code_ready'].includes(vm.status) && INVITES.loadTracker()) {
       state.inviteTimer = setInterval(refreshInviteStatus, 30000);
     }
@@ -2118,7 +2533,7 @@
     if (email) el.pinEmail.value = email;
     el.pinCode.value = '';
     el.pinMsg.textContent = '';
-    el.authFoot.textContent = 'El PIN vence 24 horas después del envío · máximo 5 intentos';
+    el.authFoot.textContent = 'El PIN vence 24 horas despuÃ©s del envÃ­o Â· mÃ¡ximo 5 intentos';
     setTimeout(() => el.pinCode.focus(), 0);
   }
 
@@ -2140,7 +2555,7 @@
     event.preventDefault();
     const email = String(el.pinEmail.value || '').trim().toLowerCase();
     const pin = String(el.pinCode.value || '').replace(/\D/g, '');
-    if (!email || !/^\d{6}$/.test(pin)) { pinMessage('Escribe tu correo y el PIN de 6 dígitos.'); return; }
+    if (!email || !/^\d{6}$/.test(pin)) { pinMessage('Escribe tu correo y el PIN de 6 dÃ­gitos.'); return; }
     el.pinSubmit.disabled = true; el.pinSpinner.hidden = false; pinMessage('');
     try {
       await inviteCall('invite.verify', { email, pin });
@@ -2148,7 +2563,7 @@
       setAuthMode('login');
       el.authEmail.value = email;
       el.authPassword.value = '';
-      authMessage('Cuenta verificada. Introduce tu contraseña para entrar.', true);
+      authMessage('Cuenta verificada. Introduce tu contraseÃ±a para entrar.', true);
     } catch (error) {
       pinMessage(error.message || 'No se pudo verificar el PIN.');
     } finally {
@@ -2171,7 +2586,7 @@
     el.resetForm.querySelectorAll('.password-toggle').forEach((btn) => {
       const input = el.resetForm.querySelector('#' + btn.getAttribute('data-target'));
       if (input) input.type = 'password';
-      btn.textContent = 'Ver'; btn.setAttribute('aria-label', 'Mostrar contraseña');
+      btn.textContent = 'Ver'; btn.setAttribute('aria-label', 'Mostrar contraseÃ±a');
     });
   }
 
@@ -2180,13 +2595,13 @@
     el.authTabs.hidden = true; el.authForm.hidden = true; el.invitePanel.hidden = true; el.pinForm.hidden = true; el.resetForm.hidden = false;
     state.resetStage = complete ? 'complete' : 'request';
     el.resetPinFields.hidden = !complete; el.resetTurnstile.hidden = !!complete;
-    el.resetHavePinBtn.hidden = !!complete; el.resetBtnLabel.textContent = complete ? 'Cambiar contraseña' : 'Solicitar PIN';
+    el.resetHavePinBtn.hidden = !!complete; el.resetBtnLabel.textContent = complete ? 'Cambiar contraseÃ±a' : 'Solicitar PIN';
     el.resetMsg.textContent = ''; el.resetMsg.classList.remove('ok');
-    el.resetTitle.textContent = complete ? 'Introduce tu PIN' : 'Restablecer contraseña';
+    el.resetTitle.textContent = complete ? 'Introduce tu PIN' : 'Restablecer contraseÃ±a';
     el.resetIntro.textContent = complete
-      ? 'Revisa tu bandeja de entrada (y la carpeta de spam) e introduce el PIN. Después define tu nueva contraseña.'
-      : 'Escribe tu correo. El administrador te enviará un PIN manualmente.';
-    setResetNotice(complete ? 'El PIN puede llegar durante las próximas 12 horas. Tienes un máximo de 5 intentos.' : '');
+      ? 'Revisa tu bandeja de entrada (y la carpeta de spam) e introduce el PIN. DespuÃ©s define tu nueva contraseÃ±a.'
+      : 'Escribe tu correo. El administrador te enviarÃ¡ un PIN manualmente.';
+    setResetNotice(complete ? 'El PIN puede llegar durante las prÃ³ximas 12 horas. Tienes un mÃ¡ximo de 5 intentos.' : '');
     el.resetPin.value = ''; el.resetPassword.value = ''; el.resetPasswordConfirm.value = '';
     resetPasswordToggles();
     if (!complete) INVITES.renderTurnstile('resetTurnstileWidget', CFG.TURNSTILE_SITE_KEY).catch((error) => { el.resetMsg.textContent = error.message; });
@@ -2204,7 +2619,7 @@
     try {
       if (state.resetStage === 'request') {
         const token = INVITES.turnstileToken('resetTurnstileWidget');
-        if (!token) throw new Error('Completa la verificación de seguridad.');
+        if (!token) throw new Error('Completa la verificaciÃ³n de seguridad.');
         let alreadyRequested = false;
         try {
           const data = await inviteCall('password.request', { email, turnstileToken: token });
@@ -2218,19 +2633,19 @@
         }
         showResetForm(true);
         el.resetMsg.textContent = alreadyRequested
-          ? 'Ya tenías una solicitud activa. Escribe el PIN que te enviamos a tu correo.'
-          : 'Solicitud enviada. Revisa tu bandeja de entrada (y la carpeta de spam) y escribe el PIN aquí.';
+          ? 'Ya tenÃ­as una solicitud activa. Escribe el PIN que te enviamos a tu correo.'
+          : 'Solicitud enviada. Revisa tu bandeja de entrada (y la carpeta de spam) y escribe el PIN aquÃ­.';
         el.resetMsg.classList.add('ok');
       } else {
         const pin = String(el.resetPin.value || '').replace(/\D/g, '');
         const password = String(el.resetPassword.value || '');
         const confirm = String(el.resetPasswordConfirm.value || '');
-        if (!/^\d{6}$/.test(pin)) throw new Error('Escribe el PIN de 6 dígitos.');
+        if (!/^\d{6}$/.test(pin)) throw new Error('Escribe el PIN de 6 dÃ­gitos.');
         const problem = INVITES.passwordError(password, email); if (problem) throw new Error(problem);
-        if (password !== confirm) throw new Error('Las contraseñas no coinciden.');
+        if (password !== confirm) throw new Error('Las contraseÃ±as no coinciden.');
         await inviteCall('password.complete', { email, pin, newPassword: password });
         resetTracker(null); setAuthMode('login'); el.authEmail.value = email; el.authPassword.value = '';
-        authMessage('Contraseña actualizada. Ya puedes iniciar sesión.', true);
+        authMessage('ContraseÃ±a actualizada. Ya puedes iniciar sesiÃ³n.', true);
       }
     } catch (error) { el.resetMsg.textContent = error.message || 'No se pudo completar la solicitud.'; el.resetMsg.classList.remove('ok'); }
     finally { el.resetSubmit.disabled = false; el.resetSpinner.hidden = true; }
@@ -2253,13 +2668,13 @@
     e.preventDefault();
     const email = String(el.authEmail.value || '').trim().toLowerCase();
     const password = String(el.authPassword.value || '');
-    if (!email || !password) { authMessage('Completa correo y contraseña.'); return; }
+    if (!email || !password) { authMessage('Completa correo y contraseÃ±a.'); return; }
     if (state.authMode === 'signup') {
       const passwordProblem = INVITES.passwordError(password, email);
       if (passwordProblem) { authMessage(passwordProblem); return; }
-      if (!CFG.TURNSTILE_SITE_KEY) { authMessage('Las nuevas solicitudes aún no están activadas.'); return; }
+      if (!CFG.TURNSTILE_SITE_KEY) { authMessage('Las nuevas solicitudes aÃºn no estÃ¡n activadas.'); return; }
       const turnstileToken = INVITES.turnstileToken('turnstileWidget');
-      if (!turnstileToken) { authMessage('Completa la verificación de seguridad.'); return; }
+      if (!turnstileToken) { authMessage('Completa la verificaciÃ³n de seguridad.'); return; }
       setAuthBusy(true); authMessage('');
       try {
         const data = await inviteCall('invite.request', { email, password, turnstileToken });
@@ -2279,21 +2694,21 @@
       const login = await inviteCall('auth.login', { email, password });
       const data = login.session;
       const session = normalizeSession(data);
-      if (!session) throw new Error('No se pudo iniciar sesión.');
+      if (!session) throw new Error('No se pudo iniciar sesiÃ³n.');
       saveSession(session);
       if (await ensureWebAccess(session)) await enterApp();
     } catch (err) {
       let msg = (err && err.message) || 'Error.';
-      if (/invalid login/i.test(msg)) msg = 'Correo o contraseña incorrectos.';
+      if (/invalid login/i.test(msg)) msg = 'Correo o contraseÃ±a incorrectos.';
       else if (/email not confirmed/i.test(msg)) {
         const tracker = INVITES.loadTracker();
         if (tracker && tracker.email === email) { await refreshInviteStatus(); return; }
-        msg = 'Tu cuenta todavía está pendiente de verificación manual.';
+        msg = 'Tu cuenta todavÃ­a estÃ¡ pendiente de verificaciÃ³n manual.';
       }
       authMessage(msg);
     } finally { setAuthBusy(false); }
   }
-  /* ───────────────────────── Flujo app ───────────────────────── */
+  /* â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ Flujo app â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
   async function enterApp() {
     el.authScreen.hidden = true;
     el.appScreen.hidden = false;
@@ -2317,7 +2732,7 @@
     state.osConnected = null; // comprobando hasta el primer sondeo
     renderEngineBadge();
     if (state.engine === 'os') startEnginePresence();
-    loadConvos();
+    await loadConvos();
     state.activeId = state.convos[0] ? state.convos[0].id : null;
     renderConvoList(); renderMessages();
     el.input.focus();
@@ -2341,7 +2756,7 @@
     setAuthMode('login');
   }
 
-  /* ───────────────────────── Init ───────────────────────── */
+  /* â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ Init â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
   function cache() {
     el.authScreen = $('#authScreen'); el.appScreen = $('#appScreen');
     el.authTabs = $('#authTabs'); el.authForm = $('#authForm'); el.authEmail = $('#authEmail'); el.authPassword = $('#authPassword');
@@ -2396,7 +2811,7 @@
       const show = input.type === 'password';
       input.type = show ? 'text' : 'password';
       btn.textContent = show ? 'Ocultar' : 'Ver';
-      btn.setAttribute('aria-label', show ? 'Ocultar contraseña' : 'Mostrar contraseña');
+      btn.setAttribute('aria-label', show ? 'Ocultar contraseÃ±a' : 'Mostrar contraseÃ±a');
     }));
     el.havePinBtn.addEventListener('click', () => showPinPanel(el.authEmail.value));
     el.pinBackBtn.addEventListener('click', () => setAuthMode('login'));
@@ -2430,3 +2845,4 @@
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', init);
   else init();
 })();
+
