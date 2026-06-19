@@ -9,9 +9,11 @@
   'use strict';
 
   const CFG = window.LTH_IA_CONFIG || {};
+  const INVITES = window.LTHInviteApi;
   const SB_URL = String(CFG.SUPABASE_URL || '').replace(/\/+$/, '');
   const SB_KEY = String(CFG.SUPABASE_PUBLISHABLE_KEY || '');
   const FN_URL = SB_URL + (CFG.FUNCTION_PATH || '/functions/v1/lth-ia-cloud');
+  const INVITE_FN_URL = SB_URL + (CFG.INVITE_FUNCTION_PATH || '/functions/v1/lth-ia-invites');
   const REST_URL = SB_URL + '/rest/v1/ia_conversations';
   const AUTH_URL = SB_URL + '/auth/v1';
 
@@ -83,6 +85,8 @@
     busy: false,
     abort: null,
     authMode: 'login',
+    invite: null,
+    inviteTimer: null,
     engine: 'web',
     osConnected: null,   // null = comprobando, true = conectado, false = sin conexion
     presenceTimer: null,
@@ -1451,13 +1455,32 @@
   }
 
   /* ───────────────────────── Auth UI ───────────────────────── */
+  function stopInvitePolling() {
+    if (state.inviteTimer) clearInterval(state.inviteTimer);
+    state.inviteTimer = null;
+  }
+
   function setAuthMode(mode) {
+    stopInvitePolling();
     state.authMode = mode;
+    el.authTabs.hidden = false;
+    el.authForm.hidden = false;
+    el.invitePanel.hidden = true;
+    el.pinForm.hidden = true;
     document.querySelectorAll('[data-auth-tab]').forEach((t) => t.classList.toggle('on', t.getAttribute('data-auth-tab') === mode));
-    el.authNameField.hidden = mode !== 'signup';
-    el.authBtnLabel.textContent = mode === 'signup' ? 'Crear cuenta' : 'Entrar';
-    el.authPassword.setAttribute('autocomplete', mode === 'signup' ? 'new-password' : 'current-password');
+    const signup = mode === 'signup';
+    el.passwordRules.hidden = !signup;
+    el.turnstileWrap.hidden = !signup;
+    el.authBtnLabel.textContent = signup ? 'Solicitar invitación' : 'Entrar';
+    el.authPassword.setAttribute('autocomplete', signup ? 'new-password' : 'current-password');
+    el.authFoot.textContent = signup
+      ? 'LTH Mady está en producción · revisamos cada solicitud manualmente'
+      : 'Acceso protegido por Supabase Auth';
     el.authMsg.textContent = ''; el.authMsg.classList.remove('ok');
+    if (signup) {
+      if (!CFG.TURNSTILE_SITE_KEY) authMessage('El registro todavía no está activado: falta configurar Turnstile.');
+      else INVITES.renderTurnstile('turnstileWidget', CFG.TURNSTILE_SITE_KEY).catch((error) => authMessage(error.message));
+    }
   }
 
   function setAuthBusy(on) {
@@ -1471,38 +1494,151 @@
     el.authMsg.classList.toggle('ok', !!ok);
   }
 
+  function pinMessage(text, ok) {
+    el.pinMsg.textContent = text || '';
+    el.pinMsg.classList.toggle('ok', !!ok);
+  }
+
+  async function inviteCall(action, body, token) {
+    if (!INVITES) throw new Error('El módulo de invitaciones no está disponible.');
+    return INVITES.call(INVITE_FN_URL, SB_KEY, action, body, token);
+  }
+
+  function showInvitePanel(invite, rawEmail) {
+    const info = invite || { status: 'pending' };
+    const vm = INVITES.viewModel(info);
+    state.invite = info;
+    stopInvitePolling();
+    if (vm.status === 'code_sent') {
+      showPinPanel(rawEmail || (INVITES.loadTracker() || {}).email || '');
+      return;
+    }
+    if (vm.status === 'active' || vm.status === 'grandfathered') {
+      INVITES.clearTracker();
+      setAuthMode('login');
+      if (rawEmail) el.authEmail.value = rawEmail;
+      authMessage('Cuenta verificada. Inicia sesión con tu contraseña.', true);
+      return;
+    }
+    el.authTabs.hidden = true;
+    el.authForm.hidden = true;
+    el.pinForm.hidden = true;
+    el.invitePanel.hidden = false;
+    el.inviteStatusIcon.textContent = vm.icon;
+    el.inviteStatusTitle.textContent = vm.title;
+    el.inviteStatusText.textContent = vm.text;
+    el.inviteMaskedEmail.textContent = info.email || 'Correo registrado';
+    el.inviteExpiry.textContent = info.expiresAt ? 'Vence: ' + new Date(info.expiresAt).toLocaleString('es-MX') : '';
+    el.authFoot.textContent = 'Nunca solicitaremos tu contraseña por correo';
+    if (['pending', 'code_ready'].includes(vm.status) && INVITES.loadTracker()) {
+      state.inviteTimer = setInterval(refreshInviteStatus, 30000);
+    }
+  }
+
+  function showPinPanel(email) {
+    stopInvitePolling();
+    el.authTabs.hidden = true;
+    el.authForm.hidden = true;
+    el.invitePanel.hidden = true;
+    el.pinForm.hidden = false;
+    if (email) el.pinEmail.value = email;
+    el.pinCode.value = '';
+    el.pinMsg.textContent = '';
+    el.authFoot.textContent = 'El PIN vence 24 horas después del envío · máximo 5 intentos';
+    setTimeout(() => el.pinCode.focus(), 0);
+  }
+
+  async function refreshInviteStatus() {
+    const tracker = INVITES.loadTracker();
+    if (!tracker) {
+      showPinPanel(el.pinEmail.value || el.authEmail.value);
+      return;
+    }
+    try {
+      const data = await inviteCall('invite.status', { requestToken: tracker.requestToken });
+      showInvitePanel(data.invite, tracker.email);
+    } catch (error) {
+      el.inviteStatusText.textContent = error.message || 'No se pudo actualizar el estado.';
+    }
+  }
+
+  async function handlePinSubmit(event) {
+    event.preventDefault();
+    const email = String(el.pinEmail.value || '').trim().toLowerCase();
+    const pin = String(el.pinCode.value || '').replace(/\D/g, '');
+    if (!email || !/^\d{6}$/.test(pin)) { pinMessage('Escribe tu correo y el PIN de 6 dígitos.'); return; }
+    el.pinSubmit.disabled = true; el.pinSpinner.hidden = false; pinMessage('');
+    try {
+      await inviteCall('invite.verify', { email, pin });
+      INVITES.clearTracker();
+      setAuthMode('login');
+      el.authEmail.value = email;
+      el.authPassword.value = '';
+      authMessage('Cuenta verificada. Introduce tu contraseña para entrar.', true);
+    } catch (error) {
+      pinMessage(error.message || 'No se pudo verificar el PIN.');
+    } finally {
+      el.pinSubmit.disabled = false; el.pinSpinner.hidden = true;
+    }
+  }
+
+  async function ensureWebAccess(session) {
+    const data = await inviteCall('invite.accessStatus', {}, session.access_token);
+    if (data.allowed) return true;
+    let invite = data.invite;
+    if (!invite || invite.status === 'missing') {
+      const requested = await inviteCall('invite.requestExistingAccount', {}, session.access_token);
+      invite = requested.invite;
+      INVITES.saveTracker(invite, session.user && session.user.email);
+    }
+    clearSession();
+    showInvitePanel(invite, session.user && session.user.email);
+    return false;
+  }
+
   async function handleAuthSubmit(e) {
     e.preventDefault();
     const email = String(el.authEmail.value || '').trim().toLowerCase();
     const password = String(el.authPassword.value || '');
     if (!email || !password) { authMessage('Completa correo y contraseña.'); return; }
-    if (password.length < 6) { authMessage('La contraseña debe tener al menos 6 caracteres.'); return; }
+    if (state.authMode === 'signup') {
+      const passwordProblem = INVITES.passwordError(password, email);
+      if (passwordProblem) { authMessage(passwordProblem); return; }
+      if (!CFG.TURNSTILE_SITE_KEY) { authMessage('Las nuevas solicitudes aún no están activadas.'); return; }
+      const turnstileToken = INVITES.turnstileToken('turnstileWidget');
+      if (!turnstileToken) { authMessage('Completa la verificación de seguridad.'); return; }
+      setAuthBusy(true); authMessage('');
+      try {
+        const data = await inviteCall('invite.request', { email, password, turnstileToken });
+        INVITES.saveTracker(data.invite, email);
+        el.authPassword.value = '';
+        INVITES.resetTurnstile('turnstileWidget');
+        showInvitePanel(data.invite, email);
+      } catch (error) {
+        authMessage(error.message || 'No se pudo enviar la solicitud.');
+        INVITES.resetTurnstile('turnstileWidget');
+      } finally { setAuthBusy(false); }
+      return;
+    }
 
     setAuthBusy(true); authMessage('');
     try {
-      if (state.authMode === 'signup') {
-        const name = String(el.authName.value || '').trim();
-        const data = await authFetch('/signup', { email, password, data: name ? { display_name: name } : {} });
-        const session = normalizeSession(data);
-        if (session) { saveSession(session); await enterApp(); }
-        else { authMessage('Cuenta creada. Revisa tu correo para confirmarla y luego entra.', true); setAuthMode('login'); }
-      } else {
-        const data = await authFetch('/token?grant_type=password', { email, password });
-        const session = normalizeSession(data);
-        if (!session) throw new Error('No se pudo iniciar sesion.');
-        saveSession(session); await enterApp();
-      }
+      const data = await authFetch('/token?grant_type=password', { email, password });
+      const session = normalizeSession(data);
+      if (!session) throw new Error('No se pudo iniciar sesión.');
+      saveSession(session);
+      if (await ensureWebAccess(session)) await enterApp();
     } catch (err) {
       let msg = (err && err.message) || 'Error.';
-      if (/already registered/i.test(msg)) msg = 'Ese correo ya tiene cuenta. Entra con tu contraseña.';
-      else if (/invalid login/i.test(msg)) msg = 'Correo o contraseña incorrectos.';
-      else if (/email not confirmed/i.test(msg)) msg = 'Confirma tu correo antes de entrar (revisa tu bandeja).';
+      if (/invalid login/i.test(msg)) msg = 'Correo o contraseña incorrectos.';
+      else if (/email not confirmed/i.test(msg)) {
+        const tracker = INVITES.loadTracker();
+        if (tracker && tracker.email === email) { await refreshInviteStatus(); return; }
+        msg = 'Tu cuenta todavía está pendiente de verificación manual.';
+      }
       authMessage(msg);
-    } finally {
-      setAuthBusy(false);
-    }
+    } finally { setAuthBusy(false); }
   }
-
   /* ───────────────────────── Flujo app ───────────────────────── */
   async function enterApp() {
     el.authScreen.hidden = true;
@@ -1537,6 +1673,7 @@
   }
 
   function logout() {
+    stopInvitePolling();
     const token = state.session && state.session.access_token;
     if (token) { fetch(AUTH_URL + '/logout', { method: 'POST', headers: { apikey: SB_KEY, Authorization: 'Bearer ' + token } }).catch(() => {}); }
     clearSession();
@@ -1553,10 +1690,15 @@
   /* ───────────────────────── Init ───────────────────────── */
   function cache() {
     el.authScreen = $('#authScreen'); el.appScreen = $('#appScreen');
-    el.authForm = $('#authForm'); el.authEmail = $('#authEmail'); el.authPassword = $('#authPassword');
-    el.authName = $('#authName'); el.authNameField = $('#authNameField');
+    el.authTabs = $('#authTabs'); el.authForm = $('#authForm'); el.authEmail = $('#authEmail'); el.authPassword = $('#authPassword');
+    el.passwordRules = $('#passwordRules'); el.turnstileWrap = $('#turnstileWrap');
     el.authSubmit = $('#authSubmit'); el.authBtnLabel = el.authSubmit.querySelector('.btn-label');
-    el.authSpinner = el.authSubmit.querySelector('.btn-spinner'); el.authMsg = $('#authMsg');
+    el.authSpinner = el.authSubmit.querySelector('.btn-spinner'); el.authMsg = $('#authMsg'); el.authFoot = $('#authFoot');
+    el.havePinBtn = $('#havePinBtn'); el.invitePanel = $('#invitePanel'); el.inviteStatusIcon = $('#inviteStatusIcon');
+    el.inviteStatusTitle = $('#inviteStatusTitle'); el.inviteStatusText = $('#inviteStatusText'); el.inviteMaskedEmail = $('#inviteMaskedEmail');
+    el.inviteExpiry = $('#inviteExpiry'); el.inviteRefreshBtn = $('#inviteRefreshBtn'); el.inviteLoginBtn = $('#inviteLoginBtn');
+    el.pinForm = $('#pinForm'); el.pinEmail = $('#pinEmail'); el.pinCode = $('#pinCode'); el.pinSubmit = $('#pinSubmit');
+    el.pinSpinner = el.pinSubmit.querySelector('.pin-spinner'); el.pinMsg = $('#pinMsg'); el.pinBackBtn = $('#pinBackBtn');
     el.menuBtn = $('#menuBtn'); el.statusDot = $('#statusDot'); el.modelLabel = $('#modelLabel'); el.engineBadge = $('#engineBadge');
     el.creditsBtn = $('#creditsBtn'); el.planTag = $('#planTag');
     el.usageFill = $('#usageFill'); el.usageVal = $('#usageVal'); el.usageLabel = $('#usageLabel');
@@ -1583,6 +1725,12 @@
     if (!SB_URL || !SB_KEY) { authMessage('Falta configurar Supabase en config.js.'); return; }
     document.querySelectorAll('[data-auth-tab]').forEach((t) => t.addEventListener('click', () => setAuthMode(t.getAttribute('data-auth-tab'))));
     el.authForm.addEventListener('submit', handleAuthSubmit);
+    el.pinForm.addEventListener('submit', handlePinSubmit);
+    el.havePinBtn.addEventListener('click', () => showPinPanel(el.authEmail.value));
+    el.pinBackBtn.addEventListener('click', () => setAuthMode('login'));
+    el.inviteLoginBtn.addEventListener('click', () => setAuthMode('login'));
+    el.inviteRefreshBtn.addEventListener('click', refreshInviteStatus);
+    el.pinCode.addEventListener('input', () => { el.pinCode.value = el.pinCode.value.replace(/\D/g, '').slice(0, 6); });
     bindApp();
     setAuthMode('login');
 
@@ -1590,8 +1738,16 @@
     if (stored && stored.access_token) {
       state.session = stored;
       const token = await ensureToken();
-      if (token) { await enterApp(); }
-      else { clearSession(); }
+      if (token) {
+        stored.access_token = token;
+        try { if (await ensureWebAccess(stored)) await enterApp(); }
+        catch (error) { clearSession(); authMessage(error.message || 'No se pudo comprobar el acceso web.'); }
+      } else { clearSession(); }
+    }
+
+    if (el.appScreen.hidden) {
+      const tracker = INVITES && INVITES.loadTracker();
+      if (tracker) await refreshInviteStatus();
     }
 
     if ('serviceWorker' in navigator) {
