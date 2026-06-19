@@ -1,10 +1,10 @@
-﻿/* â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
-   LTH IA Web Â· app.js
+﻿/* ════════════════════════════════════════════════════════════
+   LTH IA Web · app.js
    Chat movil con Mady. Auth Supabase (email/password) + edge
    function lth-ia-cloud (stream SSE) + historial sincronizado
    con la tabla ia_conversations (compartido con PC y LTH Remote).
    Sin dependencias, sin build: archivos estaticos.
-   â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â• */
+   ════════════════════════════════════════════════════════════ */
 (() => {
   'use strict';
 
@@ -84,7 +84,7 @@
   const THEME_KEY = 'lth_ia_web_theme_v1';
   const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
-  /* â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ Estado â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
+  /* ───────────────────────── Estado ───────────────────────── */
   const state = {
     session: null,     // { access_token, refresh_token, expires_at, user }
     user: null,
@@ -119,7 +119,7 @@
     image: { label: 'Imagen', image: true, premium: true }
   };
 
-  /* â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ Utils â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
+  /* ───────────────────────── Utils ───────────────────────── */
   const $ = (sel) => document.querySelector(sel);
   const el = {};
   const nowSec = () => Math.floor(Date.now() / 1000);
@@ -171,7 +171,7 @@
     return html || '<p></p>';
   }
 
-  /* â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ Sesion â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
+  /* ───────────────────────── Sesion ───────────────────────── */
   function saveSession(s) {
     state.session = s;
     state.user = s && s.user ? s.user : state.user;
@@ -224,7 +224,7 @@
     return null;
   }
 
-  /* â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ Edge function (IA) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
+  /* ─────────────────── Edge function (IA) ─────────────────── */
   function ApiError(message, status, credits) {
     const e = new Error(message); e.status = status; e.credits = credits; return e;
   }
@@ -306,7 +306,7 @@
     return { text: full, credits };
   }
 
-  /* â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ Conversaciones â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
+  /* ─────────────────── Conversaciones ─────────────────── */
 
 
   const brainUpdatePending = new Set();
@@ -646,11 +646,11 @@
     const raw = normalizeWhitespace(text).toLowerCase();
     const patterns = [
       { rx: /\b(?:al?|a) ingles\b|\bto english\b/, value: 'ingles' },
-      { rx: /\b(?:al?|a) espanol\b|\b(?:al?|a) espa[nÃ±]ol\b|\bto spanish\b/, value: 'espanol' },
-      { rx: /\b(?:al?|a) portugues\b|\b(?:al?|a) portugu[eÃª]s\b/, value: 'portugues' },
-      { rx: /\b(?:al?|a) frances\b|\b(?:al?|a) franc[eÃ©]s\b|\bto french\b/, value: 'frances' },
+      { rx: /\b(?:al?|a) espanol\b|\b(?:al?|a) espa[nñ]ol\b|\bto spanish\b/, value: 'espanol' },
+      { rx: /\b(?:al?|a) portugues\b|\b(?:al?|a) portugu[eê]s\b/, value: 'portugues' },
+      { rx: /\b(?:al?|a) frances\b|\b(?:al?|a) franc[eé]s\b|\bto french\b/, value: 'frances' },
       { rx: /\b(?:al?|a) italiano\b|\bto italian\b/, value: 'italiano' },
-      { rx: /\b(?:al?|a) aleman\b|\b(?:al?|a) alem[aÃ¡]n\b|\bto german\b/, value: 'aleman' }
+      { rx: /\b(?:al?|a) aleman\b|\b(?:al?|a) alem[aá]n\b|\bto german\b/, value: 'aleman' }
     ];
     const hit = patterns.find((item) => item.rx.test(raw));
     return hit ? hit.value : '';
@@ -677,14 +677,14 @@
     const lower = raw.toLowerCase();
     const definitions = [
       { kind: 'translate', label: 'traduccion fiel', tier: 'standard', match: /\b(traduce|traducelo|traducir|traduccion|translate)\b/ },
-      { kind: 'rewrite', label: 'reescritura y mejora', tier: 'standard', match: /\b(corrige|corrigelo|mejora|mejoralo|reescribe|redacta mejor|hazlo mas formal|hazlo m[aÃ¡]s formal|pul[eÃ©]lo)\b/ },
+      { kind: 'rewrite', label: 'reescritura y mejora', tier: 'standard', match: /\b(corrige|corrigelo|mejora|mejoralo|reescribe|redacta mejor|hazlo mas formal|hazlo m[aá]s formal|pul[eé]lo)\b/ },
       { kind: 'summarize', label: 'resumen y sintesis', tier: 'files', match: /\b(resume|resumelo|resumir|resumen|sintetiza|sintesis|puntos clave)\b/ },
-      { kind: 'compare', label: 'comparacion guiada', tier: 'standard', match: /\b(compara|comparacion|comparaci[oÃ³]n|diferencias?|ventajas?|desventajas?)\b|\bvs\b|\bversus\b/ },
+      { kind: 'compare', label: 'comparacion guiada', tier: 'standard', match: /\b(compara|comparacion|comparaci[oó]n|diferencias?|ventajas?|desventajas?)\b|\bvs\b|\bversus\b/ },
       { kind: 'extract', label: 'extraccion de puntos accionables', tier: 'files', match: /\b(extrae|saca|lista|checklist|to do|todo list|acciones clave|tareas clave)\b/ },
-      { kind: 'plan', label: 'plan paso a paso', tier: 'standard', match: /\b(plan|pasos|roadmap|guia|gu[iÃ­]a|como empiezo|c[oÃ³]mo empiezo|estrategia|orden recomendado)\b/ },
-      { kind: 'decide', label: 'recomendacion y decision', tier: 'standard', match: /\b(recomienda|cu[aÃ¡]l conviene|que me recomiendas|qu[eÃ©] me recomiendas|vale la pena|me conviene|elijo|escojo)\b/ },
-      { kind: 'troubleshoot', label: 'diagnostico y solucion', tier: 'code', match: /\b(no funciona|error|falla|bug|arregla|soluciona|diagnostica|diagnosticar|por que falla|por qu[eÃ©] falla)\b/ },
-      { kind: 'explain', label: 'explicacion guiada', tier: 'standard', match: /\b(explica|explicame|qu[eÃ©] significa|que significa|c[oÃ³]mo funciona|como funciona|ens[eÃ©]name|ensename)\b/ }
+      { kind: 'plan', label: 'plan paso a paso', tier: 'standard', match: /\b(plan|pasos|roadmap|guia|gu[ií]a|como empiezo|c[oó]mo empiezo|estrategia|orden recomendado)\b/ },
+      { kind: 'decide', label: 'recomendacion y decision', tier: 'standard', match: /\b(recomienda|cu[aá]l conviene|que me recomiendas|qu[eé] me recomiendas|vale la pena|me conviene|elijo|escojo)\b/ },
+      { kind: 'troubleshoot', label: 'diagnostico y solucion', tier: 'code', match: /\b(no funciona|error|falla|bug|arregla|soluciona|diagnostica|diagnosticar|por que falla|por qu[eé] falla)\b/ },
+      { kind: 'explain', label: 'explicacion guiada', tier: 'standard', match: /\b(explica|explicame|qu[eé] significa|que significa|c[oó]mo funciona|como funciona|ens[eé]name|ensename)\b/ }
     ];
     const found = definitions.find((item) => item.match.test(lower));
     if (!found) return null;
@@ -772,8 +772,8 @@
     if (!raw) return '';
     let cleaned = raw
       .replace(/^por favor\s+/i, '')
-      .replace(/^(investiga|busca|averigua|dime|explica(?:me)?|cuentame|cu[eÃ©]ntame|resumeme|res[uÃº]meme|quiero saber|necesito saber)\s+/i, '')
-      .replace(/^(qu[eÃ©] es|que es|quien es|qui[eÃ©]n es|que fue|qu[eÃ©] fue|quien fue|qui[eÃ©]n fue|que sabes de|qu[eÃ©] sabes de)\s+/i, '')
+      .replace(/^(investiga|busca|averigua|dime|explica(?:me)?|cuentame|cu[eé]ntame|resumeme|res[uú]meme|quiero saber|necesito saber)\s+/i, '')
+      .replace(/^(qu[eé] es|que es|quien es|qui[eé]n es|que fue|qu[eé] fue|quien fue|qui[eé]n fue|que sabes de|qu[eé] sabes de)\s+/i, '')
       .replace(/\?+$/g, '')
       .trim();
     return clipText(cleaned || raw, 140);
@@ -783,8 +783,8 @@
     const raw = normalizeWhitespace(text);
     if (!raw) return { matched: false, query: '', freshness: 'stable', lang: 'es' };
     const lower = raw.toLowerCase();
-    const stable = /\b(investiga|busca|averigua|qu[eÃ©] es|que es|quien es|qui[eÃ©]n es|quien fue|qui[eÃ©]n fue|historia de|origen de|datos de|informacion sobre|informaci[oÃ³]n sobre|explica|explicame|expl[iÃ­]came)\b/;
-    const volatile = /\b(hoy|actual|actuales|actualizada|actualizado|reciente|recientes|ultimas|Ãºltimas|ultimos|Ãºltimos|noticia|noticias|precio|precios|cotizacion|cotizaci[oÃ³]n|resultado|resultados|marcador|version mas nueva|versi[oÃ³]n m[aÃ¡]s nueva|ultimo lanzamiento|Ãºltimo lanzamiento)\b/;
+    const stable = /\b(investiga|busca|averigua|qu[eé] es|que es|quien es|qui[eé]n es|quien fue|qui[eé]n fue|historia de|origen de|datos de|informacion sobre|informaci[oó]n sobre|explica|explicame|expl[ií]came)\b/;
+    const volatile = /\b(hoy|actual|actuales|actualizada|actualizado|reciente|recientes|ultimas|últimas|ultimos|últimos|noticia|noticias|precio|precios|cotizacion|cotizaci[oó]n|resultado|resultados|marcador|version mas nueva|versi[oó]n m[aá]s nueva|ultimo lanzamiento|último lanzamiento)\b/;
     const entityShape = /\b([A-Z][a-z]+\s+[A-Z][a-z]+|bitcoin|tesla|openai|microsoft|google|claude|gemini|wikipedia)\b/;
     const matched = stable.test(lower) || volatile.test(lower) || (entityShape.test(raw) && /\?$/.test(raw));
     return {
@@ -1062,7 +1062,7 @@
   }
 
 
-  const memoryStopWords = new Set(['que', 'como', 'para', 'sobre', 'esto', 'esta', 'este', 'estos', 'estas', 'donde', 'cuando', 'quien', 'cual', 'porque', 'por', 'una', 'uno', 'unos', 'unas', 'del', 'las', 'los', 'con', 'sin', 'muy', 'mas', 'mÃ¡s', 'sus', 'mis', 'tus', 'hay', 'aqui', 'ahi', 'ese', 'esa', 'eso', 'fue', 'era', 'ser', 'soy', 'eres', 'somos', 'son', 'the', 'what', 'when', 'where', 'who', 'with', 'from', 'this', 'that']);
+  const memoryStopWords = new Set(['que', 'como', 'para', 'sobre', 'esto', 'esta', 'este', 'estos', 'estas', 'donde', 'cuando', 'quien', 'cual', 'porque', 'por', 'una', 'uno', 'unos', 'unas', 'del', 'las', 'los', 'con', 'sin', 'muy', 'mas', 'más', 'sus', 'mis', 'tus', 'hay', 'aqui', 'ahi', 'ese', 'esa', 'eso', 'fue', 'era', 'ser', 'soy', 'eres', 'somos', 'son', 'the', 'what', 'when', 'where', 'who', 'with', 'from', 'this', 'that']);
   let devicePersistTimer = null;
   let localMemoryDbPromise = null;
 
@@ -1456,7 +1456,7 @@
     } catch (_) {}
   }
 
-  /* â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ Render â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
+  /* ───────────────────────── Render ───────────────────────── */
   function setStatusDot(mode) {
     if (!el.statusDot) return;
     el.statusDot.classList.remove('busy', 'off');
@@ -1467,7 +1467,7 @@
   function renderCredits() {
     const c = state.credits;
     el.modelLabel.textContent = state.modelLabel || 'LTH IA';
-    if (!c) { el.planTag.textContent = 'â€”'; el.usageVal.textContent = 'â€”'; el.usageFill.style.width = '0%'; return; }
+    if (!c) { el.planTag.textContent = '—'; el.usageVal.textContent = '—'; el.usageFill.style.width = '0%'; return; }
     const plan = String(c.plan || 'free');
     el.planTag.textContent = plan;
 
@@ -1489,7 +1489,7 @@
     el.usageFill.classList.toggle('danger', alertPct >= 95);
 
     // Panel detallado (settings): semana (principal) + mes + ventana. Solo %.
-    el.cpPlan.textContent = plan.toUpperCase() + (c.plan_active ? '' : ' Â· inactivo');
+    el.cpPlan.textContent = plan.toUpperCase() + (c.plan_active ? '' : ' · inactivo');
     const setBar = (barEl, txtEl, pct) => {
       const p = clampPct(pct);
       barEl.style.width = p + '%';
@@ -1557,11 +1557,11 @@
   function showError(text) {
     const d = document.createElement('div');
     d.className = 'msg-err';
-    d.innerHTML = '<b>âš  ' + escapeHtml(text) + '</b>';
+    d.innerHTML = '<b>⚠ ' + escapeHtml(text) + '</b>';
     el.messages.appendChild(d); scrollDown();
   }
 
-  /* â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ Enviar â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
+  /* ───────────────────────── Enviar ───────────────────────── */
   async function send(text) {
     text = String(text || '').trim();
     if (!text || state.busy) return;
@@ -1733,13 +1733,13 @@
     }
   }
 
-  /* â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ Imagenes (motor compartido) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
+  /* ─────────────────── Imagenes (motor compartido) ─────────────────── */
   const mediaCache = {};
 
   function looksLikeImageRequest(text) {
     const t = String(text || '').toLowerCase();
     if (/\b(no (generes|crees|hagas)|sin)\b[^.]{0,24}\b(imagen|foto|logo)\b/.test(t)) return false;
-    return /\b(gener[ao]|crea(me|la)?|haz(me|la)?|dibuj[ao]|dise[nÃ±]a|ilustra|render(iza)?|imagina|pinta)\b[^.]{0,44}\b(imagen|imagenes|foto|fotos|ilustracion|dibujo|logo|logotipo|banner|portada|wallpaper|fondo|render|poster|afiche|icono|avatar|arte|grafico)\b/.test(t)
+    return /\b(gener[ao]|crea(me|la)?|haz(me|la)?|dibuj[ao]|dise[nñ]a|ilustra|render(iza)?|imagina|pinta)\b[^.]{0,44}\b(imagen|imagenes|foto|fotos|ilustracion|dibujo|logo|logotipo|banner|portada|wallpaper|fondo|render|poster|afiche|icono|avatar|arte|grafico)\b/.test(t)
       || /\b(imagen|ilustracion|dibujo|logo|banner|portada|wallpaper|render|poster|afiche)\b\s+(de|del|para|con|sobre)\b/.test(t)
       || /^\s*(imagen|foto|dibujo|logo)\s*[:\-]/.test(t);
   }
@@ -1797,7 +1797,7 @@
         imgEl.src = rows[0].data_base64;
       } else {
         imgEl.remove();
-        if (capEl) capEl.textContent = 'ðŸ—‘ï¸ Imagen expirada (se borran a las 24 h)';
+        if (capEl) capEl.textContent = '🗑ï¸ Imagen expirada (se borran a las 24 h)';
       }
     } catch (_) {}
   }
@@ -1870,7 +1870,7 @@
     img.addEventListener('click', () => { if (img.src) window.open(img.src, '_blank'); });
     const cap = document.createElement('figcaption');
     cap.className = 'media-note';
-    cap.textContent = 'ðŸ•’ Se guarda 24 h Â· toca para ampliar';
+    cap.textContent = '🕒 Se guarda 24 h · toca para ampliar';
     fig.appendChild(img); fig.appendChild(cap);
     bub.appendChild(fig);
     loadMediaImage(img, cap, item.id);
@@ -1882,19 +1882,19 @@
     const ic = document.createElement('div'); ic.className = 'pdf-ic'; ic.textContent = 'PDF';
     const meta = document.createElement('div'); meta.className = 'pdf-meta';
     const name = document.createElement('strong'); name.textContent = item.title || 'Documento';
-    const note = document.createElement('span'); note.className = 'media-note'; note.textContent = 'ðŸ•’ Se guarda 24 h';
+    const note = document.createElement('span'); note.className = 'media-note'; note.textContent = '🕒 Se guarda 24 h';
     meta.appendChild(name); meta.appendChild(note);
     const actions = document.createElement('div'); actions.className = 'pdf-actions';
     const view = document.createElement('button'); view.type = 'button'; view.className = 'pdf-btn'; view.textContent = 'Ver';
     const dl = document.createElement('button'); dl.type = 'button'; dl.className = 'pdf-btn ghost'; dl.textContent = 'Descargar';
     view.addEventListener('click', async () => {
       const data = await fetchMediaData(item.id);
-      if (!data) { note.textContent = 'ðŸ—‘ï¸ PDF expirado (se borran a las 24 h)'; return; }
+      if (!data) { note.textContent = '🗑ï¸ PDF expirado (se borran a las 24 h)'; return; }
       openData(data);
     });
     dl.addEventListener('click', async () => {
       const data = await fetchMediaData(item.id);
-      if (!data) { note.textContent = 'ðŸ—‘ï¸ PDF expirado (se borran a las 24 h)'; return; }
+      if (!data) { note.textContent = '🗑ï¸ PDF expirado (se borran a las 24 h)'; return; }
       downloadData(data, (item.title || 'documento').slice(0, 60) + '.pdf');
     });
     actions.appendChild(view); actions.appendChild(dl);
@@ -2014,7 +2014,7 @@
 
     doc.setFillColor(6, 16, 28); doc.rect(0, 0, pageW, 70, 'F');
     doc.setTextColor(120, 180, 255); doc.setFont('helvetica', 'bold'); doc.setFontSize(16);
-    doc.text('LTH IA Â· Mady', margin, 34);
+    doc.text('LTH IA · Mady', margin, 34);
     doc.setTextColor(150, 175, 205); doc.setFont('helvetica', 'normal'); doc.setFontSize(9);
     doc.text(new Date().toLocaleString('es'), margin, 52);
 
@@ -2031,7 +2031,7 @@
       const bullet = line.match(/^\s*[-*]\s+(.*)$/);
       const num = line.match(/^\s*(\d+[.)])\s+(.*)$/);
       if (h) { size = h[1].length === 1 ? 14 : (h[1].length === 2 ? 12.5 : 11.5); bold = true; text = h[2]; y += 6; }
-      else if (bullet) { text = 'â€¢  ' + bullet[1]; indent = 14; }
+      else if (bullet) { text = '•  ' + bullet[1]; indent = 14; }
       else if (num) { text = num[1] + '  ' + num[2]; indent = 14; }
       text = text.replace(/\*\*(.+?)\*\*/g, '$1').replace(/\*(.+?)\*/g, '$1').replace(/`(.+?)`/g, '$1');
       doc.setFont('helvetica', bold ? 'bold' : 'normal'); doc.setFontSize(size); doc.setTextColor(28, 36, 48);
@@ -2086,7 +2086,7 @@
     void maybeUpdateConvoBrain(convo);
   }
 
-  /* â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ Motor LTH OS (PC) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
+  /* ─────────────────── Motor LTH OS (PC) ─────────────────── */
   function osDeviceId() {
     let id = '';
     try { id = localStorage.getItem(OSDEV_KEY) || ''; } catch (_) {}
@@ -2173,9 +2173,9 @@
     if (!b) return;
     if (state.engine !== 'os') { b.hidden = true; return; }
     b.hidden = false;
-    if (state.osConnected === true) { b.className = 'engine-badge on'; b.textContent = 'â— LTH OS'; }
-    else if (state.osConnected === false) { b.className = 'engine-badge off'; b.textContent = 'â— LTH OS sin conexiÃ³n'; }
-    else { b.className = 'engine-badge'; b.textContent = 'â— LTH OSâ€¦'; } // comprobando conexion
+    if (state.osConnected === true) { b.className = 'engine-badge on'; b.textContent = '● LTH OS'; }
+    else if (state.osConnected === false) { b.className = 'engine-badge off'; b.textContent = '● LTH OS sin conexión'; }
+    else { b.className = 'engine-badge'; b.textContent = '● LTH OS…'; } // comprobando conexion
   }
 
   function stopEnginePresence() {
@@ -2197,7 +2197,7 @@
     void tick();
   }
 
-  /* â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ Auto-router (pensar en automatico como Mady del OS) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
+  /* ─────────── Auto-router (pensar en automatico como Mady del OS) ─────────── */
   // Deteccion determinista de "necesita internet en vivo" (precios, noticias, clima,
   // actualidad). El clasificador LLM falla con frases cortas como "cuanto esta el bitcoin",
   // asi que esto FUERZA el tier web (perplexity/sonar) sin depender del modelo barato.
@@ -2255,15 +2255,15 @@
   }
 
   function engineThinkingHtml(tier) {
-    const map = { code: 'ðŸ’» Programando', premium: 'ðŸ§  Razonando', web: 'ðŸŒ Buscando en la web', files: 'ðŸ“Ž Analizando', standard: 'âœ¦ Pensando', cheap: 'âœ¦ Escribiendo' };
-    return '<span class="gen-img-loading">' + (map[tier] || 'âœ¦ Pensando') + '<span class="dots"><i>.</i><i>.</i><i>.</i></span></span>';
+    const map = { code: '💻 Programando', premium: '🧠 Razonando', web: '🌐 Buscando en la web', files: '📎 Analizando', standard: '✦ Pensando', cheap: '✦ Escribiendo' };
+    return '<span class="gen-img-loading">' + (map[tier] || '✦ Pensando') + '<span class="dots"><i>.</i><i>.</i><i>.</i></span></span>';
   }
 
-  /* â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ Barra de modelos (selector manual) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
+  /* ─────────── Barra de modelos (selector manual) ─────────── */
   let composerHintTimer = null;
   function setComposerHint(msg) {
     if (!el.composerHint) return;
-    const original = 'LTH IA puede equivocarse. Verifica informaciÃ³n importante.';
+    const original = 'LTH IA puede equivocarse. Verifica información importante.';
     el.composerHint.textContent = msg;
     if (composerHintTimer) clearTimeout(composerHintTimer);
     composerHintTimer = setTimeout(() => { if (el.composerHint) el.composerHint.textContent = original; }, 4000);
@@ -2293,10 +2293,10 @@
     if (!el.proModal) return;
     if (el.proSub) {
       el.proSub.innerHTML = context === 'reasoning'
-        ? 'El <b>Modo Razonamiento</b> es del <b>plan Pro</b>. CÃ¡mbiate y deja que un experto + un juez verifiquen cada respuesta.'
+        ? 'El <b>Modo Razonamiento</b> es del <b>plan Pro</b>. Cámbiate y deja que un experto + un juez verifiquen cada respuesta.'
         : context === 'model'
-          ? 'Ese <b>modelo</b> es del <b>plan Pro</b>. DesbloquÃ©alo y elige el motor que quieras.'
-          : 'Esta funciÃ³n es del <b>plan Pro</b>. CÃ¡mbiate y obtÃ©n lo mejor de LTH IA.';
+          ? 'Ese <b>modelo</b> es del <b>plan Pro</b>. Desbloquéalo y elige el motor que quieras.'
+          : 'Esta función es del <b>plan Pro</b>. Cámbiate y obtén lo mejor de LTH IA.';
     }
     el.proModal.hidden = false;
   }
@@ -2325,7 +2325,7 @@
     el.modelPickerBtn.setAttribute('aria-expanded', 'false');
   }
 
-  /* â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ Modo razonamiento (skill -> resolver -> verificar) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
+  /* ─────────── Modo razonamiento (skill -> resolver -> verificar) ─────────── */
   function persistReason() { try { localStorage.setItem(REASON_KEY, state.reasoning ? '1' : '0'); } catch (_) {} }
   function renderReasonBtn() {
     if (!el.reasonBtn) return;
@@ -2336,7 +2336,7 @@
   function reasonStageHtml(stage) {
     const map = {
       orchestrate: 'Entendiendo tu pedido',
-      codigo: 'Programando la soluciÃ³n',
+      codigo: 'Programando la solución',
       chat_max: 'Investigando en la web',
       chat_simple: 'Pensando la respuesta',
       razonamiento: 'Razonando a fondo',
@@ -2351,7 +2351,7 @@
   }
 
   function categorySpecialist(category, improved) {
-    const brief = '\n\nInstrucciones del orquestador (sÃ­guelas al pie de la letra):\n' + improved;
+    const brief = '\n\nInstrucciones del orquestador (síguelas al pie de la letra):\n' + improved;
     if (category === 'codigo') {
       return { model: 'deepseek/deepseek-v4-pro', stage: 'codigo', temperature: 0.2, system: 'Eres un ingeniero de software senior. Entrega codigo correcto, integrado y ejecutable; prioriza la correctitud y la integracion real; explica lo esencial brevemente.' + brief };
     }
@@ -2496,7 +2496,7 @@
     el.icSend.hidden = on; el.icStop.hidden = !on;
   }
 
-  /* â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ UI binding â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
+  /* ───────────────────────── UI binding ───────────────────────── */
   function autoGrow() {
     el.input.style.height = 'auto';
     el.input.style.height = Math.min(el.input.scrollHeight, 130) + 'px';
@@ -2505,13 +2505,13 @@
   function openDrawer() { el.drawer.hidden = false; el.scrim.hidden = false; }
   function closeDrawer() { el.drawer.hidden = true; el.scrim.hidden = true; }
 
-  /* â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ ConfiguraciÃ³n â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
+  /* ─────────────────── Configuración ─────────────────── */
   function openSettings() {
     el.settingsModal.hidden = false;
     const on = state.engine === 'os';
     setEngineToggleVisual(on);
     el.engineStatus.className = 'engine-status' + (on ? ' ok' : '');
-    el.engineStatus.textContent = on ? 'âœ… Motor LTH OS activado' : 'Motor web (estÃ¡ndar)';
+    el.engineStatus.textContent = on ? '✅ Motor LTH OS activado' : 'Motor web (estándar)';
   }
   function closeSettings() { el.settingsModal.hidden = true; }
   function persistEngine() { try { localStorage.setItem(ENGINE_KEY, state.engine); } catch (_) {} }
@@ -2528,22 +2528,22 @@
     if (state.engine === 'os') {
       state.engine = 'web'; persistEngine();
       stopEnginePresence();
-      setEngineUI(false, '', 'Motor web (estÃ¡ndar)');
+      setEngineUI(false, '', 'Motor web (estándar)');
       renderEngineBadge();
       return;
     }
     setEngineToggleVisual(false, 'busy');
     el.engineStatus.className = 'engine-status';
-    el.engineStatus.textContent = 'ðŸ”Ž Buscando tu PC con LTH OSâ€¦';
+    el.engineStatus.textContent = '🔎 Buscando tu PC con LTH OS…';
     const probe = await probeOsEngine();
     if (!probe.ok) {
-      setEngineUI(false, 'warn', 'âš ï¸ No se encontrÃ³ tu PC. Enciende LTH OS y activa LTH Remote, en la misma cuenta.');
+      setEngineUI(false, 'warn', '⚠️ No se encontró tu PC. Enciende LTH OS y activa LTH Remote, en la misma cuenta.');
       return;
     }
-    // PC en lÃ­nea: se conecta solo (sin PIN). Misma cuenta = mismo motor.
+    // PC en línea: se conecta solo (sin PIN). Misma cuenta = mismo motor.
     state.engine = 'os'; persistEngine();
     state.osConnected = true;
-    setEngineUI(true, 'ok', 'âœ… Conectado al motor LTH OS');
+    setEngineUI(true, 'ok', '✅ Conectado al motor LTH OS');
     renderEngineBadge(); startEnginePresence();
   }
 
@@ -2581,8 +2581,8 @@
     if (el.proClose) el.proClose.addEventListener('click', closeProModal);
     if (el.proModal) el.proModal.addEventListener('click', (e) => { if (e.target === el.proModal) closeProModal(); });
     if (el.proBuyBtn) el.proBuyBtn.addEventListener('click', () => {
-      // Compra aÃºn bloqueada: por ahora solo marketing.
-      el.proBuyBtn.textContent = 'Disponible muy pronto âœ¨';
+      // Compra aún bloqueada: por ahora solo marketing.
+      el.proBuyBtn.textContent = 'Disponible muy pronto ✨';
       el.proBuyBtn.disabled = true;
       setTimeout(() => { el.proBuyBtn.textContent = 'Comprar plan Pro'; el.proBuyBtn.disabled = false; }, 2200);
     });
@@ -2614,11 +2614,11 @@
       if (e.key === 'Enter' && !e.shiftKey && !e.isComposing) { e.preventDefault(); el.composer.requestSubmit(); }
     });
     el.suggestions.querySelectorAll('button').forEach((b) => {
-      b.addEventListener('click', () => { el.input.value = b.textContent.replace(/â€¦$/, ''); autoGrow(); el.input.focus(); });
+      b.addEventListener('click', () => { el.input.value = b.textContent.replace(/…$/, ''); autoGrow(); el.input.focus(); });
     });
   }
 
-  /* â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ Auth UI â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
+  /* ───────────────────────── Auth UI ───────────────────────── */
   function stopInvitePolling() {
     if (state.inviteTimer) clearInterval(state.inviteTimer);
     state.inviteTimer = null;
@@ -2637,14 +2637,14 @@
     el.passwordRules.hidden = !signup;
     el.turnstileWrap.hidden = !signup;
     el.forgotPasswordBtn.hidden = signup;
-    el.authBtnLabel.textContent = signup ? 'Solicitar invitaciÃ³n' : 'Entrar';
+    el.authBtnLabel.textContent = signup ? 'Solicitar invitación' : 'Entrar';
     el.authPassword.setAttribute('autocomplete', signup ? 'new-password' : 'current-password');
     el.authFoot.textContent = signup
-      ? 'LTH Mady estÃ¡ en producciÃ³n Â· revisamos cada solicitud manualmente'
+      ? 'LTH Mady está en producción · revisamos cada solicitud manualmente'
       : 'Acceso protegido por Supabase Auth';
     el.authMsg.textContent = ''; el.authMsg.classList.remove('ok');
     if (signup) {
-      if (!CFG.TURNSTILE_SITE_KEY) authMessage('El registro todavÃ­a no estÃ¡ activado: falta configurar Turnstile.');
+      if (!CFG.TURNSTILE_SITE_KEY) authMessage('El registro todavía no está activado: falta configurar Turnstile.');
       else INVITES.renderTurnstile('turnstileWidget', CFG.TURNSTILE_SITE_KEY).catch((error) => authMessage(error.message));
     }
   }
@@ -2666,7 +2666,7 @@
   }
 
   async function inviteCall(action, body, token) {
-    if (!INVITES) throw new Error('El mÃ³dulo de invitaciones no estÃ¡ disponible.');
+    if (!INVITES) throw new Error('El módulo de invitaciones no está disponible.');
     return INVITES.call(INVITE_FN_URL, SB_KEY, action, body, token);
   }
 
@@ -2683,7 +2683,7 @@
       INVITES.clearTracker();
       setAuthMode('login');
       if (rawEmail) el.authEmail.value = rawEmail;
-      authMessage('Cuenta verificada. Inicia sesiÃ³n con tu contraseÃ±a.', true);
+      authMessage('Cuenta verificada. Inicia sesión con tu contraseña.', true);
       return;
     }
     el.authTabs.hidden = true;
@@ -2696,7 +2696,7 @@
     el.inviteStatusText.textContent = vm.text;
     el.inviteMaskedEmail.textContent = info.email || 'Correo registrado';
     el.inviteExpiry.textContent = info.expiresAt ? 'Vence: ' + new Date(info.expiresAt).toLocaleString('es-MX') : '';
-    el.authFoot.textContent = 'Nunca solicitaremos tu contraseÃ±a por correo';
+    el.authFoot.textContent = 'Nunca solicitaremos tu contraseña por correo';
     if (['pending', 'code_ready'].includes(vm.status) && INVITES.loadTracker()) {
       state.inviteTimer = setInterval(refreshInviteStatus, 30000);
     }
@@ -2711,7 +2711,7 @@
     if (email) el.pinEmail.value = email;
     el.pinCode.value = '';
     el.pinMsg.textContent = '';
-    el.authFoot.textContent = 'El PIN vence 24 horas despuÃ©s del envÃ­o Â· mÃ¡ximo 5 intentos';
+    el.authFoot.textContent = 'El PIN vence 24 horas después del envío · máximo 5 intentos';
     setTimeout(() => el.pinCode.focus(), 0);
   }
 
@@ -2733,7 +2733,7 @@
     event.preventDefault();
     const email = String(el.pinEmail.value || '').trim().toLowerCase();
     const pin = String(el.pinCode.value || '').replace(/\D/g, '');
-    if (!email || !/^\d{6}$/.test(pin)) { pinMessage('Escribe tu correo y el PIN de 6 dÃ­gitos.'); return; }
+    if (!email || !/^\d{6}$/.test(pin)) { pinMessage('Escribe tu correo y el PIN de 6 dígitos.'); return; }
     el.pinSubmit.disabled = true; el.pinSpinner.hidden = false; pinMessage('');
     try {
       await inviteCall('invite.verify', { email, pin });
@@ -2741,7 +2741,7 @@
       setAuthMode('login');
       el.authEmail.value = email;
       el.authPassword.value = '';
-      authMessage('Cuenta verificada. Introduce tu contraseÃ±a para entrar.', true);
+      authMessage('Cuenta verificada. Introduce tu contraseña para entrar.', true);
     } catch (error) {
       pinMessage(error.message || 'No se pudo verificar el PIN.');
     } finally {
@@ -2764,7 +2764,7 @@
     el.resetForm.querySelectorAll('.password-toggle').forEach((btn) => {
       const input = el.resetForm.querySelector('#' + btn.getAttribute('data-target'));
       if (input) input.type = 'password';
-      btn.textContent = 'Ver'; btn.setAttribute('aria-label', 'Mostrar contraseÃ±a');
+      btn.textContent = 'Ver'; btn.setAttribute('aria-label', 'Mostrar contraseña');
     });
   }
 
@@ -2773,13 +2773,13 @@
     el.authTabs.hidden = true; el.authForm.hidden = true; el.invitePanel.hidden = true; el.pinForm.hidden = true; el.resetForm.hidden = false;
     state.resetStage = complete ? 'complete' : 'request';
     el.resetPinFields.hidden = !complete; el.resetTurnstile.hidden = !!complete;
-    el.resetHavePinBtn.hidden = !!complete; el.resetBtnLabel.textContent = complete ? 'Cambiar contraseÃ±a' : 'Solicitar PIN';
+    el.resetHavePinBtn.hidden = !!complete; el.resetBtnLabel.textContent = complete ? 'Cambiar contraseña' : 'Solicitar PIN';
     el.resetMsg.textContent = ''; el.resetMsg.classList.remove('ok');
-    el.resetTitle.textContent = complete ? 'Introduce tu PIN' : 'Restablecer contraseÃ±a';
+    el.resetTitle.textContent = complete ? 'Introduce tu PIN' : 'Restablecer contraseña';
     el.resetIntro.textContent = complete
-      ? 'Revisa tu bandeja de entrada (y la carpeta de spam) e introduce el PIN. DespuÃ©s define tu nueva contraseÃ±a.'
-      : 'Escribe tu correo. El administrador te enviarÃ¡ un PIN manualmente.';
-    setResetNotice(complete ? 'El PIN puede llegar durante las prÃ³ximas 12 horas. Tienes un mÃ¡ximo de 5 intentos.' : '');
+      ? 'Revisa tu bandeja de entrada (y la carpeta de spam) e introduce el PIN. Después define tu nueva contraseña.'
+      : 'Escribe tu correo. El administrador te enviará un PIN manualmente.';
+    setResetNotice(complete ? 'El PIN puede llegar durante las próximas 12 horas. Tienes un máximo de 5 intentos.' : '');
     el.resetPin.value = ''; el.resetPassword.value = ''; el.resetPasswordConfirm.value = '';
     resetPasswordToggles();
     if (!complete) INVITES.renderTurnstile('resetTurnstileWidget', CFG.TURNSTILE_SITE_KEY).catch((error) => { el.resetMsg.textContent = error.message; });
@@ -2797,7 +2797,7 @@
     try {
       if (state.resetStage === 'request') {
         const token = INVITES.turnstileToken('resetTurnstileWidget');
-        if (!token) throw new Error('Completa la verificaciÃ³n de seguridad.');
+        if (!token) throw new Error('Completa la verificación de seguridad.');
         let alreadyRequested = false;
         try {
           const data = await inviteCall('password.request', { email, turnstileToken: token });
@@ -2811,19 +2811,19 @@
         }
         showResetForm(true);
         el.resetMsg.textContent = alreadyRequested
-          ? 'Ya tenÃ­as una solicitud activa. Escribe el PIN que te enviamos a tu correo.'
-          : 'Solicitud enviada. Revisa tu bandeja de entrada (y la carpeta de spam) y escribe el PIN aquÃ­.';
+          ? 'Ya tenías una solicitud activa. Escribe el PIN que te enviamos a tu correo.'
+          : 'Solicitud enviada. Revisa tu bandeja de entrada (y la carpeta de spam) y escribe el PIN aquí.';
         el.resetMsg.classList.add('ok');
       } else {
         const pin = String(el.resetPin.value || '').replace(/\D/g, '');
         const password = String(el.resetPassword.value || '');
         const confirm = String(el.resetPasswordConfirm.value || '');
-        if (!/^\d{6}$/.test(pin)) throw new Error('Escribe el PIN de 6 dÃ­gitos.');
+        if (!/^\d{6}$/.test(pin)) throw new Error('Escribe el PIN de 6 dígitos.');
         const problem = INVITES.passwordError(password, email); if (problem) throw new Error(problem);
-        if (password !== confirm) throw new Error('Las contraseÃ±as no coinciden.');
+        if (password !== confirm) throw new Error('Las contraseñas no coinciden.');
         await inviteCall('password.complete', { email, pin, newPassword: password });
         resetTracker(null); setAuthMode('login'); el.authEmail.value = email; el.authPassword.value = '';
-        authMessage('ContraseÃ±a actualizada. Ya puedes iniciar sesiÃ³n.', true);
+        authMessage('Contraseña actualizada. Ya puedes iniciar sesión.', true);
       }
     } catch (error) { el.resetMsg.textContent = error.message || 'No se pudo completar la solicitud.'; el.resetMsg.classList.remove('ok'); }
     finally { el.resetSubmit.disabled = false; el.resetSpinner.hidden = true; }
@@ -2846,13 +2846,13 @@
     e.preventDefault();
     const email = String(el.authEmail.value || '').trim().toLowerCase();
     const password = String(el.authPassword.value || '');
-    if (!email || !password) { authMessage('Completa correo y contraseÃ±a.'); return; }
+    if (!email || !password) { authMessage('Completa correo y contraseña.'); return; }
     if (state.authMode === 'signup') {
       const passwordProblem = INVITES.passwordError(password, email);
       if (passwordProblem) { authMessage(passwordProblem); return; }
-      if (!CFG.TURNSTILE_SITE_KEY) { authMessage('Las nuevas solicitudes aÃºn no estÃ¡n activadas.'); return; }
+      if (!CFG.TURNSTILE_SITE_KEY) { authMessage('Las nuevas solicitudes aún no están activadas.'); return; }
       const turnstileToken = INVITES.turnstileToken('turnstileWidget');
-      if (!turnstileToken) { authMessage('Completa la verificaciÃ³n de seguridad.'); return; }
+      if (!turnstileToken) { authMessage('Completa la verificación de seguridad.'); return; }
       setAuthBusy(true); authMessage('');
       try {
         const data = await inviteCall('invite.request', { email, password, turnstileToken });
@@ -2872,21 +2872,21 @@
       const login = await inviteCall('auth.login', { email, password });
       const data = login.session;
       const session = normalizeSession(data);
-      if (!session) throw new Error('No se pudo iniciar sesiÃ³n.');
+      if (!session) throw new Error('No se pudo iniciar sesión.');
       saveSession(session);
       if (await ensureWebAccess(session)) await enterApp();
     } catch (err) {
       let msg = (err && err.message) || 'Error.';
-      if (/invalid login/i.test(msg)) msg = 'Correo o contraseÃ±a incorrectos.';
+      if (/invalid login/i.test(msg)) msg = 'Correo o contraseña incorrectos.';
       else if (/email not confirmed/i.test(msg)) {
         const tracker = INVITES.loadTracker();
         if (tracker && tracker.email === email) { await refreshInviteStatus(); return; }
-        msg = 'Tu cuenta todavÃ­a estÃ¡ pendiente de verificaciÃ³n manual.';
+        msg = 'Tu cuenta todavía está pendiente de verificación manual.';
       }
       authMessage(msg);
     } finally { setAuthBusy(false); }
   }
-  /* â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ Flujo app â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
+  /* ───────────────────────── Flujo app ───────────────────────── */
   async function enterApp() {
     el.authScreen.hidden = true;
     el.appScreen.hidden = false;
@@ -2934,7 +2934,7 @@
     setAuthMode('login');
   }
 
-  /* â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ Init â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
+  /* ───────────────────────── Init ───────────────────────── */
   function cache() {
     el.authScreen = $('#authScreen'); el.appScreen = $('#appScreen');
     el.authTabs = $('#authTabs'); el.authForm = $('#authForm'); el.authEmail = $('#authEmail'); el.authPassword = $('#authPassword');
@@ -2989,7 +2989,7 @@
       const show = input.type === 'password';
       input.type = show ? 'text' : 'password';
       btn.textContent = show ? 'Ocultar' : 'Ver';
-      btn.setAttribute('aria-label', show ? 'Ocultar contraseÃ±a' : 'Mostrar contraseÃ±a');
+      btn.setAttribute('aria-label', show ? 'Ocultar contraseña' : 'Mostrar contraseña');
     }));
     el.havePinBtn.addEventListener('click', () => showPinPanel(el.authEmail.value));
     el.pinBackBtn.addEventListener('click', () => setAuthMode('login'));
