@@ -612,7 +612,9 @@
       bub.classList.remove('cursor');
       const finalText = result.text || '';
       bub.innerHTML = renderMarkdown(finalText || '_(sin respuesta)_');
-      convo.messages.push({ id: uid(), role: 'assistant', content: finalText, ts: Date.now() });
+      const assistantMsg = { id: uid(), role: 'assistant', content: finalText, ts: Date.now() };
+      convo.messages.push(assistantMsg);
+      if (finalText.trim()) appendFeedback(bub, assistantMsg, convo);
       convo.updated = Date.now();
       saveConvos(); renderConvoList();
       syncPushOne(convo);
@@ -1045,7 +1047,9 @@
       if (!answer) { state.osConnected = false; renderEngineBadge(); return false; }
       bub.classList.remove('cursor');
       bub.innerHTML = renderMarkdown(answer);
-      convo.messages.push({ id: uid(), role: 'assistant', content: answer, ts: Date.now() });
+      const webMsg = { id: uid(), role: 'assistant', content: answer, ts: Date.now() };
+      convo.messages.push(webMsg);
+      if (answer.trim()) appendFeedback(bub, webMsg, convo);
       convo.updated = Date.now();
       saveConvos(); renderConvoList(); syncPushOne(convo); fetchStatus();
       state.osConnected = true; renderEngineBadge();
