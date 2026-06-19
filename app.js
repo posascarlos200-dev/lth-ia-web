@@ -21,6 +21,10 @@
   const CONVO_KEY = 'lth_ia_web_convos_v1';
   const TOMB_KEY = 'lth_ia_web_tombstones_v1';
   const HISTORY_LIMIT = 18;
+  const BRAIN_VERSION = 1;
+  const BRAIN_MIN_MESSAGES = 4;
+  const BRAIN_UPDATE_INTERVAL = 2;
+  const BRAIN_UPDATE_MODEL = 'google/gemini-2.5-flash-lite';
 
   const SYSTEM_PROMPT = [
     'Eres LTH IA, tambien llamada Mady: la asistente oficial del ecosistema LTH OS, hablando desde la web movil del usuario.',
@@ -247,8 +251,12 @@
 
   // Envia el historial y procesa el stream SSE. onDelta(text), devuelve {text, credits}.
   // routeOpts opcional = modelo/params elegidos por el auto-router.
-  async function streamChat(messages, onDelta, signal, routeOpts) {
-    const payload = { action: 'stream', system: (routeOpts && routeOpts.system) || SYSTEM_PROMPT, messages };
+  async function streamChat(convo, query, onDelta, signal, routeOpts) {
+    const payload = {
+      action: 'stream',
+      system: composeSystemWithMemory((routeOpts && routeOpts.system) || SYSTEM_PROMPT, convo, query),
+      messages: buildCloudMessages(convo, 'chat')
+    };
     if (routeOpts && routeOpts.model) {
       payload.model = routeOpts.model;
       if (routeOpts.maxTokens) payload.maxTokens = routeOpts.maxTokens;
@@ -292,13 +300,378 @@
   }
 
   /* ─────────────────── Conversaciones ─────────────────── */
+
+
+  const brainUpdatePending = new Set();
+  const CRISIS_RESPONSE_TEXT = [
+    'No puedo ayudar a lastimarte ni a planear suicidio.',
+    'Si el peligro es inmediato o crees que podrias actuar hoy, llama al 911 ahora mismo o ve a la sala de emergencias mas cercana.',
+    'Si estas en Estados Unidos o Canada, llama o envia un mensaje al 988 ahora mismo para apoyo en crisis.',
+    'Si estas fuera de Estados Unidos, contacta ahora mismo al numero de emergencias de tu pais o a una linea local de crisis.',
+    'No te quedes solo: escribe o llama en este momento a una persona de confianza y dile exactamente: "Estoy en riesgo y necesito que te quedes conmigo ahora".'
+  ].join('\n\n');
+
+  function clipText(value, max) {
+    return String(value == null ? '' : value).replace(/\s+/g, ' ').trim().slice(0, Math.max(1, Number(max) || 0));
+  }
+
+  function normalizeWhitespace(value) {
+    return String(value == null ? '' : value).replace(/\s+/g, ' ').trim();
+  }
+
+  function normalizeNameValue(value, maxWords) {
+    return clipText(String(value || '').replace(/[^A-Za-z'\-\s]/g, ' '), 120)
+      .split(/\s+/)
+      .filter(Boolean)
+      .slice(0, maxWords || 4)
+      .join(' ');
+  }
+
+  function uniqueList(values, maxItems, itemMax) {
+    const out = [];
+    const seen = new Set();
+    const list = Array.isArray(values) ? values : [];
+    for (const item of list) {
+      const clean = clipText(item, itemMax || 160);
+      if (!clean) continue;
+      const key = clean.toLowerCase();
+      if (seen.has(key)) continue;
+      seen.add(key);
+      out.push(clean);
+      if (out.length >= (maxItems || 8)) break;
+    }
+    return out;
+  }
+
+  function normalizeArtifact(raw) {
+    if (!raw || typeof raw !== 'object') return null;
+    const kind = clipText(raw.kind || raw.type, 24);
+    const id = clipText(raw.id, 120);
+    const title = clipText(raw.title || raw.name, 160);
+    const note = clipText(raw.note || raw.summary, 240);
+    if (!kind && !id && !title && !note) return null;
+    return { kind: kind || 'asset', id: id || '', title: title || 'Archivo', note: note || '' };
+  }
+
+  function normalizeBrain(raw, seedSummary) {
+    const source = raw && typeof raw === 'object' ? raw : {};
+    return {
+      version: BRAIN_VERSION,
+      running_summary: clipText(source.running_summary || seedSummary || '', 1100),
+      user_goal: clipText(source.user_goal, 240),
+      active_task: clipText(source.active_task, 240),
+      last_known_state: clipText(source.last_known_state, 240),
+      important_rules: uniqueList(source.important_rules, 8, 160),
+      decisions: uniqueList(source.decisions, 8, 160),
+      user_profile: {
+        name_for_this_chat: clipText(source.user_profile && source.user_profile.name_for_this_chat, 80),
+        full_name: clipText(source.user_profile && source.user_profile.full_name, 120)
+      },
+      preferences: uniqueList(source.preferences, 8, 160),
+      commitments: uniqueList(source.commitments, 8, 220),
+      current_artifact: normalizeArtifact(source.current_artifact),
+      updated_at: Math.max(0, Number(source.updated_at || Date.now()) || Date.now()),
+      covered_count: Math.max(0, Number(source.covered_count || 0) || 0)
+    };
+  }
+
+  function hasMeaningfulBrain(brain) {
+    const b = normalizeBrain(brain);
+    return !!(b.running_summary || b.user_goal || b.active_task || b.last_known_state || b.important_rules.length || b.decisions.length || b.preferences.length || b.commitments.length || b.user_profile.name_for_this_chat || b.user_profile.full_name || b.current_artifact);
+  }
+
+  function mergeBrain(localBrain, remoteBrain) {
+    const local = normalizeBrain(localBrain);
+    const remote = normalizeBrain(remoteBrain);
+    if (!hasMeaningfulBrain(remote)) return local;
+    if (!hasMeaningfulBrain(local)) return remote;
+    const remoteWins = Number(remote.updated_at || 0) >= Number(local.updated_at || 0);
+    const primary = remoteWins ? remote : local;
+    const secondary = remoteWins ? local : remote;
+    return normalizeBrain({
+      running_summary: primary.running_summary || secondary.running_summary,
+      user_goal: primary.user_goal || secondary.user_goal,
+      active_task: primary.active_task || secondary.active_task,
+      last_known_state: primary.last_known_state || secondary.last_known_state,
+      important_rules: primary.important_rules.concat(secondary.important_rules),
+      decisions: primary.decisions.concat(secondary.decisions),
+      user_profile: {
+        name_for_this_chat: primary.user_profile.name_for_this_chat || secondary.user_profile.name_for_this_chat,
+        full_name: primary.user_profile.full_name || secondary.user_profile.full_name
+      },
+      preferences: primary.preferences.concat(secondary.preferences),
+      commitments: primary.commitments.concat(secondary.commitments),
+      current_artifact: primary.current_artifact || secondary.current_artifact,
+      updated_at: Math.max(Number(primary.updated_at || 0), Number(secondary.updated_at || 0)),
+      covered_count: Math.max(Number(primary.covered_count || 0), Number(secondary.covered_count || 0))
+    });
+  }
+
+  function normalizeStoredMessage(message) {
+    if (!message || (message.role !== 'user' && message.role !== 'assistant')) return null;
+    const content = String(message.content || '');
+    if (!content.trim()) return null;
+    const next = { id: message.id || uid(), role: message.role, content: content, ts: Number(message.ts) || Date.now() };
+    if (Array.isArray(message.media) && message.media.length) next.media = message.media;
+    if (message.verdict) next.verdict = message.verdict;
+    if (message._feedback) next._feedback = message._feedback;
+    return next;
+  }
+
+  function normalizeConvo(convo) {
+    if (!convo || !convo.id) return null;
+    convo.title = clipText(convo.title || 'Chat', 160) || 'Chat';
+    convo.messages = (Array.isArray(convo.messages) ? convo.messages : []).map(normalizeStoredMessage).filter(Boolean);
+    convo.created = convo.created || new Date().toISOString();
+    convo.updated = Number(convo.updated || Date.now()) || Date.now();
+    convo.brain = normalizeBrain(convo.brain, convo.memory && convo.memory.summary);
+    return convo;
+  }
+
+  function ensureConvoBrain(convo) {
+    if (!convo) return normalizeBrain();
+    convo.brain = normalizeBrain(convo.brain, convo.memory && convo.memory.summary);
+    return convo.brain;
+  }
+
+  function upsertLabeledEntry(list, label, value, maxItems, itemMax) {
+    const cleanLabel = clipText(label, 40);
+    const cleanValue = clipText(value, itemMax || 160);
+    if (!cleanLabel || !cleanValue) return uniqueList(list, maxItems || 8, itemMax || 160);
+    const cleanItem = cleanLabel + ': ' + cleanValue;
+    const base = [];
+    for (const item of Array.isArray(list) ? list : []) {
+      if (!String(item || '').toLowerCase().startsWith(cleanLabel.toLowerCase() + ':')) base.push(item);
+    }
+    base.unshift(cleanItem);
+    return uniqueList(base, maxItems || 8, itemMax || 160);
+  }
+
+  function extractNameInfo(text) {
+    const raw = String(text || '');
+    const patterns = [/\bme llamo\s+([A-Za-z?-?'?\-]+(?:\s+[A-Za-z?-?'?\-]+){0,3})/i, /\bmi nombre es\s+([A-Za-z?-?'?\-]+(?:\s+[A-Za-z?-?'?\-]+){0,3})/i, /\bsoy\s+([A-Z??????][A-Za-z?-?'?\-]+(?:\s+[A-Z??????][A-Za-z?-?'?\-]+){0,2})\b/];
+    let full = '';
+    for (const rx of patterns) {
+      const match = raw.match(rx);
+      if (match) { full = normalizeNameValue(match[1], 4); break; }
+    }
+    const lastName = raw.match(/\bmi apellido es\s+([A-Za-z?-?'?\-]+(?:\s+[A-Za-z?-?'?\-]+){0,1})/i);
+    if (lastName) {
+      const suffix = normalizeNameValue(lastName[1], 2);
+      full = normalizeNameValue((full ? (full + ' ') : '') + suffix, 4);
+    }
+    if (!full) return null;
+    const parts = full.split(/\s+/).filter(Boolean);
+    return { full_name: full, name_for_this_chat: parts[0] || full };
+  }
+
+  function extractPreferenceEntries(text) {
+    const raw = normalizeWhitespace(text);
+    const out = [];
+    const coffee = raw.match(/\b(?:tomo|prefiero|quiero|me gusta)\s+el\s+caf[e?]\s+([^.!?]{1,80})/i) || raw.match(/\bcaf[e?]\s+(sin az[u?]car|con az[u?]car|negro|con leche|descafeinado)\b/i);
+    if (coffee) out.push({ label: 'Cafe', value: clipText(('cafe ' + (coffee[1] || '')).replace(/\s+/g, ' '), 120) });
+    const pref = raw.match(/\b(?:prefiero|me gusta|uso siempre)\s+([^.!?]{4,100})/i);
+    if (pref && !/caf[e?]/i.test(pref[1])) out.push({ label: 'Preferencia', value: clipText(pref[1], 120) });
+    return out;
+  }
+
+  function extractCommitments(text) {
+    const raw = String(text || '');
+    const sentences = raw.split(/[.!?\n]+/).map((item) => normalizeWhitespace(item)).filter(Boolean);
+    const out = [];
+    for (const sentence of sentences) {
+      const hasReminder = /\b(recuerdame|recuerdame que|agenda|anota|tengo|acordamos|quedamos)\b/i.test(sentence);
+      const hasTime = /\b\d{1,2}(?::\d{2})?\s*(?:am|pm)?\b/i.test(sentence);
+      const hasDay = /\b(hoy|manana|ma?ana|tarde|noche|lunes|martes|miercoles|mi?rcoles|jueves|viernes|sabado|s?bado|domingo)\b/i.test(sentence);
+      if (hasReminder && (hasTime || hasDay)) out.push(clipText(sentence, 220));
+    }
+    return uniqueList(out, 8, 220);
+  }
+
+  function extractGoal(text) {
+    const raw = normalizeWhitespace(text);
+    const match = raw.match(/\b(quiero|necesito|estoy buscando|mi meta es)\s+([^.!?]{4,140})/i);
+    if (!match) return '';
+    return clipText(match[1] + ' ' + match[2], 180);
+  }
+
+  function extractRule(text) {
+    const raw = normalizeWhitespace(text);
+    if (!/\bsiempre\b|\bnunca\b/i.test(raw)) return '';
+    return clipText(raw, 160);
+  }
+
+  function extractDecision(text) {
+    const raw = normalizeWhitespace(text);
+    const match = raw.match(/\b(?:decidimos|queda decidido|sera|ser[a?])\s+([^.!?]{4,120})/i);
+    if (!match) return '';
+    return clipText(match[0], 160);
+  }
+
+  function extractBrainFromUserMessage(brainInput, text) {
+    const brain = normalizeBrain(brainInput);
+    const raw = normalizeWhitespace(text);
+    if (!raw) return brain;
+    const nameInfo = extractNameInfo(raw);
+    if (nameInfo) {
+      brain.user_profile.name_for_this_chat = clipText(nameInfo.name_for_this_chat, 80);
+      brain.user_profile.full_name = clipText(nameInfo.full_name, 120);
+    }
+    for (const pref of extractPreferenceEntries(raw)) brain.preferences = upsertLabeledEntry(brain.preferences, pref.label, pref.value, 8, 160);
+    for (const item of extractCommitments(raw)) brain.commitments = uniqueList([item].concat(brain.commitments), 8, 220);
+    const goal = extractGoal(raw);
+    if (goal) brain.user_goal = clipText(goal, 240);
+    const rule = extractRule(raw);
+    if (rule) brain.important_rules = uniqueList([rule].concat(brain.important_rules), 8, 160);
+    const decision = extractDecision(raw);
+    if (decision) brain.decisions = uniqueList([decision].concat(brain.decisions), 8, 160);
+    brain.active_task = clipText('Responder la peticion actual del usuario.', 240);
+    brain.last_known_state = clipText('Ultimo mensaje del usuario: ' + raw, 240);
+    if (!brain.running_summary && (brain.user_goal || brain.preferences.length || brain.commitments.length || brain.user_profile.full_name)) brain.running_summary = clipText('El chat ya tiene datos importantes del usuario guardados para mantener continuidad entre respuestas.', 320);
+    brain.updated_at = Date.now();
+    return brain;
+  }
+
+  function buildBrainContextBlock(input, query) {
+    const brain = input && input.brain ? normalizeBrain(input.brain) : normalizeBrain(input);
+    const lines = [];
+    if (brain.user_profile.full_name || brain.user_profile.name_for_this_chat) lines.push('- Identidad del usuario: ' + (brain.user_profile.full_name || brain.user_profile.name_for_this_chat));
+    if (brain.preferences.length) lines.push('- Preferencias recordadas: ' + brain.preferences.join(' | '));
+    if (brain.commitments.length) lines.push('- Compromisos y agenda: ' + brain.commitments.join(' | '));
+    if (brain.user_goal) lines.push('- Objetivo actual del usuario: ' + brain.user_goal);
+    if (brain.active_task) lines.push('- Tarea activa: ' + brain.active_task);
+    if (brain.current_artifact) lines.push('- Artefacto actual: ' + brain.current_artifact.kind + ' "' + clipText(brain.current_artifact.title, 120) + '"' + (brain.current_artifact.note ? ' | nota: ' + clipText(brain.current_artifact.note, 200) : ''));
+    if (brain.last_known_state) lines.push('- Ultimo estado conocido: ' + brain.last_known_state);
+    if (brain.important_rules.length) lines.push('- Reglas del usuario: ' + brain.important_rules.join(' | '));
+    if (brain.decisions.length) lines.push('- Decisiones ya tomadas: ' + brain.decisions.join(' | '));
+    if (brain.running_summary) lines.push('- Resumen acumulado: ' + clipText(brain.running_summary, 600));
+    if (query) lines.push('- Mensaje actual: ' + clipText(query, 220));
+    if (!lines.length) return '';
+    return 'MEMORIA DEL CHAT (interna; debes respetarla y no inventar datos fuera de ella):\n' + lines.join('\n') + '\nSi falta un dato importante o ves una posible contradiccion, pide aclaracion breve antes de inventar.';
+  }
+
+  function composeSystemWithMemory(baseSystem, convo, query) {
+    const brainBlock = buildBrainContextBlock(convo, query);
+    return brainBlock ? (baseSystem + '\n\n' + brainBlock) : baseSystem;
+  }
+
+  function buildCloudMessages(convo, purpose) {
+    const normalized = normalizeConvo(convo);
+    const messages = normalized ? normalized.messages : [];
+    let sliceSize = 12;
+    if (purpose === 'router') sliceSize = 4;
+    else if (purpose === 'pdf') sliceSize = 8;
+    else if (purpose === 'reasoning') sliceSize = 10;
+    else if (purpose === 'memory') sliceSize = normalized && normalized.brain && normalized.brain.running_summary ? 8 : 12;
+    else if (normalized && normalized.brain && normalized.brain.running_summary) sliceSize = 8;
+    return messages.slice(-sliceSize).map((m) => ({ role: m.role, content: m.content }));
+  }
+
+  function detectCrisisIntent(text) {
+    const raw = normalizeWhitespace(text).toLowerCase();
+    const patterns = [/\bme quiero matar\b/, /\bquiero suicidarme\b/, /\bquitarme la vida\b/, /\bno quiero vivir\b/, /\bquiero morir\b/, /\bhacerme dano\b/, /\bautolesion/, /\bsuicid/, /\bkill myself\b/, /\bend my life\b/, /\bself harm\b/];
+    const hit = patterns.find((rx) => rx.test(raw));
+    return { matched: !!hit, pattern: hit ? String(hit) : '', response: CRISIS_RESPONSE_TEXT };
+  }
+
+  function markAssistantTurn(convo, text, sourceLabel) {
+    const brain = ensureConvoBrain(convo);
+    brain.active_task = 'Esperando el siguiente mensaje del usuario.';
+    brain.last_known_state = clipText(sourceLabel + ': ' + String(text || ''), 240);
+    if (!brain.running_summary) brain.running_summary = clipText(String(text || ''), 320);
+    brain.updated_at = Date.now();
+    return brain;
+  }
+
+  function rememberCurrentArtifact(convo, artifact, stateText) {
+    const brain = ensureConvoBrain(convo);
+    brain.current_artifact = normalizeArtifact(artifact);
+    brain.active_task = 'Dar seguimiento al ultimo archivo generado.';
+    brain.last_known_state = clipText(stateText, 240);
+    if (!brain.user_goal) brain.user_goal = clipText('Continuar con el archivo actual del chat.', 240);
+    brain.updated_at = Date.now();
+    return brain.current_artifact;
+  }
+
+  function markCrisisGuard(convo) {
+    const brain = ensureConvoBrain(convo);
+    brain.active_task = 'Dar apoyo de crisis con respuesta fija.';
+    brain.last_known_state = 'Se activo el guard de crisis en la web.';
+    brain.updated_at = Date.now();
+    return brain;
+  }
+
+  function parseLooseJson(raw) {
+    try { return JSON.parse(raw); } catch (_) {}
+    try {
+      const match = String(raw || '').match(/\{[\s\S]*\}/);
+      return match ? JSON.parse(match[0]) : {};
+    } catch (_) {
+      return {};
+    }
+  }
+
+  async function maybeUpdateConvoBrain(convo) {
+    if (!convo || !convo.id || brainUpdatePending.has(convo.id)) return;
+    const brain = ensureConvoBrain(convo);
+    const messages = (convo.messages || []).filter((msg) => msg && (msg.role === 'user' || msg.role === 'assistant') && String(msg.content || '').trim());
+    const covered = Math.max(0, Number(brain.covered_count || 0) || 0);
+    if (messages.length < BRAIN_MIN_MESSAGES || (messages.length - covered) < BRAIN_UPDATE_INTERVAL) return;
+
+    brainUpdatePending.add(convo.id);
+    try {
+      const recent = buildCloudMessages(convo, 'memory').map((msg) => (msg.role === 'user' ? 'Usuario: ' : 'Asistente: ') + clipText(msg.content, 400)).join('\n');
+      const artifact = brain.current_artifact ? ('Artefacto actual: ' + brain.current_artifact.kind + ' "' + brain.current_artifact.title + '"' + (brain.current_artifact.note ? ' | ' + brain.current_artifact.note : '') + '.\n\n') : '';
+      const res = await callEdge({
+        action: 'chat',
+        model: BRAIN_UPDATE_MODEL,
+        maxTokens: 420,
+        temperature: 0.1,
+        system: 'Eres la memoria interna de un chat. Devuelve SOLO JSON valido con estas claves: resumen, objetivo, tarea_activa, reglas, decisiones, estado. Todo en espanol. No inventes datos. No pongas texto fuera del JSON.',
+        messages: [{ role: 'user', content: (brain.running_summary ? ('Resumen previo:\n' + brain.running_summary + '\n\n') : '') + artifact + 'Mensajes recientes:\n' + recent }]
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok || data.success === false) return;
+      const parsed = parseLooseJson(String(data.text || ''));
+      const summary = clipText(parsed.resumen, 1100);
+      if (!summary) return;
+      brain.running_summary = summary;
+      if (parsed.objetivo) brain.user_goal = clipText(parsed.objetivo, 240);
+      if (parsed.tarea_activa) brain.active_task = clipText(parsed.tarea_activa, 240);
+      if (parsed.estado) brain.last_known_state = clipText(parsed.estado, 240);
+      if (Array.isArray(parsed.reglas) && parsed.reglas.length) brain.important_rules = uniqueList(parsed.reglas, 8, 160);
+      if (Array.isArray(parsed.decisiones) && parsed.decisiones.length) brain.decisions = uniqueList(parsed.decisiones, 8, 160);
+      brain.covered_count = messages.length;
+      brain.updated_at = Date.now();
+      saveConvos();
+      syncPushOne(convo).catch(() => {});
+    } catch (_) {
+    } finally {
+      brainUpdatePending.delete(convo.id);
+    }
+  }
+
+  window.LTH_IA_TEST_API = { normalizeBrain, extractBrainFromUserMessage, buildBrainContextBlock, detectCrisisIntent };
+
   function loadConvos() {
-    try { const a = JSON.parse(localStorage.getItem(CONVO_KEY) || '[]'); state.convos = Array.isArray(a) ? a.filter((c) => c && c.id) : []; } catch (_) { state.convos = []; }
+    try {
+      const parsed = JSON.parse(localStorage.getItem(CONVO_KEY) || '[]');
+      state.convos = Array.isArray(parsed) ? parsed.map(normalizeConvo).filter(Boolean) : [];
+    } catch (_) {
+      state.convos = [];
+    }
     try { const t = JSON.parse(localStorage.getItem(TOMB_KEY) || '[]'); state.tombstones = Array.isArray(t) ? t.map(String) : []; } catch (_) { state.tombstones = []; }
   }
-  function saveConvos() { try { localStorage.setItem(CONVO_KEY, JSON.stringify(state.convos.slice(0, 40))); } catch (_) {} }
+  function saveConvos() {
+    try {
+      localStorage.setItem(CONVO_KEY, JSON.stringify(state.convos.slice(0, 40).map((convo) => normalizeConvo(convo)).filter(Boolean)));
+    } catch (_) {}
+  }
   function saveTombstones() { try { localStorage.setItem(TOMB_KEY, JSON.stringify(state.tombstones.slice(-300))); } catch (_) {} }
-  function activeConvo() { return state.convos.find((c) => c.id === state.activeId) || null; }
+  function activeConvo() {
+    const convo = state.convos.find((c) => c.id === state.activeId) || null;
+    return convo ? normalizeConvo(convo) : null;
+  }
 
   function newConvo() {
     state.activeId = null;
@@ -309,7 +682,7 @@
   function ensureActiveConvo(firstText) {
     let c = activeConvo();
     if (c) return c;
-    c = { id: uid(), title: (firstText || 'Nuevo chat').slice(0, 48), messages: [], created: new Date().toISOString(), updated: Date.now() };
+    c = normalizeConvo({ id: uid(), title: (firstText || 'Nuevo chat').slice(0, 48), messages: [], created: new Date().toISOString(), updated: Date.now(), brain: normalizeBrain() });
     state.convos.unshift(c);
     state.activeId = c.id;
     return c;
@@ -336,7 +709,7 @@
     const token = await ensureToken();
     if (!token) return;
     try {
-      const res = await fetch(REST_URL + '?select=id,title,messages,source,updated_at&order=updated_at.desc&limit=80', {
+      const res = await fetch(REST_URL + '?select=id,title,messages,brain,source,updated_at&order=updated_at.desc&limit=80', {
         headers: { apikey: SB_KEY, Authorization: 'Bearer ' + token }
       });
       if (!res.ok) return;
@@ -346,25 +719,32 @@
       for (const row of rows) {
         const id = String(row.id || ''); if (!id) continue;
         if (state.tombstones.includes(id)) continue;
-        const remoteMsgs = (Array.isArray(row.messages) ? row.messages : [])
-          .filter((m) => m && (m.role === 'user' || m.role === 'assistant') && String(m.content || '').trim());
+        const remoteMsgs = (Array.isArray(row.messages) ? row.messages : []).map(normalizeStoredMessage).filter(Boolean);
         let c = state.convos.find((x) => x.id === id);
         if (!c) {
           if (!remoteMsgs.length) continue;
-          state.convos.push({
-            id, title: String(row.title || '').trim() || 'Chat', updated: Date.parse(row.updated_at) || Date.now(),
+          state.convos.push(normalizeConvo({
+            id: id,
+            title: String(row.title || '').trim() || 'Chat',
+            updated: Date.parse(row.updated_at) || Date.now(),
             created: new Date(Number(remoteMsgs[0] && remoteMsgs[0].ts) || Date.now()).toISOString(),
-            messages: remoteMsgs.map((m) => ({ id: m.id || uid(), role: m.role, content: String(m.content || ''), ts: Number(m.ts) || Date.now(), media: Array.isArray(m.media) ? m.media : undefined }))
-          });
-          changed = true; continue;
+            messages: remoteMsgs,
+            brain: normalizeBrain(row.brain)
+          }));
+          changed = true;
+          continue;
         }
+        c = normalizeConvo(c);
         const known = new Set(c.messages.map((m) => m.role + '|' + (Number(m.ts) || 0) + '|' + String(m.content || '').slice(0, 60)));
         for (const m of remoteMsgs) {
           const key = m.role + '|' + (Number(m.ts) || 0) + '|' + String(m.content || '').slice(0, 60);
           if (known.has(key)) continue;
-          c.messages.push({ id: m.id || uid(), role: m.role, content: String(m.content || ''), ts: Number(m.ts) || Date.now(), media: Array.isArray(m.media) ? m.media : undefined });
-          known.add(key); changed = true;
+          c.messages.push(m);
+          known.add(key);
+          changed = true;
         }
+        c.brain = mergeBrain(c.brain, row.brain);
+        c.updated = Math.max(Number(c.updated || 0), Date.parse(row.updated_at) || 0, c.messages.reduce((max, msg) => Math.max(max, Number(msg.ts) || 0), 0));
       }
       if (changed) {
         state.convos.sort((a, b) => (b.updated || 0) - (a.updated || 0));
@@ -375,6 +755,7 @@
 
   async function syncPushOne(convo) {
     if (!convo) return;
+    convo = normalizeConvo(convo);
     const token = await ensureToken();
     if (!token) return;
     const row = {
@@ -385,6 +766,7 @@
         if (Array.isArray(m.media) && m.media.length) r.media = m.media;
         return r;
       }),
+      brain: normalizeBrain(convo.brain),
       source: 'web',
       updated_at: new Date().toISOString()
     };
@@ -510,6 +892,7 @@
 
     const convo = ensureActiveConvo(text);
     convo.messages.push({ id: uid(), role: 'user', content: text, ts: Date.now() });
+    convo.brain = extractBrainFromUserMessage(convo.brain, text);
     convo.updated = Date.now();
     if (convo.messages.length === 1) convo.title = text.slice(0, 48);
     saveConvos();
@@ -519,23 +902,33 @@
     el.input.value = ''; autoGrow();
     scrollDown();
 
-    // Mismo criterio que el OS: detecta imagen o PDF.
-    const wantImage = looksLikeImageRequest(text);
-    const wantPdf = !wantImage && looksLikePdfRequest(text);
-    if ((wantImage || wantPdf) && !canUsePremium()) {
-      const what = wantImage ? 'La generacion de imagenes' : 'La generacion de PDF';
-      const note = what + ' es del plan **Pro**. Con tu plan actual puedo ayudarte con texto; mejora a Pro para desbloquearlo.';
-      convo.messages.push({ id: uid(), role: 'assistant', content: note, ts: Date.now() });
+    const crisis = detectCrisisIntent(text);
+    if (crisis.matched) {
+      markCrisisGuard(convo);
+      const replyText = crisis.response;
+      convo.messages.push({ id: uid(), role: 'assistant', content: replyText, ts: Date.now() });
       convo.updated = Date.now();
       saveConvos(); renderMessages(); renderConvoList(); syncPushOne(convo);
       return;
     }
 
-    // Burbuja de respuesta segun el tipo.
+    const wantImage = looksLikeImageRequest(text);
+    const wantPdf = !wantImage && looksLikePdfRequest(text);
+    if ((wantImage || wantPdf) && !canUsePremium()) {
+      const what = wantImage ? 'La generacion de imagenes' : 'La generacion de PDF';
+      const note = what + ' es del plan **Pro**. Con tu plan actual puedo ayudarte con texto; mejora a Pro para desbloquearlo.';
+      markAssistantTurn(convo, note, 'Restriccion del plan');
+      convo.messages.push({ id: uid(), role: 'assistant', content: note, ts: Date.now() });
+      convo.updated = Date.now();
+      saveConvos(); renderMessages(); renderConvoList(); syncPushOne(convo);
+      void maybeUpdateConvoBrain(convo);
+      return;
+    }
+
     const { wrap, bub } = bubbleEl('ai',
-      wantImage ? '<span class="gen-img-loading">🎨 Generando imagen<span class="dots"><i>.</i><i>.</i><i>.</i></span></span>'
-        : wantPdf ? '<span class="gen-img-loading">📄 Preparando PDF<span class="dots"><i>.</i><i>.</i><i>.</i></span></span>'
-          : state.engine === 'os' ? '<span class="gen-img-loading">🧠 Motor LTH OS pensando<span class="dots"><i>.</i><i>.</i><i>.</i></span></span>'
+      wantImage ? '<span class="gen-img-loading">Generando imagen<span class="dots"><i>.</i><i>.</i><i>.</i></span></span>'
+        : wantPdf ? '<span class="gen-img-loading">Preparando PDF<span class="dots"><i>.</i><i>.</i><i>.</i></span></span>'
+          : state.engine === 'os' ? '<span class="gen-img-loading">Motor LTH OS pensando<span class="dots"><i>.</i><i>.</i><i>.</i></span></span>'
             : '<span class="typing"><i></i><i></i><i></i></span>');
     el.messages.appendChild(wrap); scrollDown();
 
@@ -551,28 +944,20 @@
         await generatePdf(text, convo, wrap, bub);
         return;
       }
-      // Si el usuario activo el Motor LTH OS, la pregunta pasa primero por el PC.
       if (state.engine === 'os') {
         const ok = await askPcEngine(text, convo, bub);
         if (ok) return;
         bub.innerHTML = '<span class="typing"><i></i><i></i><i></i></span>';
       }
-
-      // Modo razonamiento: skill -> resolver -> verificar (solo planes de pago).
       if (state.reasoning && canUsePremium()) {
         await reasoningAnswer(text, convo, bub);
         return;
       }
 
-      const history = convo.messages.slice(-HISTORY_LIMIT).map((m) => ({ role: m.role, content: m.content }));
-
-      // Modelo MANUAL forzado desde la barra de modelos (si no es 'auto' ni 'free').
-      // 'free' es solo una etiqueta del plan Free: se comporta como 'auto' (el servidor fuerza el modelo del plan).
       const manual = (state.manualModel !== 'auto' && state.manualModel !== 'free') ? MANUAL_MODELS[state.manualModel] : null;
       const manualAllowed = manual && (!manual.premium || canUsePremium());
       let routeOpts = null;
       if (manual && !manualAllowed) {
-        // Premium sin plan: aviso y caigo a automatico.
         setComposerHint('Ese modelo es de un plan de pago. Usando modo automatico.');
         state.manualModel = 'auto'; renderModelBar();
       }
@@ -584,25 +969,26 @@
         routeOpts = { model: manual.model, maxTokens: manual.maxTokens, temperature: manual.temperature, reasoning: manual.reasoning };
         bub.innerHTML = engineThinkingHtml('premium');
       } else {
-        // Pensar en automatico como Mady: clasifica la intencion y elige el modelo.
-        const route = await autoRoute(text, history);
+        const route = await autoRoute(text, convo);
         if (route && route.action === 'block') {
           const msg = 'No puedo ayudar con esa solicitud.';
           bub.innerHTML = renderMarkdown(msg);
+          markAssistantTurn(convo, msg, 'Bloqueo del router');
           convo.messages.push({ id: uid(), role: 'assistant', content: msg, ts: Date.now() });
           convo.updated = Date.now(); saveConvos(); renderConvoList(); syncPushOne(convo);
+          void maybeUpdateConvoBrain(convo);
           return;
         }
         if (route && route.tier === 'image') {
           await generateImage(text, convo, wrap, bub);
           return;
         }
-        routeOpts = route ? { model: route.model, maxTokens: route.maxTokens, temperature: route.temperature, reasoning: route.reasoning } : null;
+        routeOpts = route ? { model: route.model, maxTokens: route.maxTokens, temperature: route.temperature, reasoning: route.reasoning, system: route.system } : null;
         if (route && route.tier) bub.innerHTML = engineThinkingHtml(route.tier);
       }
 
       let started = false;
-      const result = await streamChat(history, (full) => {
+      const result = await streamChat(convo, text, (full) => {
         if (!started) { started = true; bub.classList.add('cursor'); }
         bub.innerHTML = renderMarkdown(full);
         bub.classList.add('cursor');
@@ -613,19 +999,23 @@
       const finalText = result.text || '';
       bub.innerHTML = renderMarkdown(finalText || '_(sin respuesta)_');
       const assistantMsg = { id: uid(), role: 'assistant', content: finalText, ts: Date.now() };
+      markAssistantTurn(convo, finalText, 'Respuesta web');
       convo.messages.push(assistantMsg);
       if (finalText.trim()) appendFeedback(bub, assistantMsg, convo);
       convo.updated = Date.now();
       saveConvos(); renderConvoList();
       syncPushOne(convo);
       fetchStatus();
+      void maybeUpdateConvoBrain(convo);
     } catch (err) {
       bub.classList.remove('cursor');
       wrap.remove();
       if (err && err.name === 'AbortError') {
-        // Detenido por el usuario: guarda lo que se alcanzo a escribir.
         const partial = bub.textContent || '';
-        if (partial.trim()) convo.messages.push({ id: uid(), role: 'assistant', content: partial, ts: Date.now() });
+        if (partial.trim()) {
+          markAssistantTurn(convo, partial, 'Respuesta interrumpida');
+          convo.messages.push({ id: uid(), role: 'assistant', content: partial, ts: Date.now() });
+        }
       } else {
         const msg = (err && err.message) || 'No se pudo conectar con Mady.';
         showError(msg);
@@ -718,7 +1108,7 @@
       image_config: { aspect_ratio: '1:1', image_size: '1K' },
       maxTokens: 1200,
       temperature: 0.5,
-      system: IMAGE_SYSTEM_PROMPT,
+      system: composeSystemWithMemory(IMAGE_SYSTEM_PROMPT, convo, prompt),
       messages: [{ role: 'user', content: prompt }]
     }, state.abort && state.abort.signal);
 
@@ -733,9 +1123,11 @@
 
     if (!urls.length) {
       const txt = caption || 'No pude generar la imagen esta vez. Intenta describirla con mas detalle.';
+      markAssistantTurn(convo, txt, 'Imagen sin salida');
       convo.messages.push({ id: uid(), role: 'assistant', content: txt, ts: Date.now() });
       convo.updated = Date.now();
       saveConvos(); renderMessages(); renderConvoList(); syncPushOne(convo); fetchStatus();
+      void maybeUpdateConvoBrain(convo);
       return;
     }
 
@@ -748,9 +1140,12 @@
       media.push({ id: id, kind: 'image', mime: mime });
     }
 
-    convo.messages.push({ id: uid(), role: 'assistant', content: caption || 'Aqui tienes tu imagen.', media: media, ts: Date.now() });
+    const replyText = caption || 'Aqui tienes tu imagen.';
+    rememberCurrentArtifact(convo, { kind: 'image', id: media[0] && media[0].id, title: prompt, note: caption || prompt }, 'Se genero una imagen para el chat.');
+    convo.messages.push({ id: uid(), role: 'assistant', content: replyText, media: media, ts: Date.now() });
     convo.updated = Date.now();
     saveConvos(); renderMessages(); renderConvoList(); syncPushOne(convo); fetchStatus();
+    void maybeUpdateConvoBrain(convo);
   }
 
   function appendMedia(bub, media) {
@@ -951,8 +1346,8 @@
   }
 
   async function generatePdf(prompt, convo, wrap, bub) {
-    const history = convo.messages.slice(-HISTORY_LIMIT).map((m) => ({ role: m.role, content: m.content }));
-    const res = await callEdge({ action: 'chat', feature: 'pdf', maxTokens: 4000, system: PDF_SYSTEM_PROMPT, messages: history }, state.abort && state.abort.signal);
+    const history = buildCloudMessages(convo, 'pdf');
+    const res = await callEdge({ action: 'chat', feature: 'pdf', maxTokens: 4000, system: composeSystemWithMemory(PDF_SYSTEM_PROMPT, convo, prompt), messages: history }, state.abort && state.abort.signal);
     const data = await res.json().catch(() => ({}));
     if (!res.ok || data.success === false) {
       if (data && data.credits) { state.credits = mergeCredits(state.credits, data.credits); renderCredits(); }
@@ -960,25 +1355,31 @@
     }
     const docText = String(data.text || '').trim();
     if (!docText) {
-      convo.messages.push({ id: uid(), role: 'assistant', content: 'No pude generar el documento esta vez. Dame mas detalle de lo que quieres en el PDF.', ts: Date.now() });
+      const emptyMsg = 'No pude generar el documento esta vez. Dame mas detalle de lo que quieres en el PDF.';
+      markAssistantTurn(convo, emptyMsg, 'PDF vacio');
+      convo.messages.push({ id: uid(), role: 'assistant', content: emptyMsg, ts: Date.now() });
       convo.updated = Date.now(); saveConvos(); renderMessages(); renderConvoList(); syncPushOne(convo); fetchStatus();
+      void maybeUpdateConvoBrain(convo);
       return;
     }
     const title = derivePdfTitle(prompt, docText);
     let dataUri;
     try { dataUri = buildPdfFromText(title, docText); }
     catch (_) {
-      // Si el generador de PDF fallara, al menos entrega el texto.
+      markAssistantTurn(convo, docText, 'PDF texto');
       convo.messages.push({ id: uid(), role: 'assistant', content: docText, ts: Date.now() });
       convo.updated = Date.now(); saveConvos(); renderMessages(); renderConvoList(); syncPushOne(convo); fetchStatus();
+      void maybeUpdateConvoBrain(convo);
       return;
     }
     const stored = await storeMedia({ convoId: convo.id, kind: 'pdf', mime: 'application/pdf', title, prompt, src: dataUri });
     const id = stored && stored.id ? stored.id : ('local_' + uid());
     mediaCache[id] = dataUri;
+    rememberCurrentArtifact(convo, { kind: 'pdf', id: id, title: title, note: clipText(docText, 220) }, 'Se genero un PDF para el chat.');
     convo.messages.push({ id: uid(), role: 'assistant', content: 'Aqui tienes tu PDF: **' + title + '**.', media: [{ id: id, kind: 'pdf', mime: 'application/pdf', title: title }], ts: Date.now() });
     convo.updated = Date.now();
     saveConvos(); renderMessages(); renderConvoList(); syncPushOne(convo); fetchStatus();
+    void maybeUpdateConvoBrain(convo);
   }
 
   /* ─────────────────── Motor LTH OS (PC) ─────────────────── */
@@ -1040,10 +1441,9 @@
   // Enruta la pregunta al motor completo de Mady en el PC. Devuelve true si respondio.
   async function askPcEngine(text, convo, bub) {
     try {
-      bub.innerHTML = '<span class="gen-img-loading">🧠 Motor LTH OS pensando<span class="dots"><i>.</i><i>.</i><i>.</i></span></span>';
+      bub.innerHTML = '<span class="gen-img-loading">Motor LTH OS pensando<span class="dots"><i>.</i><i>.</i><i>.</i></span></span>';
       const row = await sendOsCommand('ia-ask', { convoId: convo.id, text }, 165000);
       if (!row || row.status !== 'done') {
-        // Emparejamiento perdido (PC reiniciado): vuelve al motor web y pide re-vincular.
         if (row && row.status === 'denied') { state.engine = 'web'; persistEngine(); stopEnginePresence(); }
         state.osConnected = false; renderEngineBadge();
         return false;
@@ -1053,11 +1453,13 @@
       bub.classList.remove('cursor');
       bub.innerHTML = renderMarkdown(answer);
       const webMsg = { id: uid(), role: 'assistant', content: answer, ts: Date.now() };
+      markAssistantTurn(convo, answer, 'Respuesta del motor LTH OS');
       convo.messages.push(webMsg);
       if (answer.trim()) appendFeedback(bub, webMsg, convo);
       convo.updated = Date.now();
       saveConvos(); renderConvoList(); syncPushOne(convo); fetchStatus();
       state.osConnected = true; renderEngineBadge();
+      void maybeUpdateConvoBrain(convo);
       return true;
     } catch (_) { state.osConnected = false; renderEngineBadge(); return false; }
   }
@@ -1092,26 +1494,31 @@
   }
 
   /* ─────────── Auto-router (pensar en automatico como Mady del OS) ─────────── */
-  async function autoRoute(text, history) {
+  async function autoRoute(text, convo) {
     const R = window.LTHRouter;
     const plan = String((state.credits && state.credits.plan) || 'free').toLowerCase();
-    // Solo planes de pago: el free tiene un unico modelo, no hay que enrutar.
     if (!R || !['pro', 'studio', 'ultra'].includes(plan)) return null;
     try {
-      const input = R.buildClassifierInput({ userMessage: text, history: (history || []).slice(-4), userPlan: plan, manualMode: 'auto' });
+      const brainBlock = buildBrainContextBlock(convo, text);
+      const input = R.buildClassifierInput({
+        userMessage: brainBlock ? (brainBlock + '\n\nMENSAJE ACTUAL DEL USUARIO:\n' + text) : text,
+        history: buildCloudMessages(convo, 'router').slice(-4),
+        userPlan: plan,
+        manualMode: 'auto'
+      });
       const res = await callEdge({
         action: 'chat',
         model: R.MODEL_CONFIG.router.model,
         maxTokens: R.MODEL_CONFIG.router.maxTokens,
         temperature: 0,
         response_format: R.MODEL_CONFIG.router.responseFormat,
-        system: R.getClassifierPrompt(),
+        system: composeSystemWithMemory(R.getClassifierPrompt(), convo, text),
         messages: [{ role: 'user', content: input }]
       }, state.abort && state.abort.signal);
       const data = await res.json().catch(() => ({}));
       if (!res.ok || data.success === false) return null;
       let raw = {};
-      try { const m = String(data.text || '').match(/\{[\s\S]*\}/); raw = m ? JSON.parse(m[0]) : {}; } catch (_) { raw = {}; }
+      try { const m = String(data.text || '').match(/{[sS]*}/); raw = m ? JSON.parse(m[0]) : {}; } catch (_) { raw = {}; }
       const decision = R.validateDecision(raw, { manualMode: 'auto' });
       return R.chooseModel(decision, { userPlan: plan, manualMode: 'auto' });
     } catch (_) { return null; }
@@ -1275,39 +1682,37 @@
   // Pipeline premium: IA principal (clasifica + mejora prompt) -> especialista -> juez GLM-5.2.
   async function reasoningAnswer(text, convo, bub) {
     const signal = state.abort && state.abort.signal;
-    const history = convo.messages.slice(-HISTORY_LIMIT).map((m) => ({ role: m.role, content: m.content }));
+    const history = buildCloudMessages(convo, 'reasoning');
 
-    // 1) IA principal: entiende, clasifica y mejora el prompt (o pide aclaracion).
     bub.innerHTML = reasonStageHtml('orchestrate');
-    const orchRaw = await reasonChat({ model: 'google/gemini-2.5-flash', system: ORCHESTRATOR_PROMPT, messages: history, maxTokens: 1400, temperature: 0.2 }, signal);
+    const orchRaw = await reasonChat({ model: 'google/gemini-2.5-flash', system: composeSystemWithMemory(ORCHESTRATOR_PROMPT, convo, text), messages: history, maxTokens: 1400, temperature: 0.2 }, signal);
     const orch = parseReasonJson(orchRaw);
     if (orch.need_clarification && String(orch.questions || '').trim()) {
       const q = String(orch.questions).trim();
       bub.innerHTML = renderMarkdown(q);
+      markAssistantTurn(convo, q, 'Aclaracion del orquestador');
       convo.messages.push({ id: uid(), role: 'assistant', content: q, ts: Date.now() });
       convo.updated = Date.now();
       saveConvos(); renderConvoList(); syncPushOne(convo);
+      void maybeUpdateConvoBrain(convo);
       return;
     }
     const category = String(orch.category || 'chat_simple').toLowerCase();
     const improved = String(orch.improved_prompt || text).trim();
 
-    // 2) imagen: flujo de imagen, sin juez (resultado visual).
     if (category === 'imagen') {
       await generateImage(improved, convo, null, bub);
       return;
     }
 
-    // 2) Especialista de la categoria produce el borrador.
     const spec = categorySpecialist(category, improved);
     bub.innerHTML = reasonStageHtml(spec.stage);
-    const draft = await reasonChat({ model: spec.model, system: spec.system, messages: history, maxTokens: 9000, temperature: spec.temperature, plugins: spec.plugins }, signal);
+    const draft = await reasonChat({ model: spec.model, system: composeSystemWithMemory(spec.system, convo, improved), messages: history, maxTokens: 9000, temperature: spec.temperature, plugins: spec.plugins }, signal);
 
-    // 3) Juez GLM-5.2: revisa, parchea incremental y presenta la respuesta final.
     bub.innerHTML = reasonStageHtml('judge');
     const judgeRaw = await reasonChat({
       model: 'z-ai/glm-5.2',
-      system: JUDGE_PROMPT,
+      system: composeSystemWithMemory(JUDGE_PROMPT, convo, text),
       messages: [{ role: 'user', content: 'PETICION ORIGINAL:\n' + text + '\n\nPROMPT MEJORADO:\n' + improved + '\n\nBORRADOR DEL ESPECIALISTA:\n' + draft }],
       maxTokens: 9000,
       temperature: 0.1
@@ -1318,9 +1723,11 @@
 
     const m = { id: uid(), role: 'assistant', content: finalText, ts: Date.now() };
     if (verdict) m.verdict = verdict;
+    markAssistantTurn(convo, finalText, 'Respuesta razonada');
     convo.messages.push(m);
     convo.updated = Date.now();
     saveConvos(); renderMessages(); renderConvoList(); syncPushOne(convo); fetchStatus();
+    void maybeUpdateConvoBrain(convo);
   }
 
   async function reasonChat(opts, signal) {
