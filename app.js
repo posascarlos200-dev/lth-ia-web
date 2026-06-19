@@ -1610,10 +1610,10 @@
     state.resetStage = complete ? 'complete' : 'request';
     el.resetPinFields.hidden = !complete; el.resetTurnstile.hidden = !!complete;
     el.resetHavePinBtn.hidden = !!complete; el.resetBtnLabel.textContent = complete ? 'Cambiar contraseña' : 'Solicitar PIN';
-    el.resetMsg.textContent = '';
+    el.resetMsg.textContent = ''; el.resetMsg.classList.remove('ok');
     el.resetTitle.textContent = complete ? 'Introduce tu PIN' : 'Restablecer contraseña';
     el.resetIntro.textContent = complete
-      ? 'Escribe el PIN que te hemos enviado a tu correo y define tu nueva contraseña.'
+      ? 'Revisa tu bandeja de entrada (y la carpeta de spam) e introduce el PIN. Después define tu nueva contraseña.'
       : 'Escribe tu correo. El administrador te enviará un PIN manualmente.';
     setResetNotice(complete ? 'El PIN puede llegar durante las próximas 12 horas. Tienes un máximo de 5 intentos.' : '');
     el.resetPin.value = ''; el.resetPassword.value = ''; el.resetPasswordConfirm.value = '';
@@ -1627,23 +1627,16 @@
     event.preventDefault();
     const email = String(el.resetEmail.value || '').trim().toLowerCase();
     if (!email) { el.resetMsg.textContent = 'Escribe tu correo.'; return; }
-    el.resetSubmit.disabled = true; el.resetSpinner.hidden = false; el.resetMsg.textContent = '';
+    el.resetSubmit.disabled = true; el.resetSpinner.hidden = false; el.resetMsg.textContent = ''; el.resetMsg.classList.remove('ok');
     try {
       if (state.resetStage === 'request') {
         const token = INVITES.turnstileToken('resetTurnstileWidget');
         if (!token) throw new Error('Completa la verificación de seguridad.');
         const data = await inviteCall('password.request', { email, turnstileToken: token });
         if (data.reset && data.reset.requestToken) resetTracker({ email, requestToken: data.reset.requestToken });
-        INVITES.resetTurnstile('resetTurnstileWidget'); state.resetStage = 'status';
-        el.resetBtnLabel.textContent = 'Actualizar estado';
-        setResetNotice('El PIN puede llegar durante las próximas 12 horas. Lo enviamos manualmente a tu correo.');
-        el.resetMsg.textContent = 'Solicitud recibida. Cuando recibas el PIN, pulsa “Ya tengo el PIN”.';
-      } else if (state.resetStage === 'status') {
-        const tracker = resetTracker();
-        if (!tracker || !tracker.requestToken) { showResetForm(true); return; }
-        const data = await inviteCall('password.status', { requestToken: tracker.requestToken });
-        if (data.reset.status === 'code_sent') showResetForm(true);
-        else el.resetMsg.textContent = data.reset.status === 'code_ready' ? 'El PIN ya fue generado; falta marcarlo como enviado.' : 'La solicitud sigue pendiente de revisión.';
+        showResetForm(true);
+        el.resetMsg.textContent = 'Solicitud enviada. Revisa tu bandeja de entrada (y la carpeta de spam) y escribe el PIN aquí.';
+        el.resetMsg.classList.add('ok');
       } else {
         const pin = String(el.resetPin.value || '').replace(/\D/g, '');
         const password = String(el.resetPassword.value || '');
@@ -1655,7 +1648,7 @@
         resetTracker(null); setAuthMode('login'); el.authEmail.value = email; el.authPassword.value = '';
         authMessage('Contraseña actualizada. Ya puedes iniciar sesión.', true);
       }
-    } catch (error) { el.resetMsg.textContent = error.message || 'No se pudo completar la solicitud.'; }
+    } catch (error) { el.resetMsg.textContent = error.message || 'No se pudo completar la solicitud.'; el.resetMsg.classList.remove('ok'); }
     finally { el.resetSubmit.disabled = false; el.resetSpinner.hidden = true; }
   }
   async function ensureWebAccess(session) {
