@@ -828,10 +828,14 @@
     const token = await ensureToken();
     const userId = state.session && state.session.user && state.session.user.id;
     if (!token || !userId) return;
-    let userMsgId = '';
+    let userMsgId = ''; let userMsgText = '';
     const idx = convo.messages.indexOf(message);
     for (let i = idx - 1; i >= 0; i -= 1) {
-      if (convo.messages[i] && convo.messages[i].role === 'user') { userMsgId = String(convo.messages[i].id || ''); break; }
+      if (convo.messages[i] && convo.messages[i].role === 'user') {
+        userMsgId = String(convo.messages[i].id || '');
+        userMsgText = String(convo.messages[i].content || '');
+        break;
+      }
     }
     try {
       await fetch(FEEDBACK_REST_URL + '?on_conflict=user_id,conversation_id,assistant_message_id', {
@@ -842,6 +846,7 @@
           conversation_id: String(convo.id || 'web').slice(0, 120),
           conversation_title: String(convo.title || '').slice(0, 180),
           user_message_id: userMsgId.slice(0, 120),
+          user_message: userMsgText.slice(0, 30000),
           assistant_message_id: String(message.id || '').slice(0, 120),
           assistant_response: String(message.content || '').slice(0, 30000),
           rating: rating,
