@@ -1633,7 +1633,9 @@
     resetPasswordToggles();
     if (!complete) INVITES.renderTurnstile('resetTurnstileWidget', CFG.TURNSTILE_SITE_KEY).catch((error) => { el.resetMsg.textContent = error.message; });
     const tracker = resetTracker(); if (tracker && tracker.email) el.resetEmail.value = tracker.email;
-    setTimeout(() => { (complete ? el.resetPin : el.resetEmail).focus(); }, 0);
+    // El auto-enfoque solo en escritorio: en moviles (pointer grueso) provoca saltos y bloqueos del teclado en iOS.
+    const coarse = typeof window.matchMedia === 'function' && window.matchMedia('(pointer: coarse)').matches;
+    if (!coarse) setTimeout(() => { (complete ? el.resetPin : el.resetEmail).focus(); }, 0);
   }
 
   async function handleResetSubmit(event) {

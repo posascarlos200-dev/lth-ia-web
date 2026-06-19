@@ -1,7 +1,7 @@
 /* Service worker de LTH IA Web.
    Cachea solo el shell estatico para instalacion/offline. NUNCA toca las
    llamadas a Supabase (auth, edge function, REST): esas van siempre a la red. */
-const CACHE = 'lth-ia-web-v31';
+const CACHE = 'lth-ia-web-v32';
 const SHELL = [
   './',
   './index.html',
@@ -32,17 +32,15 @@ self.addEventListener('fetch', (event) => {
   // Solo gestionamos recursos del propio origen/scope. Supabase y demas: red directa.
   if (url.origin !== self.location.origin) return;
 
-  // Stale-while-revalidate para el shell.
+  // Network-first: siempre intenta la version mas nueva (evita servir codigo viejo).
+  // Solo cae a cache si no hay conexion (offline).
   event.respondWith(
-    caches.match(req).then((cached) => {
-      const network = fetch(req).then((res) => {
-        if (res && res.status === 200 && res.type === 'basic') {
-          const clone = res.clone();
-          caches.open(CACHE).then((c) => c.put(req, clone)).catch(() => {});
-        }
-        return res;
-      }).catch(() => cached);
-      return cached || network;
-    })
+    fetch(req).then((res) => {
+      if (res && res.status === 200 && res.type === 'basic') {
+        const clone = res.clone();
+        caches.open(CACHE).then((c) => c.put(req, clone)).catch(() => {});
+      }
+      return res;
+    }).catch(() => caches.match(req))
   );
 });
