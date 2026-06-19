@@ -107,4 +107,22 @@ assert.match(contextBlock, /https:\/\/es\.wikipedia\.org\/wiki\/Nikola_Tesla/);
 assert.match(contextBlock, /sensible al tiempo/i);
 assert.match(contextBlock, /cita las URLs/i);
 
-console.log('free-research-layer: 12/12 OK');
+// Segunda fuente: DuckDuckGo Instant Answer
+assert.equal(typeof api.parseDuckDuckGoResults, 'function');
+const ddg = api.parseDuckDuckGoResults({
+  Heading: 'Nikola Tesla',
+  AbstractText: 'Nikola Tesla fue un inventor e ingeniero electrico serbio-estadounidense.',
+  AbstractURL: 'https://duckduckgo.com/Nikola_Tesla',
+  RelatedTopics: [
+    { Text: 'Corriente alterna - sistema electrico de Tesla', FirstURL: 'https://duckduckgo.com/Corriente_alterna' },
+    { Nada: true }
+  ]
+}, 'nikola tesla');
+assert.ok(ddg.length >= 2, 'DDG debe devolver abstract + relacionado');
+assert.equal(ddg[0].source, 'DuckDuckGo');
+assert.match(ddg[0].summary, /inventor e ingeniero/i);
+assert.equal(ddg[0].url, 'https://duckduckgo.com/Nikola_Tesla');
+assert.match(ddg[1].title, /Corriente alterna/);
+assert.equal(api.parseDuckDuckGoResults(null, 'x').length, 0);
+
+console.log('free-research-layer: 17/17 OK');

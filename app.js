@@ -360,6 +360,32 @@
     return { kind: kind || 'asset', id: id || '', title: title || 'Archivo', note: note || '' };
   }
 
+  const ENTITY_TYPES = new Set(['persona', 'meta', 'archivo', 'preferencia', 'lugar', 'fecha', 'organizacion']);
+  const ENTITY_LIMIT = 12;
+
+  function normalizeEntity(raw) {
+    if (!raw || typeof raw !== 'object') return null;
+    const type = clipText(String(raw.type || '').toLowerCase(), 20);
+    const name = clipText(raw.name || raw.value, 80);
+    if (!name || !ENTITY_TYPES.has(type)) return null;
+    return { type, name, note: clipText(raw.note, 160) || '', updated_at: Math.max(0, Number(raw.updated_at || Date.now()) || Date.now()) };
+  }
+
+  function normalizeEntities(list) {
+    const sorted = (Array.isArray(list) ? list : []).map(normalizeEntity).filter(Boolean)
+      .sort((a, b) => (Number(b.updated_at || 0) - Number(a.updated_at || 0)));
+    const out = [];
+    const seen = new Set();
+    for (const ent of sorted) {
+      const key = ent.type + '|' + ent.name.toLowerCase();
+      if (seen.has(key)) continue;
+      seen.add(key);
+      out.push(ent);
+      if (out.length >= ENTITY_LIMIT) break;
+    }
+    return out;
+  }
+
   function normalizeBrain(raw, seedSummary) {
     const source = raw && typeof raw === 'object' ? raw : {};
     return {
@@ -376,6 +402,8 @@
       },
       preferences: uniqueList(source.preferences, 8, 160),
       commitments: uniqueList(source.commitments, 8, 220),
+      entities: normalizeEntities(source.entities),
+      conflicts: uniqueList(source.conflicts, 4, 200),
       current_artifact: normalizeArtifact(source.current_artifact),
       updated_at: Math.max(0, Number(source.updated_at || Date.now()) || Date.now()),
       covered_count: Math.max(0, Number(source.covered_count || 0) || 0)
@@ -384,7 +412,38 @@
 
   function hasMeaningfulBrain(brain) {
     const b = normalizeBrain(brain);
-    return !!(b.running_summary || b.user_goal || b.active_task || b.last_known_state || b.important_rules.length || b.decisions.length || b.preferences.length || b.commitments.length || b.user_profile.name_for_this_chat || b.user_profile.full_name || b.current_artifact);
+    return !!(b.running_summary || b.user_goal || b.active_task || b.last_known_state || b.important_rules.length || b.decisions.length || b.preferences.length || b.commitments.length || b.entities.length || b.user_profile.name_for_this_chat || b.user_profile.full_name || b.current_artifact);
+  }
+
+  function labeledEntryValue(list, label) {
+    const lower = String(label || '').toLowerCase() + ':';
+    for (const item of Array.isArray(list) ? list : []) {
+      const s = String(item || '');
+      if (s.toLowerCase().startsWith(lower)) return s.slice(s.indexOf(':') + 1).trim();
+    }
+    return '';
+  }
+
+  function scalarConflict(label, valueA, valueB) {
+    const a = normalizeWhitespace(valueA);
+    const b = normalizeWhitespace(valueB);
+    if (!a || !b || normalizeForSearch(a) === normalizeForSearch(b)) return '';
+    return label + ': hay dos versiones ("' + clipText(a, 70) + '" vs "' + clipText(b, 70) + '")';
+  }
+
+  // Detecta contradicciones entre dos versiones del brain (p.ej. memoria local vs servidor)
+  // para que Mady pregunte en vez de asumir un dato. Compara los campos canonicos del usuario.
+  function detectBrainConflicts(brainA, brainB) {
+    const a = normalizeBrain(brainA);
+    const b = normalizeBrain(brainB);
+    const out = [];
+    const nameConflict = scalarConflict('Nombre', a.user_profile.full_name, b.user_profile.full_name);
+    if (nameConflict) out.push(nameConflict);
+    const goalConflict = scalarConflict('Objetivo', a.user_goal, b.user_goal);
+    if (goalConflict) out.push(goalConflict);
+    const coffeeConflict = scalarConflict('Cafe', labeledEntryValue(a.preferences, 'Cafe'), labeledEntryValue(b.preferences, 'Cafe'));
+    if (coffeeConflict) out.push(coffeeConflict);
+    return uniqueList(out, 4, 200);
   }
 
   function mergeBrain(localBrain, remoteBrain) {
@@ -395,6 +454,7 @@
     const remoteWins = Number(remote.updated_at || 0) >= Number(local.updated_at || 0);
     const primary = remoteWins ? remote : local;
     const secondary = remoteWins ? local : remote;
+    const conflicts = uniqueList(detectBrainConflicts(primary, secondary).concat(primary.conflicts, secondary.conflicts), 4, 200);
     return normalizeBrain({
       running_summary: primary.running_summary || secondary.running_summary,
       user_goal: primary.user_goal || secondary.user_goal,
@@ -408,6 +468,8 @@
       },
       preferences: primary.preferences.concat(secondary.preferences),
       commitments: primary.commitments.concat(secondary.commitments),
+      entities: primary.entities.concat(secondary.entities),
+      conflicts: conflicts,
       current_artifact: primary.current_artifact || secondary.current_artifact,
       updated_at: Math.max(Number(primary.updated_at || 0), Number(secondary.updated_at || 0)),
       covered_count: Math.max(Number(primary.covered_count || 0), Number(secondary.covered_count || 0))
@@ -515,6 +577,23 @@
     return clipText(match[0], 160);
   }
 
+  // Recuerdos por entidad: persona / lugar / organizacion detectados de forma determinista.
+  // meta y archivo se agregan desde el objetivo y el artefacto en sus propios flujos.
+  function extractEntities(text) {
+    const raw = normalizeWhitespace(text);
+    if (!raw) return [];
+    const now = Date.now();
+    const out = [];
+    // Nombres deben iniciar en mayuscula (sin flag 'i') para evitar capturar palabras comunes
+    // como "muy" en "mi jefe es muy bueno". Las palabras clave toleran mayuscula inicial de frase.
+    const nameToken = '([A-ZÁÉÍÓÚÑ][A-Za-zÁÉÍÓÚáéíóúÑñ]+(?:\\s+[A-ZÁÉÍÓÚÑ][A-Za-zÁÉÍÓÚáéíóúÑñ]+)?)';
+    const relation = raw.match(new RegExp('\\b[Mm]i\\s+(esposa|esposo|marido|mujer|novia|novio|pareja|hija|hijo|madre|padre|mama|mam[aá]|papa|pap[aá]|hermana|hermano|jefa|jefe|amiga|amigo|perro|perra|gato|gata|abuela|abuelo|maestra|maestro|doctor|doctora)\\s+(?:se\\s+llama|es|llamad[oa])\\s+' + nameToken));
+    if (relation) out.push({ type: 'persona', name: clipText(relation[2], 80), note: relation[1].toLowerCase(), updated_at: now });
+    const place = raw.match(new RegExp('\\b(?:[Vv]ivo en|[Ss]oy de|radico en|me mud[eé] a|trabajo en)\\s+' + nameToken));
+    if (place) out.push({ type: 'lugar', name: clipText(place[1], 80), note: 'lugar del usuario', updated_at: now });
+    return out;
+  }
+
   function extractBrainFromUserMessage(brainInput, text) {
     const brain = normalizeBrain(brainInput);
     const raw = normalizeWhitespace(text);
@@ -526,8 +605,12 @@
     }
     for (const pref of extractPreferenceEntries(raw)) brain.preferences = upsertLabeledEntry(brain.preferences, pref.label, pref.value, 8, 160);
     for (const item of extractCommitments(raw)) brain.commitments = uniqueList([item].concat(brain.commitments), 8, 220);
+    for (const ent of extractEntities(raw)) brain.entities = normalizeEntities([ent].concat(brain.entities));
     const goal = extractGoal(raw);
-    if (goal) brain.user_goal = clipText(goal, 240);
+    if (goal) {
+      brain.user_goal = clipText(goal, 240);
+      brain.entities = normalizeEntities([{ type: 'meta', name: clipText(goal, 80), note: 'objetivo del usuario', updated_at: Date.now() }].concat(brain.entities));
+    }
     const rule = extractRule(raw);
     if (rule) brain.important_rules = uniqueList([rule].concat(brain.important_rules), 8, 160);
     const decision = extractDecision(raw);
@@ -545,6 +628,7 @@
     if (brain.user_profile.full_name || brain.user_profile.name_for_this_chat) lines.push('- Identidad del usuario: ' + (brain.user_profile.full_name || brain.user_profile.name_for_this_chat));
     if (brain.preferences.length) lines.push('- Preferencias recordadas: ' + brain.preferences.join(' | '));
     if (brain.commitments.length) lines.push('- Compromisos y agenda: ' + brain.commitments.join(' | '));
+    if (brain.entities && brain.entities.length) lines.push('- Entidades recordadas: ' + brain.entities.map((e) => e.type + ':' + e.name + (e.note ? ' (' + e.note + ')' : '')).join(' | '));
     if (brain.user_goal) lines.push('- Objetivo actual del usuario: ' + brain.user_goal);
     if (brain.active_task) lines.push('- Tarea activa: ' + brain.active_task);
     if (brain.current_artifact) lines.push('- Artefacto actual: ' + brain.current_artifact.kind + ' "' + clipText(brain.current_artifact.title, 120) + '"' + (brain.current_artifact.note ? ' | nota: ' + clipText(brain.current_artifact.note, 200) : ''));
@@ -552,6 +636,7 @@
     if (brain.important_rules.length) lines.push('- Reglas del usuario: ' + brain.important_rules.join(' | '));
     if (brain.decisions.length) lines.push('- Decisiones ya tomadas: ' + brain.decisions.join(' | '));
     if (brain.running_summary) lines.push('- Resumen acumulado: ' + clipText(brain.running_summary, 600));
+    if (brain.conflicts && brain.conflicts.length) lines.push('- CONTRADICCIONES SIN RESOLVER (no asumas ninguna version; pregunta brevemente cual es la correcta): ' + brain.conflicts.join(' | '));
     if (query) lines.push('- Mensaje actual: ' + clipText(query, 220));
     if (!lines.length) return '';
     return 'MEMORIA DEL CHAT (interna; debes respetarla y no inventar datos fuera de ella):\n' + lines.join('\n') + '\nSi falta un dato importante o ves una posible contradiccion, pide aclaracion breve antes de inventar.';
@@ -780,10 +865,7 @@
     };
   }
 
-  async function runFreeResearch(text, signal) {
-    const intent = detectFreeResearchIntent(text);
-    if (!intent.matched || !intent.query) return null;
-    const languages = intent.lang === 'en' ? ['en', 'es'] : ['es', 'en'];
+  async function collectWikipedia(intent, languages, signal) {
     const sources = [];
     const seen = new Set();
     for (const lang of languages) {
@@ -804,6 +886,67 @@
             lang
           });
         }
+        if (sources.length >= FREE_RESEARCH_MAX_SOURCES) break;
+      }
+      if (sources.length >= FREE_RESEARCH_MAX_SOURCES) break;
+    }
+    return sources;
+  }
+
+  // Segunda fuente gratuita: DuckDuckGo Instant Answer (abstract + temas relacionados).
+  // Complementa a Wikipedia para definiciones y entidades. Falla suave (CORS/red) sin romper.
+  function parseDuckDuckGoResults(data, query) {
+    if (!data || typeof data !== 'object') return [];
+    const out = [];
+    const abstract = clipText(stripHtmlTags(data.AbstractText || data.Abstract || ''), 420);
+    if (abstract) {
+      out.push({
+        title: clipText(stripHtmlTags(data.Heading || query || 'Resultado'), 120),
+        summary: abstract,
+        url: clipText(data.AbstractURL || '', 220),
+        source: 'DuckDuckGo'
+      });
+    }
+    const related = Array.isArray(data.RelatedTopics) ? data.RelatedTopics : [];
+    for (const topic of related) {
+      if (out.length >= FREE_RESEARCH_MAX_SOURCES) break;
+      const text = topic && topic.Text ? stripHtmlTags(topic.Text) : '';
+      if (!text) continue;
+      out.push({
+        title: clipText(text.split(' - ')[0] || text, 120),
+        summary: clipText(text, 300),
+        url: clipText(topic.FirstURL || '', 220),
+        source: 'DuckDuckGo'
+      });
+    }
+    return out.filter((item) => item.summary);
+  }
+
+  async function searchDuckDuckGo(query, signal) {
+    const url = 'https://api.duckduckgo.com/?q=' + encodeURIComponent(query) + '&format=json&no_html=1&skip_disambig=1&t=lthia';
+    const data = await fetchJsonWithTimeout(url, { headers: { Accept: 'application/json' } }, FREE_RESEARCH_TIMEOUT_MS, signal).catch(() => null);
+    return parseDuckDuckGoResults(data, query);
+  }
+
+  async function runFreeResearch(text, signal) {
+    const intent = detectFreeResearchIntent(text);
+    if (!intent.matched || !intent.query) return null;
+    const languages = intent.lang === 'en' ? ['en', 'es'] : ['es', 'en'];
+    // Wikipedia primero (resumenes mas ricos), DuckDuckGo en paralelo para ampliar cobertura.
+    const settled = await Promise.allSettled([
+      collectWikipedia(intent, languages, signal),
+      searchDuckDuckGo(intent.query, signal)
+    ]);
+    const sources = [];
+    const seen = new Set();
+    for (const res of settled) {
+      const list = res.status === 'fulfilled' && Array.isArray(res.value) ? res.value : [];
+      for (const item of list) {
+        if (!item || !item.summary) continue;
+        const key = normalizeForSearch(item.title) + '|' + normalizeForSearch(item.url);
+        if (seen.has(key)) continue;
+        seen.add(key);
+        sources.push(item);
         if (sources.length >= FREE_RESEARCH_MAX_SOURCES) break;
       }
       if (sources.length >= FREE_RESEARCH_MAX_SOURCES) break;
@@ -855,6 +998,7 @@
     brain.active_task = 'Dar seguimiento al ultimo archivo generado.';
     brain.last_known_state = clipText(stateText, 240);
     if (!brain.user_goal) brain.user_goal = clipText('Continuar con el archivo actual del chat.', 240);
+    if (brain.current_artifact) brain.entities = normalizeEntities([{ type: 'archivo', name: clipText(brain.current_artifact.title || brain.current_artifact.kind, 80), note: brain.current_artifact.kind, updated_at: Date.now() }].concat(brain.entities));
     brain.updated_at = Date.now();
     return brain.current_artifact;
   }
@@ -1152,9 +1296,20 @@
     const olderMessages = messages.slice(0, Math.max(0, messages.length - LOCAL_RECALL_RECENT_SKIP));
     const queryNorm = normalizeForSearch(rawQuery);
     const terms = tokenizeRecallTerms(rawQuery);
+    // Recuerdos por entidad: si la pregunta menciona una entidad por su nombre o por su
+    // relacion (ej. "esposa" -> Ana), inyectamos el nombre como termino de busqueda extra.
+    const entities = (normalized.brain && Array.isArray(normalized.brain.entities)) ? normalized.brain.entities : [];
+    const extraTerms = [];
+    for (const ent of entities) {
+      const nameNorm = normalizeForSearch(ent.name);
+      const noteNorm = normalizeForSearch(ent.note);
+      if (!nameNorm) continue;
+      if (queryNorm.includes(nameNorm) || (noteNorm && queryNorm.includes(noteNorm))) extraTerms.push(nameNorm);
+    }
+    const recallTerms = uniqueList(terms.concat(extraTerms), 16, 60);
     const explicitRecall = /\b(recuerda|recuerdas|recorda|antes|dije|hablamos|mi nombre|mi apellido|mi cafe|mi objetivo|pdf|imagen|archivo)\b/.test(queryNorm);
-    if (!explicitRecall && terms.length < 2) return '';
-    const ranked = olderMessages.map((msg, index) => ({ msg, index, score: scoreRecallCandidate(msg, queryNorm, terms) }))
+    if (!explicitRecall && terms.length < 2 && !extraTerms.length) return '';
+    const ranked = olderMessages.map((msg, index) => ({ msg, index, score: scoreRecallCandidate(msg, queryNorm, recallTerms) }))
       .filter((item) => item.score > 0)
       .sort((a, b) => (b.score - a.score) || (b.index - a.index))
       .slice(0, LOCAL_RECALL_MAX_SNIPPETS);
@@ -1180,7 +1335,7 @@
     ]).catch(() => {});
   }
 
-  window.LTH_IA_TEST_API = { normalizeBrain, extractBrainFromUserMessage, buildBrainContextBlock, detectCrisisIntent, detectFreeSkillIntent, buildFreeSkillSystem, buildFreeSkillClarification, normalizeResearchQuery, detectFreeResearchIntent, buildFreeResearchContextBlock, buildDeviceMemoryRecallBlock, mergeConvoCollections, serializeConvoForCache };
+  window.LTH_IA_TEST_API = { normalizeBrain, extractBrainFromUserMessage, buildBrainContextBlock, detectCrisisIntent, detectFreeSkillIntent, buildFreeSkillSystem, buildFreeSkillClarification, normalizeResearchQuery, detectFreeResearchIntent, buildFreeResearchContextBlock, buildDeviceMemoryRecallBlock, mergeConvoCollections, serializeConvoForCache, extractEntities, detectBrainConflicts, mergeBrain, parseDuckDuckGoResults };
 
   async function loadConvos() {
     state.convos = loadCachedConvos();
@@ -2067,7 +2222,7 @@
       const data = await res.json().catch(() => ({}));
       if (!res.ok || data.success === false) return null;
       let raw = {};
-      try { const m = String(data.text || '').match(/{[sS]*}/); raw = m ? JSON.parse(m[0]) : {}; } catch (_) { raw = {}; }
+      try { const m = String(data.text || '').match(/\{[\s\S]*\}/); raw = m ? JSON.parse(m[0]) : {}; } catch (_) { raw = {}; }
       const decision = R.validateDecision(raw, { manualMode: 'auto' });
       return R.chooseModel(decision, { userPlan: plan, manualMode: 'auto' });
     } catch (_) { return null; }
@@ -2090,22 +2245,19 @@
   function renderModelBar() {
     const plan = String((state.credits && state.credits.plan) || 'free').toLowerCase();
     const free = plan === 'free';
-    // Los modelos NO manuales (modo automatico) se muestran como una sola marca por plan.
-    const brand = 'Mady Canont ' + plan.charAt(0).toUpperCase() + plan.slice(1);
-    MANUAL_MODELS.free.label = brand;
-    // La opcion de marca (id 'free') es el modo automatico para todos los planes.
-    if (free || state.manualModel === 'auto') state.manualModel = 'free';
-    const cur = MANUAL_MODELS[state.manualModel] || MANUAL_MODELS.free;
-    if (el.modelPickerLabel) el.modelPickerLabel.textContent = cur.label || brand;
+    // Modo automatico segun plan:
+    //  - Free: se llama "Mady Canont Free" (su unico modelo permitido).
+    //  - Pago: se llama "Auto" (el router elige el mejor modelo, incl. busqueda web via Sonar).
+    MANUAL_MODELS.free.label = 'Mady Canont Free';
+    if (free) state.manualModel = 'free';
+    else if (state.manualModel === 'free') state.manualModel = 'auto';
+    const cur = MANUAL_MODELS[state.manualModel] || (free ? MANUAL_MODELS.free : MANUAL_MODELS.auto);
+    if (el.modelPickerLabel) el.modelPickerLabel.textContent = cur.label;
     if (el.modelMenu) {
       el.modelMenu.querySelectorAll('[data-model]').forEach((b) => {
         const id = b.getAttribute('data-model');
-        if (id === 'free') {
-          const t = b.querySelector('b'); if (t) t.textContent = brand;
-          const s = b.querySelector('span'); if (s) s.textContent = 'Mady elige el mejor modelo';
-        }
-        // 'auto' literal se oculta siempre (lo reemplaza la marca). En free solo se ve la marca.
-        b.hidden = id === 'auto' ? true : (free ? id !== 'free' : false);
+        // 'free' (Mady Canont Free) solo en plan free; 'auto' (Auto) solo en planes de pago.
+        b.hidden = free ? (id !== 'free') : (id === 'free');
         b.classList.toggle('on', id === state.manualModel);
       });
     }
