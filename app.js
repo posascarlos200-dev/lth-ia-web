@@ -231,6 +231,9 @@
       if (data && data.success) {
         state.credits = data.credits || null;
         if (data.modelLabel || data.model) state.modelLabel = data.modelLabel || data.model;
+        // En el plan free se muestra una marca propia, no el nombre del modelo real.
+        const plan = String((state.credits && state.credits.plan) || 'free').toLowerCase();
+        if (plan === 'free') state.modelLabel = 'Mady Canont free';
         renderCredits();
       }
     } catch (_) {}
