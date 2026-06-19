@@ -1464,9 +1464,19 @@
     else if (mode === 'off') el.statusDot.classList.add('off');
   }
 
+  // Etiqueta unica del modelo activo (header + selector). En pago el default es "Auto";
+  // nunca mostramos la marca "Mady Canont {Plan}" del servidor para planes de pago.
+  function currentModelLabel() {
+    const plan = String((state.credits && state.credits.plan) || 'free').toLowerCase();
+    const free = plan === 'free';
+    const id = free ? 'free' : (state.manualModel === 'free' ? 'auto' : state.manualModel);
+    const m = MANUAL_MODELS[id] || (free ? MANUAL_MODELS.free : MANUAL_MODELS.auto);
+    return m.label || 'LTH IA';
+  }
+
   function renderCredits() {
     const c = state.credits;
-    el.modelLabel.textContent = state.modelLabel || 'LTH IA';
+    el.modelLabel.textContent = currentModelLabel();
     if (!c) { el.planTag.textContent = '—'; el.usageVal.textContent = '—'; el.usageFill.style.width = '0%'; return; }
     const plan = String(c.plan || 'free');
     el.planTag.textContent = plan;
@@ -2279,6 +2289,7 @@
     else if (state.manualModel === 'free') state.manualModel = 'auto';
     const cur = MANUAL_MODELS[state.manualModel] || (free ? MANUAL_MODELS.free : MANUAL_MODELS.auto);
     if (el.modelPickerLabel) el.modelPickerLabel.textContent = cur.label;
+    if (el.modelLabel) el.modelLabel.textContent = cur.label;
     if (el.modelMenu) {
       el.modelMenu.querySelectorAll('[data-model]').forEach((b) => {
         const id = b.getAttribute('data-model');
