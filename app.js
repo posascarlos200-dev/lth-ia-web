@@ -2375,9 +2375,9 @@
       };
     }
     if (category === 'razonamiento') {
-      return { model: 'anthropic/claude-opus-4.7', stage: 'razonamiento', temperature: 0.3, system: 'Eres Mady en razonamiento tecnico profundo. Razona con rigor, considera alternativas y justifica cada decision.' + brief };
+      return { model: 'z-ai/glm-5.2', stage: 'razonamiento', temperature: 0.3, system: 'Eres Mady en razonamiento tecnico profundo. Razona con rigor, considera alternativas y justifica cada decision.' + brief };
     }
-    return { model: 'openai/gpt-5.5', stage: 'chat_simple', temperature: 0.4, system: SYSTEM_PROMPT + brief };
+    return { model: 'z-ai/glm-5.2', stage: 'chat_simple', temperature: 0.4, system: SYSTEM_PROMPT + brief };
   }
 
   function extractVerdict(j) {
@@ -2417,7 +2417,7 @@
     bub.appendChild(card);
   }
 
-  // Pipeline premium: IA principal (clasifica + mejora prompt) -> especialista -> juez GLM-5.2.
+  // Pipeline premium: IA principal (clasifica + mejora prompt) -> especialista -> juez GPT 5.5.
   async function reasoningAnswer(text, convo, bub) {
     const signal = state.abort && state.abort.signal;
     const history = buildCloudMessages(convo, 'reasoning');
@@ -2449,7 +2449,7 @@
 
     bub.innerHTML = reasonStageHtml('judge');
     const judgeRaw = await reasonChat({
-      model: 'z-ai/glm-5.2',
+      model: 'openai/gpt-5.5',
       system: composeSystemWithMemory(JUDGE_PROMPT, convo, text),
       messages: [{ role: 'user', content: 'PETICION ORIGINAL:\n' + text + '\n\nPROMPT MEJORADO:\n' + improved + '\n\nBORRADOR DEL ESPECIALISTA:\n' + draft }],
       maxTokens: 9000,
