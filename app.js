@@ -103,6 +103,7 @@
     presenceTimer: null,
     reasoning: false,
     reasonUses: null,     // estado de usos semanales de razonamiento {enabled,limit,used,remaining,resets_at}
+    reasonModels: null,   // config de modelos del razonamiento por etapa (editable en admin)
     manualModel: 'auto'   // 'auto' = ruteo automatico; o un id de MANUAL_MODELS
   };
 
@@ -1555,7 +1556,15 @@
       const res = await callEdge({ action: 'reason-status' });
       const data = await res.json().catch(() => ({}));
       if (data && data.reasoning) applyReasonUses(data.reasoning);
+      if (data && data.reasoningModels && typeof data.reasoningModels === 'object') state.reasonModels = data.reasoningModels;
     } catch (_) {}
+  }
+
+  // Modelo configurado para una etapa del razonamiento (editable en admin); fallback al default.
+  function reasonModel(stage, fallback) {
+    const cfg = state.reasonModels && state.reasonModels[stage];
+    const m = cfg && typeof cfg.model === 'string' ? cfg.model.trim() : '';
+    return m || fallback;
   }
 
   function renderConvoList() {
@@ -2405,20 +2414,20 @@
   function categorySpecialist(category, improved) {
     const brief = '\n\nInstrucciones del orquestador (síguelas al pie de la letra):\n' + improved;
     if (category === 'codigo') {
-      return { model: 'deepseek/deepseek-v4-pro', stage: 'codigo', temperature: 0.2, system: 'Eres un ingeniero de software senior. Entrega codigo correcto, integrado y ejecutable; prioriza la correctitud y la integracion real; explica lo esencial brevemente.' + brief };
+      return { model: reasonModel('spec_codigo', 'deepseek/deepseek-v4-pro'), stage: 'codigo', temperature: 0.2, system: 'Eres un ingeniero de software senior. Entrega codigo correcto, integrado y ejecutable; prioriza la correctitud y la integracion real; explica lo esencial brevemente.' + brief };
     }
     if (category === 'chat_max') {
       const hoy = new Date().toLocaleDateString('es', { day: '2-digit', month: 'long', year: 'numeric' });
       return {
-        model: 'anthropic/claude-sonnet-4.6:online', stage: 'chat_max', temperature: 0.2,
+        model: reasonModel('spec_chat_max', 'anthropic/claude-sonnet-4.6:online'), stage: 'chat_max', temperature: 0.2,
         plugins: [{ id: 'web', max_results: 6 }],
         system: 'Eres Mady en modo investigacion con BUSQUEDA WEB ACTIVA. Hoy es ' + hoy + ' (estamos en el ano 2026; NUNCA trates esta fecha como futura ni digas que no puedes acceder a internet). DEBES usar los resultados de la busqueda web que recibes para responder con datos REALES y ACTUALES. CITA las fuentes (URLs reales) que uses. Separa hechos confirmados de inferencias y marca explicitamente lo que no se pudo verificar.' + brief
       };
     }
     if (category === 'razonamiento') {
-      return { model: 'z-ai/glm-5.2', stage: 'razonamiento', temperature: 0.3, system: 'Eres Mady en razonamiento tecnico profundo. Razona con rigor, considera alternativas y justifica cada decision.' + brief };
+      return { model: reasonModel('spec_razonamiento', 'z-ai/glm-5.2'), stage: 'razonamiento', temperature: 0.3, system: 'Eres Mady en razonamiento tecnico profundo. Razona con rigor, considera alternativas y justifica cada decision.' + brief };
     }
-    return { model: 'z-ai/glm-5.2', stage: 'chat_simple', temperature: 0.4, system: SYSTEM_PROMPT + brief };
+    return { model: reasonModel('spec_chat_simple', 'z-ai/glm-5.2'), stage: 'chat_simple', temperature: 0.4, system: SYSTEM_PROMPT + brief };
   }
 
   function extractVerdict(j) {
@@ -2491,7 +2500,7 @@
     const history = buildCloudMessages(convo, 'reasoning');
 
     bub.innerHTML = reasonStageHtml('orchestrate');
-    const orchRaw = await reasonChat({ model: 'google/gemini-2.5-flash', system: composeSystemWithMemory(ORCHESTRATOR_PROMPT, convo, text), messages: history, maxTokens: 1400, temperature: 0.2 }, signal);
+    const orchRaw = await reasonChat({ model: reasonModel('orchestrator', 'google/gemini-2.5-flash'), system: composeSystemWithMemory(ORCHESTRATOR_PROMPT, convo, text), messages: history, maxTokens: 1400, temperature: 0.2 }, signal);
     const orch = parseReasonJson(orchRaw);
     if (orch.need_clarification && String(orch.questions || '').trim()) {
       const q = String(orch.questions).trim();
@@ -2517,7 +2526,7 @@
 
     bub.innerHTML = reasonStageHtml('judge');
     const judgeRaw = await reasonChat({
-      model: 'openai/gpt-5.5',
+      model: reasonModel('judge', 'openai/gpt-5.5'),
       system: composeSystemWithMemory(JUDGE_PROMPT, convo, text),
       messages: [{ role: 'user', content: 'PETICION ORIGINAL:\n' + text + '\n\nPROMPT MEJORADO:\n' + improved + '\n\nBORRADOR DEL ESPECIALISTA:\n' + draft }],
       maxTokens: 9000,
