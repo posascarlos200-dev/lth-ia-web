@@ -212,7 +212,9 @@
       const doc = buildPreviewDoc(src);
       if (doc) {
         out += '<div class="code-preview"><button class="code-preview-btn" type="button" data-preview-toggle="1">▶ Vista previa</button>'
-          + '<div class="code-preview-frame" hidden><iframe class="code-preview-iframe" sandbox="allow-scripts allow-modals allow-popups" loading="lazy" srcdoc="' + previewAttr(doc) + '"></iframe></div></div>';
+          + '<div class="code-preview-frame" hidden>'
+          + '<div class="code-preview-bar"><button class="code-preview-fs" type="button" data-preview-fullscreen="1" title="Pantalla completa">⛶ Pantalla completa</button></div>'
+          + '<iframe class="code-preview-iframe" sandbox="allow-scripts allow-modals allow-popups" loading="lazy" srcdoc="' + previewAttr(doc) + '"></iframe></div></div>';
       }
     }
     return out;
@@ -3124,6 +3126,19 @@
     if (el.messages && !el.messages._previewBound) {
       el.messages._previewBound = true;
       el.messages.addEventListener('click', (e) => {
+        const fsBtn = e.target.closest && e.target.closest('[data-preview-fullscreen]');
+        if (fsBtn) {
+          const frame = fsBtn.closest('.code-preview-frame');
+          if (!frame) return;
+          if (document.fullscreenElement) {
+            if (document.exitFullscreen) document.exitFullscreen();
+          } else if (frame.requestFullscreen) {
+            frame.requestFullscreen().catch(() => {});
+          } else if (frame.webkitRequestFullscreen) {
+            frame.webkitRequestFullscreen();
+          }
+          return;
+        }
         const btn = e.target.closest && e.target.closest('[data-preview-toggle]');
         if (!btn) return;
         const wrap = btn.closest('.code-preview');
