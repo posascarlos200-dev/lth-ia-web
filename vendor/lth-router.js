@@ -57,6 +57,14 @@
       '8. Nunca escales a premium si el modelo rapido base puede resolverlo bien.',
       '9. Devuelve SOLO JSON valido. No expliques nada fuera del JSON.',
       '',
+      'Senales temporales y de contexto (rellena estos campos con cuidado):',
+      '10. needs_temporal_check = true si la respuesta correcta depende del momento actual: cargos publicos (presidente, ministro, alcalde, CEO), precios o mercados (bitcoin, dolar, acciones), resultados o calendarios deportivos, leyes/versiones recientes, o si aparece "actual", "hoy", "ahora", "ultimo", "reciente", "vigente", "este ano", "2026", "investiga", "verifica", "en la actualidad".',
+      '11. correction_detected = true si el usuario corrige o rechaza una respuesta previa: "incorrecto", "estas mal", "no es asi", "eso fue el ano pasado", "sigue fallando", "estas atrasado", "no", "nooo", "tu informacion esta mal".',
+      '12. entities_mentioned = lista de entidades concretas de la peticion (paises, personas, empresas, selecciones). multi_entity = true si hay 2 o mas entidades que verificar por separado.',
+      '13. local_retail = objeto {city, store, product} si es una compra local, precio de tienda o asesoria de producto (Home Depot, Lowes, "cuanto vale", "que me recomiendas comprar"); si no aplica, null. Si local_retail no es null, marca needs_web true.',
+      '14. biblical_ref = objeto {book, chapter, verses} si el usuario cita o estudia un pasaje biblico (ej. "Apocalipsis 10:1-2"); si no aplica, null.',
+      '15. creator_mode = true si el usuario declara ser el creador/programador del sistema o reporta que esta version esta mal programada ("soy tu creador", "se como te programe", "esta version esta defectuosa").',
+      '',
       'Categorias permitidas: simple_chat, translation, rewrite_message, code, debug, app_architecture, reasoning, business, image_generation, image_editing, file_analysis, rag_needed, unsafe, unknown',
       'Niveles permitidos: cheap, standard, code, premium, image, blocked',
       '',
@@ -70,6 +78,13 @@
       '  "needs_files": false,',
       '  "needs_image_model": false,',
       '  "needs_web": false,',
+      '  "needs_temporal_check": false,',
+      '  "correction_detected": false,',
+      '  "entities_mentioned": [],',
+      '  "multi_entity": false,',
+      '  "local_retail": null,',
+      '  "biblical_ref": null,',
+      '  "creator_mode": false,',
       '  "estimated_input_tokens": 0,',
       '  "estimated_output_tokens": 0,',
       '  "reason_short": ""',
@@ -125,6 +140,25 @@
     next.needs_files = next.needs_files === true;
     next.needs_image_model = next.needs_image_model === true;
     next.needs_web = next.needs_web === true;
+    // Capa 1: senales temporales/contexto (coercion + defaults seguros).
+    next.needs_temporal_check = next.needs_temporal_check === true;
+    next.correction_detected = next.correction_detected === true;
+    next.creator_mode = next.creator_mode === true;
+    next.multi_entity = next.multi_entity === true;
+    next.entities_mentioned = Array.isArray(next.entities_mentioned)
+      ? next.entities_mentioned.map(function (e) { return String(e || '').trim(); }).filter(Boolean).slice(0, 12)
+      : [];
+    if (next.entities_mentioned.length >= 2) next.multi_entity = true;
+    next.local_retail = (next.local_retail && typeof next.local_retail === 'object') ? {
+      city: String(next.local_retail.city || '').trim().slice(0, 80),
+      store: String(next.local_retail.store || '').trim().slice(0, 80),
+      product: String(next.local_retail.product || '').trim().slice(0, 120)
+    } : null;
+    next.biblical_ref = (next.biblical_ref && typeof next.biblical_ref === 'object' && next.biblical_ref.book) ? {
+      book: String(next.biblical_ref.book || '').trim().slice(0, 60),
+      chapter: String(next.biblical_ref.chapter || '').trim().slice(0, 12),
+      verses: String(next.biblical_ref.verses || '').trim().slice(0, 24)
+    } : null;
     next.reason_short = String(next.reason_short || '').trim().slice(0, 220);
     if (attachmentKinds.indexOf('pdf') !== -1 || attachmentKinds.indexOf('file') !== -1) {
       next.needs_files = true;
@@ -134,6 +168,20 @@
     if (next.confidence < 0.65 && next.target_tier === 'premium') next.target_tier = next.needs_files ? 'code' : 'standard';
     if (next.category === 'image_generation' || next.category === 'image_editing') { next.target_tier = 'image'; next.needs_image_model = true; }
     if (next.category === 'unsafe') next.target_tier = 'blocked';
+    // Capa 2: actualidad o correccion del usuario OBLIGAN el tier web (datos vivos),
+    // sin importar la confianza. Es justo donde Mady fallaba respondiendo standard con
+    // memoria vieja. No aplica a imagen, codigo ni a peticiones bloqueadas.
+    var temporalForce = next.needs_temporal_check || next.correction_detected;
+    var routable = next.category !== 'image_generation' && next.category !== 'image_editing'
+      && next.category !== 'code' && next.category !== 'debug' && next.target_tier !== 'blocked';
+    if (temporalForce && routable) {
+      next.needs_web = true;
+      // Quita la ruta cara: web (perplexity/sonar) responde, no premium/max.
+      if (next.target_tier === 'premium' || next.target_tier === 'max') next.target_tier = 'standard';
+      if (next.category === 'reasoning' || next.category === 'app_architecture') next.category = 'business';
+    }
+    // Compra local / precio de tienda: tambien exige datos vivos.
+    if (next.local_retail && routable) next.needs_web = true;
     return next;
   }
 

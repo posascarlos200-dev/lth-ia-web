@@ -46,7 +46,7 @@
   const FEEDBACK_REST_URL = SB_URL + '/rest/v1/ai_response_feedback';
   const IMAGE_MODEL = 'google/gemini-3.1-flash-image-preview';
   const IMAGE_SYSTEM_PROMPT = 'Eres Mady, la asistente de LTH OS. Genera directamente la imagen que describe el usuario y acompanala con una frase breve en espanol. La imagen debe tratar EXACTAMENTE lo pedido; no agregues marcas, textos ni elementos no solicitados (nunca generes productos LTH si no se piden). Si el usuario pide texto dentro de la imagen, respetalo exactamente.';
-  const PDF_SYSTEM_PROMPT = 'Eres Mady, la asistente de LTH OS. El usuario quiere un documento que se exportara a PDF. Redacta el documento COMPLETO en espanol, bien estructurado en Markdown simple: una primera linea con el titulo usando "# Titulo", luego secciones con "## Subtitulo", parrafos claros y listas con "- " cuando ayude. No uses tablas ni bloques de codigo ni HTML. Entrega solo el contenido del documento, sin preambulos como "aqui tienes" ni despedidas.';
+  const PDF_SYSTEM_PROMPT = 'Eres Mady, la asistente de LTH OS. El usuario quiere un documento que se exportara a PDF. Antes de redactar, corrige los errores reconocidos durante la conversacion (citas biblicas, datos, cifras): NO transcribas la conversacion cruda, entrega la version corregida, limpia y ordenada. Redacta el documento COMPLETO en espanol, bien estructurado en Markdown simple: una primera linea con el titulo usando "# Titulo", luego secciones con "## Subtitulo", parrafos claros y listas con "- " cuando ayude. No uses tablas ni bloques de codigo ni HTML. Entrega solo el contenido del documento, sin preambulos como "aqui tienes" ni despedidas.';
 
   // Modo razonamiento premium: IA principal (clasifica + mejora prompt) -> especialista -> juez.
   const ORCHESTRATOR_PROMPT = [
@@ -455,6 +455,20 @@
       entities: normalizeEntities(source.entities),
       conflicts: uniqueList(source.conflicts, 4, 200),
       current_artifact: normalizeArtifact(source.current_artifact),
+      // Capa 4: entidad activa (anti-deriva) y estudio biblico activo.
+      active_entity: source.active_entity && typeof source.active_entity === 'object' && source.active_entity.name ? {
+        name: clipText(source.active_entity.name, 80),
+        kind: clipText(source.active_entity.kind, 40),
+        updated_at: Math.max(0, Number(source.active_entity.updated_at || 0) || 0)
+      } : null,
+      active_study: source.active_study && typeof source.active_study === 'object' && source.active_study.book ? {
+        book: clipText(source.active_study.book, 60),
+        chapter: clipText(source.active_study.chapter, 12),
+        verses: clipText(source.active_study.verses, 24),
+        version: clipText(source.active_study.version, 40),
+        focus: clipText(source.active_study.focus, 80)
+      } : null,
+      creator_mode: source.creator_mode === true,
       updated_at: Math.max(0, Number(source.updated_at || Date.now()) || Date.now()),
       covered_count: Math.max(0, Number(source.covered_count || 0) || 0)
     };
@@ -521,6 +535,9 @@
       entities: primary.entities.concat(secondary.entities),
       conflicts: conflicts,
       current_artifact: primary.current_artifact || secondary.current_artifact,
+      active_entity: primary.active_entity || secondary.active_entity,
+      active_study: primary.active_study || secondary.active_study,
+      creator_mode: primary.creator_mode || secondary.creator_mode,
       updated_at: Math.max(Number(primary.updated_at || 0), Number(secondary.updated_at || 0)),
       covered_count: Math.max(Number(primary.covered_count || 0), Number(secondary.covered_count || 0))
     });
@@ -683,6 +700,9 @@
     if (brain.active_task) lines.push('- Tarea activa: ' + brain.active_task);
     if (brain.current_artifact) lines.push('- Artefacto actual: ' + brain.current_artifact.kind + ' "' + clipText(brain.current_artifact.title, 120) + '"' + (brain.current_artifact.note ? ' | nota: ' + clipText(brain.current_artifact.note, 200) : ''));
     if (brain.last_known_state) lines.push('- Ultimo estado conocido: ' + brain.last_known_state);
+    if (brain.active_entity) lines.push('- ENTIDAD ACTIVA (manten este referente si el usuario corrige o pregunta "de ese", "y el otro", sin nombrar otra): ' + brain.active_entity.name + (brain.active_entity.kind ? ' (' + brain.active_entity.kind + ')' : ''));
+    if (brain.active_study) lines.push('- ESTUDIO BIBLICO ACTIVO (no vuelvas a preguntar que pasaje lee): ' + brain.active_study.book + ' ' + (brain.active_study.chapter || '') + (brain.active_study.verses ? ':' + brain.active_study.verses : '') + (brain.active_study.version ? ' | version ' + brain.active_study.version : '') + (brain.active_study.focus ? ' | enfoque ' + brain.active_study.focus : ''));
+    if (brain.creator_mode) lines.push('- MODO CREADOR ACTIVO: el usuario es el creador/desarrollador. Responde en tono tecnico de diagnostico (bug report), sin adulacion.');
     if (brain.important_rules.length) lines.push('- Reglas del usuario: ' + brain.important_rules.join(' | '));
     if (brain.decisions.length) lines.push('- Decisiones ya tomadas: ' + brain.decisions.join(' | '));
     if (brain.running_summary) lines.push('- Resumen acumulado: ' + clipText(brain.running_summary, 600));
@@ -1005,8 +1025,41 @@
     return { query: intent.query, freshness: intent.freshness, lang: intent.lang, sources };
   }
 
+  // Capa 3: fecha real del sistema en TODO prompt (no solo web). El modelo no debe
+  // asumir el ano desde su entrenamiento ni tratar el presente como futuro.
+  function buildTemporalSystemBlock() {
+    const now = new Date();
+    let iso = '';
+    let weekday = '';
+    try {
+      iso = new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Chicago', year: 'numeric', month: '2-digit', day: '2-digit' }).format(now);
+      weekday = new Intl.DateTimeFormat('es-MX', { timeZone: 'America/Chicago', weekday: 'long' }).format(now);
+    } catch (_) {
+      iso = now.toISOString().slice(0, 10);
+    }
+    return [
+      'FECHA Y HORA (usala como verdad; NO asumas el ano desde tu entrenamiento):',
+      '- Hoy es ' + iso + (weekday ? ' (' + weekday + ')' : '') + '. Zona horaria del usuario: America/Chicago.',
+      '- Interpreta "hoy", "actual", "ahora", "este ano", "ultimo" y fechas relativas con esta fecha.',
+      '- Trata cualquier evento anterior a hoy como pasado, nunca como futuro.'
+    ].join('\n');
+  }
+
+  // Capa 5 (base): honestidad sobre verificacion + manejo de correccion del usuario.
+  // Aplica a todos los tiers; es texto, no cambia ruteo ni costo.
+  const VERIFY_GUARD_BLOCK = [
+    'HONESTIDAD Y CORRECCION:',
+    '- No digas "he investigado", "verifique", "segun mis datos verificados" ni "datos confirmados" salvo que en ESTE turno tengas resultados reales de busqueda web. Si no, di claramente: "no pude verificarlo en este entorno".',
+    '- No te contradigas sobre tus capacidades entre turnos.',
+    '- Si el usuario corrige ("incorrecto", "estas mal", "eso fue el ano pasado", "sigue fallando"): no defiendas tu respuesta anterior, asumela como posiblemente desactualizada y corrige solo ese dato.',
+    '- Manten la MISMA entidad/tema del turno anterior al corregir; no cambies de pais, persona o tema salvo que el usuario lo pida. No le pidas al usuario el dato que tu deberias verificar.',
+    '- Distingue cargo ACTUAL en funciones de electo o anterior.'
+  ].join('\n');
+
   function composeSystemWithMemory(baseSystem, convo, query) {
     const blocks = [];
+    blocks.push(buildTemporalSystemBlock());
+    blocks.push(VERIFY_GUARD_BLOCK);
     const brainBlock = buildBrainContextBlock(convo, query);
     const deviceBlock = buildDeviceMemoryRecallBlock(convo, query);
     if (brainBlock) blocks.push(brainBlock);
@@ -1385,7 +1438,7 @@
     ]).catch(() => {});
   }
 
-  window.LTH_IA_TEST_API = { normalizeBrain, extractBrainFromUserMessage, buildBrainContextBlock, detectCrisisIntent, detectFreeSkillIntent, buildFreeSkillSystem, buildFreeSkillClarification, normalizeResearchQuery, detectFreeResearchIntent, buildFreeResearchContextBlock, buildDeviceMemoryRecallBlock, mergeConvoCollections, serializeConvoForCache, extractEntities, detectBrainConflicts, mergeBrain, parseDuckDuckGoResults, detectLiveWebIntent, buildPreviewDoc };
+  window.LTH_IA_TEST_API = { normalizeBrain, extractBrainFromUserMessage, buildBrainContextBlock, detectCrisisIntent, detectFreeSkillIntent, buildFreeSkillSystem, buildFreeSkillClarification, normalizeResearchQuery, detectFreeResearchIntent, buildFreeResearchContextBlock, buildDeviceMemoryRecallBlock, mergeConvoCollections, serializeConvoForCache, extractEntities, detectBrainConflicts, mergeBrain, parseDuckDuckGoResults, detectLiveWebIntent, buildPreviewDoc, applyConversationState, buildCategoryGuidance, buildTemporalSystemBlock, composeSystemWithMemory, ensureConvoBrain };
 
   async function loadConvos() {
     state.convos = loadCachedConvos();
@@ -2329,6 +2382,57 @@
     return R.chooseModel(R.validateDecision({ category: 'business', target_tier: 'standard', needs_web: true, confidence: 0.9 }, { manualMode: 'auto' }), { userPlan: plan, manualMode: 'auto' });
   }
 
+  // Capa 4: actualiza el estado de la conversacion (entidad activa, estudio biblico,
+  // modo creador) de forma determinista a partir de la decision del clasificador.
+  function applyConversationState(convo, text, decision) {
+    if (!convo || !decision) return;
+    const brain = ensureConvoBrain(convo);
+    let changed = false;
+    const ents = Array.isArray(decision.entities_mentioned) ? decision.entities_mentioned : [];
+    if (ents.length === 1) {
+      // Un solo referente claro -> se vuelve la entidad activa (anti-deriva en correcciones).
+      brain.active_entity = { name: clipText(ents[0], 80), kind: decision.needs_temporal_check ? 'actualidad' : '', updated_at: Date.now() };
+      changed = true;
+    } else if (ents.length === 0 && decision.correction_detected && brain.active_entity) {
+      // Correccion sin entidad nueva: conserva la activa (no saltar de USA a Honduras).
+      brain.active_entity.updated_at = Date.now();
+      changed = true;
+    }
+    if (decision.biblical_ref && decision.biblical_ref.book) {
+      brain.active_study = {
+        book: clipText(decision.biblical_ref.book, 60),
+        chapter: clipText(decision.biblical_ref.chapter, 12),
+        verses: clipText(decision.biblical_ref.verses, 24),
+        version: (brain.active_study && brain.active_study.version) || '',
+        focus: (brain.active_study && brain.active_study.focus) || ''
+      };
+      changed = true;
+    }
+    if (decision.creator_mode && !brain.creator_mode) { brain.creator_mode = true; changed = true; }
+    if (changed) { brain.updated_at = Date.now(); try { saveConvos(); } catch (_) {} }
+  }
+
+  // Capa 5: instrucciones por categoria (no son llamadas nuevas; afinan la respuesta).
+  function buildCategoryGuidance(decision, convo) {
+    if (!decision) return '';
+    const frags = [];
+    if (decision.needs_web && decision.multi_entity && decision.entities_mentioned.length) {
+      frags.push('VERIFICACION MULTI-ENTIDAD: la consulta menciona varias entidades. En UNA sola busqueda resuelve CADA UNA por separado: ' + decision.entities_mentioned.join(', ') + '. Da el dato/cargo ACTUAL de cada una con su fecha (ej. toma de posesion). Descarta cualquier dato anterior al ultimo cambio. No mezcles datos correctos con viejos; si una no se verifica, dilo. No hagas una busqueda por entidad: una sola bien armada.');
+    } else if (decision.needs_web) {
+      frags.push('DATO EN VIVO: responde con el dato ACTUAL y la fecha de consulta. Precios: una cifra principal en USD con hora aproximada, aclara que varia por exchange. Deportes: usa la fecha de hoy y la zona del usuario, manten torneo/seleccion del contexto y nunca traigas resultados de anos anteriores como si fueran el "proximo" o "actual".');
+    }
+    if (decision.local_retail) {
+      frags.push('COMPRA LOCAL/RETAIL: tratalo como decision de compra real, no charla. Normaliza el producto (ej. "2x4" -> "2x4x8 sin tratar" salvo que el usuario indique otra medida o tratamiento) y la tienda (homedepoot/home/HD -> Home Depot). Usa la ciudad del usuario si la dio. Si el usuario menciono un precio real que vio, usalo como referencia principal por encima de cualquier rango generico. Cierra con recomendacion accionable: opcion economica, balanceada y profesional. Para contratista prioriza durabilidad, garantia y un mismo ecosistema de baterias.');
+    }
+    if (decision.biblical_ref) {
+      frags.push('ESTUDIO BIBLICO: primero cita el TEXTO EXACTO del pasaje pedido; si no estas segura de la version, declara "Uso RVR1960 salvo que prefieras otra". Estructura: "El texto dice" / "Interpretacion principal" / "Postura pentecostal comun" / "Otras posturas fuertes". No presentes una interpretacion debatida como la UNICA postura pentecostal; expresa grados de confianza. Manten el pasaje en curso (memoria de estudio activo); tono pastoral pero preciso, sin sobreafirmar especulacion.');
+    }
+    if (decision.creator_mode || (convo && convo.brain && convo.brain.creator_mode)) {
+      frags.push('MODO CREADOR: el usuario es el creador/desarrollador. Tono tecnico de diagnostico, sin adulacion. Si reporta un fallo: resume el bug, su causa probable y pasos de reproduccion; pide logs solo si faltan.');
+    }
+    return frags.join('\n\n');
+  }
+
   async function autoRoute(text, convo) {
     const R = window.LTHRouter;
     const plan = String((state.credits && state.credits.plan) || 'free').toLowerCase();
@@ -2363,7 +2467,13 @@
         if (decision.target_tier === 'premium') decision.target_tier = 'standard';
         if (decision.category === 'reasoning' || decision.category === 'app_architecture') decision.category = 'business';
       }
-      return R.chooseModel(decision, { userPlan: plan, manualMode: 'auto' });
+      applyConversationState(convo, text, decision);
+      const route = R.chooseModel(decision, { userPlan: plan, manualMode: 'auto' });
+      if (route && route.action !== 'block') {
+        const guidance = buildCategoryGuidance(decision, convo);
+        if (guidance) route.system = SYSTEM_PROMPT + '\n\n' + guidance;
+      }
+      return route;
     } catch (_) { return forceWeb ? forcedWebRoute(R, plan) : null; }
   }
 
@@ -2529,7 +2639,7 @@
     bub.appendChild(card);
   }
 
-  // Pipeline premium: IA principal (clasifica + mejora prompt) -> especialista -> juez GPT 5.5.
+  // Pipeline premium: IA principal (clasifica + mejora prompt) -> especialista -> juez Opus 4.8.
   async function reasoningAnswer(text, convo, bub) {
     const signal = state.abort && state.abort.signal;
 
@@ -2588,7 +2698,7 @@
 
     bub.innerHTML = reasonStageHtml('judge');
     const judgeRaw = await reasonChat({
-      model: reasonModel('judge', 'openai/gpt-5.5'),
+      model: reasonModel('judge', 'anthropic/claude-opus-4.8'),
       system: composeSystemWithMemory(JUDGE_PROMPT, convo, text),
       messages: [{ role: 'user', content: 'PETICION ORIGINAL:\n' + text + '\n\nPROMPT MEJORADO:\n' + improved + '\n\nBORRADOR DEL ESPECIALISTA:\n' + draft }],
       maxTokens: 9000,
