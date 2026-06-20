@@ -60,7 +60,8 @@
     '- "razonamiento": razonamiento tecnico profundo, estrategia, logica compleja o decisiones de arquitectura (sin necesidad de web ni de generar codigo extenso).',
     'Reglas:',
     '1) Si la peticion es ambigua y no puedes elegir bien la categoria o falta un dato clave, pide aclaracion con 1-3 preguntas concisas (need_clarification=true). PERO si ya hiciste preguntas antes en esta conversacion y el usuario ya respondio, NO vuelvas a preguntar: decide y procede.',
-    '2) Si esta clara, reescribe la peticion en "improved_prompt": instrucciones limpias, completas y especificas para el especialista (objetivo, contexto relevante del chat, formato esperado y restricciones).',
+    '1b) Si la categoria es "codigo" y aun no esta claro QUE construir (tipo de proyecto/pagina, secciones, estilo o contenido), haz UNA sola ronda de aclaracion (need_clarification=true) que reuna TODO lo necesario: para cada decision ofrece 2-3 opciones donde la PRIMERA va marcada "(recomendada)", y cierra invitando a "elige un numero o escribe lo tuyo". No abras varias rondas; con eso debe bastar para tener el brief completo.',
+    '2) Si esta clara, reescribe la peticion en "improved_prompt": instrucciones limpias, completas y especificas para el especialista (objetivo, contexto relevante del chat, formato esperado y restricciones). Para "codigo", el improved_prompt debe quedar como un BRIEF de proyecto: tipo de pagina, secciones concretas, paleta/estilo, contenido de ejemplo y cualquier interaccion pedida.',
     '3) Devuelve SOLO JSON valido, sin texto fuera del JSON.',
     'Formato exacto: { "need_clarification": false, "questions": "", "category": "chat_simple", "improved_prompt": "" }'
   ].join('\n');
@@ -73,6 +74,26 @@
     'Devuelve SOLO JSON valido:',
     '{ "veredicto": "APROBADO", "confianza": 90, "fuentes": [], "advertencia": "", "respuesta_final": "" }',
     'veredicto in {APROBADO, APROBADO_CON_CORRECCIONES, RECHAZADO}. confianza 0-100. fuentes = URLs reales usadas (si aplica). advertencia = que no se pudo verificar (si aplica). respuesta_final = la respuesta final en Markdown para el usuario.'
+  ].join('\n');
+
+  // Razonamiento -> categoria "codigo": build especializado en 3 agentes (estructura -> css -> pulido).
+  // El pulido reemplaza al juez. Tokens altos para escribir codigo extenso (x3).
+  const CODE_STRUCTURE_PROMPT = [
+    'Eres el AGENTE DE ESTRUCTURA del build de codigo de Mady (modo razonamiento).',
+    'Recibes un BRIEF claro del proyecto. Entrega SOLO la ESTRUCTURA HTML semantica y COMPLETA del proyecto: todas las secciones reales pedidas, con contenido de ejemplo realista (nada de "lorem" vacio ni placeholders sin sentido).',
+    'No escribas CSS (ni estilos inline) ni JS, salvo lo imprescindible para el esqueleto. Usa clases con nombres claros y consistentes que el agente de CSS pueda estilar.',
+    'Piensa la jerarquia completa (header, nav, hero, secciones de contenido, footer, etc. segun el proyecto). Devuelve el HTML en UN bloque ```html y nada de texto fuera del codigo.'
+  ].join('\n');
+  const CODE_CSS_PROMPT = [
+    'Eres el AGENTE DE CSS del build de codigo de Mady.',
+    'Recibes el HTML de estructura. Escribe el CSS COMPLETO, moderno y responsive para ESE HTML: mobile-first, variables de color, buena tipografia, espaciados consistentes, grid/flex, estados hover/focus y animaciones sutiles. Cubre TODAS las clases y secciones del HTML; no dejes nada sin estilar.',
+    'No modifiques el HTML; estila por las clases existentes. Devuelve SOLO el CSS en UN bloque ```css, sin explicaciones.'
+  ].join('\n');
+  const CODE_POLISH_PROMPT = [
+    'Eres el AGENTE DE PULIDO Y QA del build de codigo de Mady (ultimo paso; presentas al usuario).',
+    'Recibes el HTML de estructura y el CSS. Integra TODO en UN SOLO documento HTML completo y autocontenido (<!doctype html> ... </html>): mete el CSS en <style> y agrega el JS necesario para que funcione (interacciones, navegacion, menus, lo que el proyecto requiera).',
+    'Revisa y corrige antes de entregar: enlaces o secciones rotas, accesibilidad basica, responsive en movil, consistencia visual y que NO falte nada del brief. El resultado debe abrir y verse bien tal cual, sin pasos extra.',
+    'Devuelve el documento final en UN bloque ```html y, debajo, 2-3 lineas en espanol de lo que incluiste y como usarlo. No transcribas el proceso ni menciones los agentes.'
   ].join('\n');
 
   // Motor LTH OS (PC): se enruta por la cola remote_commands (accion ia-ask),
@@ -1438,7 +1459,7 @@
     ]).catch(() => {});
   }
 
-  window.LTH_IA_TEST_API = { normalizeBrain, extractBrainFromUserMessage, buildBrainContextBlock, detectCrisisIntent, detectFreeSkillIntent, buildFreeSkillSystem, buildFreeSkillClarification, normalizeResearchQuery, detectFreeResearchIntent, buildFreeResearchContextBlock, buildDeviceMemoryRecallBlock, mergeConvoCollections, serializeConvoForCache, extractEntities, detectBrainConflicts, mergeBrain, parseDuckDuckGoResults, detectLiveWebIntent, buildPreviewDoc, applyConversationState, buildCategoryGuidance, buildTemporalSystemBlock, composeSystemWithMemory, ensureConvoBrain };
+  window.LTH_IA_TEST_API = { normalizeBrain, extractBrainFromUserMessage, buildBrainContextBlock, detectCrisisIntent, detectFreeSkillIntent, buildFreeSkillSystem, buildFreeSkillClarification, normalizeResearchQuery, detectFreeResearchIntent, buildFreeResearchContextBlock, buildDeviceMemoryRecallBlock, mergeConvoCollections, serializeConvoForCache, extractEntities, detectBrainConflicts, mergeBrain, parseDuckDuckGoResults, detectLiveWebIntent, buildPreviewDoc, applyConversationState, buildCategoryGuidance, buildTemporalSystemBlock, composeSystemWithMemory, ensureConvoBrain, reasonStageHtml, CODE_STRUCTURE_PROMPT, CODE_CSS_PROMPT, CODE_POLISH_PROMPT, ORCHESTRATOR_PROMPT };
 
   async function loadConvos() {
     state.convos = loadCachedConvos();
@@ -2582,6 +2603,9 @@
     const map = {
       orchestrate: 'Entendiendo tu pedido',
       codigo: 'Programando la solución',
+      code_structure: 'Armando la estructura',
+      code_css: 'Diseñando el estilo (CSS)',
+      code_polish: 'Puliendo y armando todo',
       chat_max: 'Investigando en la web',
       chat_simple: 'Pensando la respuesta',
       razonamiento: 'Razonando a fondo',
@@ -2593,6 +2617,24 @@
   function parseReasonJson(raw) {
     try { return JSON.parse(raw); } catch (_) {}
     try { const m = String(raw || '').match(/\{[\s\S]*\}/); return m ? JSON.parse(m[0]) : {}; } catch (_) { return {}; }
+  }
+
+  // Build de codigo en 3 agentes (estructura -> css -> pulido). Son 3 llamadas internas;
+  // con el orquestador suman 4 = el presupuesto gratis por uso (no hay juez aparte aqui).
+  // Tokens altos para escritura de codigo extensa (el tope real lo fija ai_plan_models).
+  async function buildCodePipeline(text, improved, convo, history, bub, signal) {
+    const codeModel = reasonModel('spec_codigo', 'deepseek/deepseek-v4-pro');
+    const brief = '\n\nBRIEF DEL PROYECTO (siguelo al pie de la letra):\n' + improved;
+
+    bub.innerHTML = reasonStageHtml('code_structure');
+    const html = await reasonChat({ model: codeModel, system: composeSystemWithMemory(CODE_STRUCTURE_PROMPT + brief, convo, improved), messages: history, maxTokens: 26000, temperature: 0.2 }, signal);
+
+    bub.innerHTML = reasonStageHtml('code_css');
+    const css = await reasonChat({ model: codeModel, system: composeSystemWithMemory(CODE_CSS_PROMPT, convo, improved), messages: [{ role: 'user', content: 'HTML DE ESTRUCTURA:\n' + html + brief }], maxTokens: 26000, temperature: 0.2 }, signal);
+
+    bub.innerHTML = reasonStageHtml('code_polish');
+    const finalText = await reasonChat({ model: codeModel, system: composeSystemWithMemory(CODE_POLISH_PROMPT, convo, improved), messages: [{ role: 'user', content: 'PETICION ORIGINAL:\n' + text + brief + '\n\nHTML DE ESTRUCTURA:\n' + html + '\n\nCSS:\n' + css }], maxTokens: 28000, temperature: 0.15 }, signal);
+    return finalText;
   }
 
   function categorySpecialist(category, improved) {
@@ -2701,6 +2743,20 @@
 
     if (category === 'imagen') {
       await generateImage(improved, convo, null, bub, true);
+      return;
+    }
+
+    // Programacion: flujo especializado de 3 agentes (estructura -> css -> pulido),
+    // el pulido presenta directo (sin juez aparte). Encaja en el presupuesto de 4 llamadas.
+    if (category === 'codigo') {
+      const built = await buildCodePipeline(text, improved, convo, history, bub, signal);
+      const finalCode = String(built || '').trim() || '_(sin respuesta)_';
+      const mc = { id: uid(), role: 'assistant', content: finalCode, ts: Date.now() };
+      markAssistantTurn(convo, finalCode, 'Codigo razonado (estructura+css+pulido)');
+      convo.messages.push(mc);
+      convo.updated = Date.now();
+      saveConvos(); renderMessages(); renderConvoList(); syncPushOne(convo); fetchStatus();
+      void maybeUpdateConvoBrain(convo);
       return;
     }
 

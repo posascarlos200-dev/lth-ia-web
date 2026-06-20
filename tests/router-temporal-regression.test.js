@@ -138,4 +138,18 @@ assert.match(webG2, /Fuentes:/);
 assert.match(api.buildCategoryGuidance({ needs_web: false, local_retail: { city: 'Dallas', store: 'Home Depot', product: '2x4' }, entities_mentioned: [] }, null), /RETAIL/);
 assert.match(api.buildCategoryGuidance({ needs_web: false, biblical_ref: { book: 'Apocalipsis' }, entities_mentioned: [] }, null), /BIBLICO/);
 
+/* ─────────── 3) Flujo de programacion en Razonar ─────────── */
+// Orquestador con clarificacion de opciones para codigo.
+assert.match(api.ORCHESTRATOR_PROMPT, /codigo/i);
+assert.match(api.ORCHESTRATOR_PROMPT, /\(recomendada\)/);
+// Los 3 agentes de build existen y son distintos.
+assert.equal(typeof api.CODE_STRUCTURE_PROMPT, 'string');
+assert.match(api.CODE_STRUCTURE_PROMPT, /ESTRUCTURA/);
+assert.match(api.CODE_CSS_PROMPT, /CSS/);
+assert.match(api.CODE_POLISH_PROMPT, /PULIDO|QA/);
+// Etiquetas de etapa nuevas.
+assert.match(api.reasonStageHtml('code_structure'), /estructura/i);
+assert.match(api.reasonStageHtml('code_css'), /CSS/i);
+assert.match(api.reasonStageHtml('code_polish'), /[Pp]uliendo/);
+
 console.log('router-temporal-regression: OK');
