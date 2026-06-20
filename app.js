@@ -2416,10 +2416,15 @@
   function buildCategoryGuidance(decision, convo) {
     if (!decision) return '';
     const frags = [];
+    if (decision.needs_web) {
+      // Lo PRIMERO en toda busqueda: anclar la fecha absoluta antes de buscar y responder,
+      // si no "hoy" le queda ambiguo al buscador y trae eventos que no son de hoy.
+      frags.push('ANCLA TEMPORAL (PASO 1, antes de buscar y de responder): parte de la fecha de hoy indicada arriba y convierte "hoy", "manana", "ayer", "este fin", "esta semana" o "este mes" a su fecha ABSOLUTA (dia, mes y ano). Incluye esa fecha absoluta en la busqueda. Decide si el hecho YA PASO o ESTA POR PASAR respecto a hoy antes de afirmar nada. Si los resultados no corresponden a la fecha de hoy (o son de otro ano), descartalos y vuelve a buscar con la fecha absoluta. Nunca trates un evento anterior a hoy como "proximo" ni uno futuro como "ya ocurrido".');
+    }
     if (decision.needs_web && decision.multi_entity && decision.entities_mentioned.length) {
       frags.push('VERIFICACION MULTI-ENTIDAD: la consulta menciona varias entidades. En UNA sola busqueda resuelve CADA UNA por separado: ' + decision.entities_mentioned.join(', ') + '. Da el dato/cargo ACTUAL de cada una con su fecha (ej. toma de posesion). Descarta cualquier dato anterior al ultimo cambio. No mezcles datos correctos con viejos; si una no se verifica, dilo. No hagas una busqueda por entidad: una sola bien armada.');
     } else if (decision.needs_web) {
-      frags.push('DATO EN VIVO: responde con el dato ACTUAL y la fecha de consulta. Precios: una cifra principal en USD con hora aproximada, aclara que varia por exchange. Deportes: usa la fecha de hoy y la zona del usuario, manten torneo/seleccion del contexto y nunca traigas resultados de anos anteriores como si fueran el "proximo" o "actual".');
+      frags.push('DATO EN VIVO: responde con el dato ACTUAL y la fecha de consulta. Precios: una cifra principal en USD con hora aproximada, aclara que varia por exchange. Deportes: usa la fecha absoluta de hoy y la zona del usuario, manten torneo/seleccion del contexto y nunca traigas resultados de anos anteriores como si fueran el "proximo" o "actual".');
     }
     if (decision.local_retail) {
       frags.push('COMPRA LOCAL/RETAIL: tratalo como decision de compra real, no charla. Normaliza el producto (ej. "2x4" -> "2x4x8 sin tratar" salvo que el usuario indique otra medida o tratamiento) y la tienda (homedepoot/home/HD -> Home Depot). Usa la ciudad del usuario si la dio. Si el usuario menciono un precio real que vio, usalo como referencia principal por encima de cualquier rango generico. Cierra con recomendacion accionable: opcion economica, balanceada y profesional. Para contratista prioriza durabilidad, garantia y un mismo ecosistema de baterias.');

@@ -125,7 +125,10 @@ assert.match(sys2, /ESTUDIO BIBLICO ACTIVO/);
 assert.match(sys2, /MODO CREADOR/);
 
 // Guidance por categoria.
-assert.match(api.buildCategoryGuidance({ needs_web: true, multi_entity: true, entities_mentioned: ['USA', 'Honduras'] }, null), /MULTI-ENTIDAD/);
+const webG = api.buildCategoryGuidance({ needs_web: true, multi_entity: true, entities_mentioned: ['USA', 'Honduras'] }, null);
+assert.match(webG, /MULTI-ENTIDAD/);
+assert.match(webG, /ANCLA TEMPORAL/, 'toda busqueda web debe anclar la fecha primero');
+assert.match(api.buildCategoryGuidance({ needs_web: true, multi_entity: false, entities_mentioned: [] }, null), /ANCLA TEMPORAL/);
 assert.match(api.buildCategoryGuidance({ needs_web: false, local_retail: { city: 'Dallas', store: 'Home Depot', product: '2x4' }, entities_mentioned: [] }, null), /RETAIL/);
 assert.match(api.buildCategoryGuidance({ needs_web: false, biblical_ref: { book: 'Apocalipsis' }, entities_mentioned: [] }, null), /BIBLICO/);
 
