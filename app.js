@@ -102,6 +102,7 @@
     osConnected: null,   // null = comprobando, true = conectado, false = sin conexion
     presenceTimer: null,
     reasoning: false,
+    reasonUses: null,     // estado de usos semanales de razonamiento {enabled,limit,used,remaining,resets_at}
     manualModel: 'auto'   // 'auto' = ruteo automatico; o un id de MANUAL_MODELS
   };
 
@@ -252,6 +253,7 @@
         if (plan === 'free') state.modelLabel = 'Mady Canont Free';
         renderCredits();
         renderModelBar();
+        void fetchReasonStatus();
       }
     } catch (_) {}
   }
@@ -1518,6 +1520,44 @@
     try { return new Date(v).toLocaleString([], { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' }); } catch (_) { return ''; }
   }
 
+  // Usos semanales de razonamiento (barra propia, separada de creditos/ventana).
+  function reasonResetText(v) {
+    try { return 'el ' + new Date(v).toLocaleDateString([], { day: '2-digit', month: 'long' }); } catch (_) { return 'pronto'; }
+  }
+
+  function renderReasonUses() {
+    const r = state.reasonUses;
+    const enabled = r && r.enabled === true && Number(r.limit) > 0;
+    if (el.cpReasonRow) el.cpReasonRow.hidden = !enabled;
+    if (enabled && el.cpReason && el.cpReasonTxt) {
+      const limit = Math.max(1, Number(r.limit) || 7);
+      const used = Math.max(0, Math.min(limit, Number(r.used) || 0));
+      el.cpReason.style.width = Math.round((used / limit) * 100) + '%';
+      el.cpReasonTxt.textContent = used + '/' + limit;
+      el.cpReason.classList.toggle('danger', used >= limit);
+      el.cpReason.classList.toggle('warn', used >= limit - 1 && used < limit);
+    }
+    if (el.reasonBtn) {
+      const rem = enabled ? Math.max(0, Number(r.remaining) || 0) : null;
+      el.reasonBtn.title = enabled
+        ? 'Modo razonamiento · te quedan ' + rem + ' de ' + (r.limit || 7) + ' usos esta semana'
+        : 'Modo razonamiento (Pro)';
+    }
+  }
+
+  function applyReasonUses(reasoning) {
+    if (reasoning && typeof reasoning === 'object') state.reasonUses = reasoning;
+    renderReasonUses();
+  }
+
+  async function fetchReasonStatus() {
+    try {
+      const res = await callEdge({ action: 'reason-status' });
+      const data = await res.json().catch(() => ({}));
+      if (data && data.reasoning) applyReasonUses(data.reasoning);
+    } catch (_) {}
+  }
+
   function renderConvoList() {
     if (!el.convoList) return;
     if (!state.convos.length) { el.convoList.innerHTML = '<div style="padding:18px;color:var(--text-dim);font-size:12px;text-align:center;">Sin conversaciones todavia.</div>'; return; }
@@ -1812,7 +1852,7 @@
     } catch (_) {}
   }
 
-  async function generateImage(prompt, convo, wrap, bub) {
+  async function generateImage(prompt, convo, wrap, bub, reasonStage) {
     const res = await callEdge({
       action: 'chat',
       model: IMAGE_MODEL,
@@ -1822,6 +1862,7 @@
       image_config: { aspect_ratio: '1:1', image_size: '1K' },
       maxTokens: 1200,
       temperature: 0.5,
+      reasonStage: reasonStage === true,
       system: composeSystemWithMemory(IMAGE_SYSTEM_PROMPT, convo, prompt),
       messages: [{ role: 'user', content: prompt }]
     }, state.abort && state.abort.signal);
@@ -2420,6 +2461,33 @@
   // Pipeline premium: IA principal (clasifica + mejora prompt) -> especialista -> juez GPT 5.5.
   async function reasoningAnswer(text, convo, bub) {
     const signal = state.abort && state.abort.signal;
+
+    // Razonamiento se cobra por USOS (7/semana), no por creditos ni ventana. Consume 1 uso
+    // ANTES de correr; eso otorga el presupuesto de llamadas internas gratis en el servidor.
+    let useData = null;
+    try {
+      const useRes = await callEdge({ action: 'reason-use' }, signal);
+      const useJson = await useRes.json().catch(() => ({}));
+      useData = useJson && useJson.reasoning ? useJson.reasoning : null;
+      applyReasonUses(useData);
+      if (!useRes.ok || useJson.success !== true) {
+        const msg = useData && useData.reason === 'weekly_exhausted'
+          ? 'Te quedaste sin usos de **razonamiento** esta semana (' + (useData.used || useData.limit || 7) + '/' + (useData.limit || 7) + '). Se reinician ' + reasonResetText(useData.resets_at) + '.'
+          : ((useData && useData.error) || 'El modo razonamiento no esta disponible en tu plan.');
+        bub.innerHTML = renderMarkdown(msg);
+        markAssistantTurn(convo, msg, 'Sin usos de razonamiento');
+        convo.messages.push({ id: uid(), role: 'assistant', content: msg, ts: Date.now() });
+        convo.updated = Date.now(); saveConvos(); renderConvoList(); syncPushOne(convo);
+        return;
+      }
+    } catch (_) {
+      const msg = 'No se pudo iniciar el modo razonamiento. Intenta de nuevo.';
+      bub.innerHTML = renderMarkdown(msg);
+      convo.messages.push({ id: uid(), role: 'assistant', content: msg, ts: Date.now() });
+      convo.updated = Date.now(); saveConvos(); renderConvoList();
+      return;
+    }
+
     const history = buildCloudMessages(convo, 'reasoning');
 
     bub.innerHTML = reasonStageHtml('orchestrate');
@@ -2439,7 +2507,7 @@
     const improved = String(orch.improved_prompt || text).trim();
 
     if (category === 'imagen') {
-      await generateImage(improved, convo, null, bub);
+      await generateImage(improved, convo, null, bub, true);
       return;
     }
 
@@ -2475,7 +2543,8 @@
       system: opts.system,
       messages: opts.messages,
       maxTokens: opts.maxTokens || 4000,
-      temperature: opts.temperature != null ? opts.temperature : 0.3
+      temperature: opts.temperature != null ? opts.temperature : 0.3,
+      reasonStage: true
     };
     if (opts.plugins && opts.plugins.length) payload.plugins = opts.plugins;
     const res = await callEdge(payload, signal);
@@ -2969,6 +3038,7 @@
     el.creditsPanel = $('#creditsPanel'); el.cpPlan = $('#cpPlan');
     el.cpWeek = $('#cpWeek'); el.cpWeekTxt = $('#cpWeekTxt'); el.cpMonth = $('#cpMonth'); el.cpMonthTxt = $('#cpMonthTxt');
     el.cpWindow = $('#cpWindow'); el.cpWindowTxt = $('#cpWindowTxt'); el.cpNote = $('#cpNote');
+    el.cpReasonRow = $('#cpReasonRow'); el.cpReason = $('#cpReason'); el.cpReasonTxt = $('#cpReasonTxt');
     el.drawer = $('#drawer'); el.scrim = $('#scrim'); el.convoList = $('#convoList');
     el.newChatBtn = $('#newChatBtn'); el.closeDrawerBtn = $('#closeDrawerBtn'); el.logoutBtn = $('#logoutBtn');
     el.settingsBtn = $('#settingsBtn'); el.settingsModal = $('#settingsModal'); el.settingsClose = $('#settingsClose');
