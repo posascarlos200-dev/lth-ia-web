@@ -104,6 +104,7 @@
     reasoning: false,
     reasonUses: null,     // estado de usos semanales de razonamiento {enabled,limit,used,remaining,resets_at}
     reasonModels: null,   // config de modelos del razonamiento por etapa (editable en admin)
+    createMode: false,    // "Crear algo": fuerza generar HTML/CSS/JS visualizable
     manualModel: 'auto'   // 'auto' = ruteo automatico; o un id de MANUAL_MODELS
   };
 
@@ -134,8 +135,44 @@
       .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
   }
 
+  // Visualizador inteligente: arma un documento HTML renderizable a partir de los bloques
+  // de codigo del mensaje. Funciona si la IA da un HTML completo (<!doctype/<html>) o si da
+  // fragmentos sueltos de html + css + js (los combina en un solo documento).
+  function buildPreviewDoc(src) {
+    const text = String(src || '');
+    const fences = [];
+    const rx = /```(\w+)?\n?([\s\S]*?)```/g;
+    let m;
+    while ((m = rx.exec(text))) fences.push({ lang: String(m[1] || '').toLowerCase(), code: String(m[2] || '').replace(/\n$/, '') });
+    if (!fences.length) return null;
+    let htmlBlock = '', css = '', js = '', isFullDoc = false;
+    const htmlTag = /<(div|section|main|article|header|footer|nav|button|h[1-6]|p|ul|ol|li|form|input|textarea|select|canvas|svg|img|span|table|a|body|head|style|script)[\s>/]/i;
+    for (const f of fences) {
+      const code = f.code;
+      const low = code.toLowerCase();
+      const looksFull = low.includes('<!doctype') || /<html[\s>]/.test(low);
+      if (f.lang === 'css') { css += code + '\n'; continue; }
+      if (f.lang === 'js' || f.lang === 'javascript') { js += code + '\n'; continue; }
+      if (f.lang === 'html' || f.lang === 'markup' || f.lang === 'xml' || looksFull || (!f.lang && htmlTag.test(code))) {
+        if (!htmlBlock || (looksFull && !isFullDoc)) { htmlBlock = code; isFullDoc = looksFull; }
+      }
+    }
+    if (!htmlBlock) return null;
+    if (isFullDoc) {
+      let doc = htmlBlock;
+      if (css && !/<style/i.test(doc)) doc = /<\/head>/i.test(doc) ? doc.replace(/<\/head>/i, '<style>' + css + '</style></head>') : ('<style>' + css + '</style>' + doc);
+      if (js && !/<script/i.test(doc)) doc = /<\/body>/i.test(doc) ? doc.replace(/<\/body>/i, '<script>' + js + '</script></body>') : (doc + '<script>' + js + '</script>');
+      return doc;
+    }
+    return '<!DOCTYPE html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><style>' + css + '</style></head><body>' + htmlBlock + '<script>' + js + '</script></body></html>';
+  }
+
+  function previewAttr(s) {
+    return String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/"/g, '&quot;');
+  }
+
   // Markdown ligero y seguro (escapa primero, luego aplica formato).
-  function renderMarkdown(src) {
+  function renderMarkdown(src, opts) {
     let text = String(src || '');
     const blocks = [];
     // Bloques de codigo ```...```
@@ -170,7 +207,15 @@
       closeList(); para.push(line);
     }
     flushPara(); closeList();
-    return html || '<p></p>';
+    let out = html || '<p></p>';
+    if (opts && opts.preview) {
+      const doc = buildPreviewDoc(src);
+      if (doc) {
+        out += '<div class="code-preview"><button class="code-preview-btn" type="button" data-preview-toggle="1">▶ Vista previa</button>'
+          + '<div class="code-preview-frame" hidden><iframe class="code-preview-iframe" sandbox="allow-scripts allow-modals allow-popups" loading="lazy" srcdoc="' + previewAttr(doc) + '"></iframe></div></div>';
+      }
+    }
+    return out;
   }
 
   /* ───────────────────────── Sesion ───────────────────────── */
@@ -1338,7 +1383,7 @@
     ]).catch(() => {});
   }
 
-  window.LTH_IA_TEST_API = { normalizeBrain, extractBrainFromUserMessage, buildBrainContextBlock, detectCrisisIntent, detectFreeSkillIntent, buildFreeSkillSystem, buildFreeSkillClarification, normalizeResearchQuery, detectFreeResearchIntent, buildFreeResearchContextBlock, buildDeviceMemoryRecallBlock, mergeConvoCollections, serializeConvoForCache, extractEntities, detectBrainConflicts, mergeBrain, parseDuckDuckGoResults, detectLiveWebIntent };
+  window.LTH_IA_TEST_API = { normalizeBrain, extractBrainFromUserMessage, buildBrainContextBlock, detectCrisisIntent, detectFreeSkillIntent, buildFreeSkillSystem, buildFreeSkillClarification, normalizeResearchQuery, detectFreeResearchIntent, buildFreeResearchContextBlock, buildDeviceMemoryRecallBlock, mergeConvoCollections, serializeConvoForCache, extractEntities, detectBrainConflicts, mergeBrain, parseDuckDuckGoResults, detectLiveWebIntent, buildPreviewDoc };
 
   async function loadConvos() {
     state.convos = loadCachedConvos();
@@ -1601,7 +1646,7 @@
     el.messages.innerHTML = '';
     if (!c || !c.messages.length) { el.messages.appendChild(el.welcome); el.welcome.hidden = false; return; }
     for (const m of c.messages) {
-      const html = m.role === 'user' ? escapeHtml(m.content).replace(/\n/g, '<br>') : renderMarkdown(m.content);
+      const html = m.role === 'user' ? escapeHtml(m.content).replace(/\n/g, '<br>') : renderMarkdown(m.content, { preview: true });
       const node = bubbleEl(m.role, html);
       if (Array.isArray(m.media) && m.media.length) appendMedia(node.bub, m.media);
       if (m.role === 'assistant' && m.verdict) appendVerdict(node.bub, m.verdict);
@@ -1750,6 +1795,12 @@
         }
       }
 
+      // Modo "Crear algo": fuerza salida HTML autocontenida (visualizable) en cualquier ruta.
+      if (state.createMode) {
+        routeOpts = routeOpts || {};
+        routeOpts.system = ((routeOpts && routeOpts.system) || SYSTEM_PROMPT) + '\n\n' + CREATE_SYSTEM;
+      }
+
       let started = false;
       const result = await streamChat(convo, text, (full) => {
         if (!started) { started = true; bub.classList.add('cursor'); }
@@ -1760,7 +1811,7 @@
 
       bub.classList.remove('cursor');
       const finalText = result.text || '';
-      bub.innerHTML = renderMarkdown(finalText || '_(sin respuesta)_');
+      bub.innerHTML = renderMarkdown(finalText || '_(sin respuesta)_', { preview: true });
       const assistantMsg = { id: uid(), role: 'assistant', content: finalText, ts: Date.now() };
       markAssistantTurn(convo, finalText, 'Respuesta web');
       convo.messages.push(assistantMsg);
@@ -2215,7 +2266,7 @@
       const answer = String((row.result || {}).text || '').trim();
       if (!answer) { state.osConnected = false; renderEngineBadge(); return false; }
       bub.classList.remove('cursor');
-      bub.innerHTML = renderMarkdown(answer);
+      bub.innerHTML = renderMarkdown(answer, { preview: true });
       const webMsg = { id: uid(), role: 'assistant', content: answer, ts: Date.now() };
       markAssistantTurn(convo, answer, 'Respuesta del motor LTH OS');
       convo.messages.push(webMsg);
@@ -2393,6 +2444,15 @@
     el.reasonBtn.classList.toggle('on', !!state.reasoning);
     el.reasonBtn.setAttribute('aria-pressed', state.reasoning ? 'true' : 'false');
   }
+
+  function renderCreateBtn() {
+    if (!el.createBtn) return;
+    el.createBtn.classList.toggle('on', !!state.createMode);
+    el.createBtn.setAttribute('aria-pressed', state.createMode ? 'true' : 'false');
+  }
+
+  // Instrucciones inyectadas cuando "Crear algo" esta activo: forzar HTML autocontenido.
+  const CREATE_SYSTEM = 'El usuario activo el modo CREAR. Genera lo que pide como una pagina o mini-app web COMPLETA y AUTOCONTENIDA: entrega UN solo bloque ```html con el documento entero (incluye el CSS dentro de <style> y el JS dentro de <script> en el mismo archivo). Debe verse bien y funcionar al renderizarse en un iframe. No uses recursos externos que requieran clave. Da una frase breve antes del codigo y nada de explicaciones largas.';
 
   function reasonStageHtml(stage) {
     const map = {
@@ -2662,6 +2722,10 @@
     el.reasonBtn.addEventListener('click', () => {
       if (!canUsePremium()) { showProModal('reasoning'); return; }
       state.reasoning = !state.reasoning; persistReason(); renderReasonBtn();
+    });
+    if (el.createBtn) el.createBtn.addEventListener('click', () => {
+      state.createMode = !state.createMode; renderCreateBtn();
+      if (state.createMode) setComposerHint('Modo crear: describe la pagina o mini-app y la IA la genera en HTML (con Vista previa).');
     });
     if (el.themeSeg) el.themeSeg.addEventListener('click', (e) => {
       const b = e.target.closest('[data-theme]');
@@ -2994,6 +3058,8 @@
     // restaura de localStorage para que nunca se dispare solo el pipeline premium.
     state.reasoning = false;
     renderReasonBtn();
+    state.createMode = false;
+    renderCreateBtn();
     state.manualModel = 'auto';
     renderModelBar();
     state.osConnected = null; // comprobando hasta el primer sondeo
@@ -3054,7 +3120,22 @@
     el.engineToggle = $('#engineToggle'); el.engineStatus = $('#engineStatus'); el.engineDot = $('#engineDot');
     el.userName = $('#userName'); el.userEmail = $('#userEmail'); el.userAvatar = $('#userAvatar');
     el.messages = $('#messages'); el.welcome = $('#welcome'); el.suggestions = $('#suggestions');
-    el.composer = $('#composer'); el.input = $('#input'); el.sendBtn = $('#sendBtn'); el.reasonBtn = $('#reasonBtn');
+    // Visualizador: toggle de la vista previa de codigo (delegado).
+    if (el.messages && !el.messages._previewBound) {
+      el.messages._previewBound = true;
+      el.messages.addEventListener('click', (e) => {
+        const btn = e.target.closest && e.target.closest('[data-preview-toggle]');
+        if (!btn) return;
+        const wrap = btn.closest('.code-preview');
+        const frame = wrap && wrap.querySelector('.code-preview-frame');
+        if (!frame) return;
+        const show = frame.hidden;
+        frame.hidden = !show;
+        btn.textContent = show ? '▾ Ocultar vista previa' : '▶ Vista previa';
+        if (show) scrollDown();
+      });
+    }
+    el.composer = $('#composer'); el.input = $('#input'); el.sendBtn = $('#sendBtn'); el.reasonBtn = $('#reasonBtn'); el.createBtn = $('#createBtn');
     el.modelPickerBtn = $('#modelPickerBtn'); el.modelPickerLabel = $('#modelPickerLabel'); el.modelMenu = $('#modelMenu'); el.composerHint = $('#composerHint');
     el.proModal = $('#proModal'); el.proClose = $('#proClose'); el.proBuyBtn = $('#proBuyBtn'); el.proSub = $('#proSub');
     el.themeSeg = $('#themeSeg');
