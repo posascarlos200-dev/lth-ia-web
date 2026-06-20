@@ -128,6 +128,7 @@ assert.match(sys2, /MODO CREADOR/);
 const webG = api.buildCategoryGuidance({ needs_web: true, multi_entity: true, entities_mentioned: ['USA', 'Honduras'] }, null);
 assert.match(webG, /MULTI-ENTIDAD/);
 assert.match(webG, /ANCLA TEMPORAL/, 'toda busqueda web debe anclar la fecha primero');
+assert.match(webG, /FRONTERA DE DIA ESTRICTA/, 'debe filtrar estricto por el dia de hoy');
 assert.match(webG, /SOLO LO COMPROBADO/, 'toda busqueda web debe exigir fuentes y auto-filtrar');
 assert.match(webG, /Fuentes:/, 'toda busqueda web debe cerrar con la lista de fuentes');
 const webG2 = api.buildCategoryGuidance({ needs_web: true, multi_entity: false, entities_mentioned: [] }, null);
