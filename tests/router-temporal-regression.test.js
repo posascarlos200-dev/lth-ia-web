@@ -129,9 +129,11 @@ const webG = api.buildCategoryGuidance({ needs_web: true, multi_entity: true, en
 assert.match(webG, /MULTI-ENTIDAD/);
 assert.match(webG, /ANCLA TEMPORAL/, 'toda busqueda web debe anclar la fecha primero');
 assert.match(webG, /SOLO LO COMPROBADO/, 'toda busqueda web debe exigir fuentes y auto-filtrar');
+assert.match(webG, /Fuentes:/, 'toda busqueda web debe cerrar con la lista de fuentes');
 const webG2 = api.buildCategoryGuidance({ needs_web: true, multi_entity: false, entities_mentioned: [] }, null);
 assert.match(webG2, /ANCLA TEMPORAL/);
 assert.match(webG2, /SOLO LO COMPROBADO/);
+assert.match(webG2, /Fuentes:/);
 assert.match(api.buildCategoryGuidance({ needs_web: false, local_retail: { city: 'Dallas', store: 'Home Depot', product: '2x4' }, entities_mentioned: [] }, null), /RETAIL/);
 assert.match(api.buildCategoryGuidance({ needs_web: false, biblical_ref: { book: 'Apocalipsis' }, entities_mentioned: [] }, null), /BIBLICO/);
 
