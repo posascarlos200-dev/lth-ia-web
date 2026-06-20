@@ -2426,6 +2426,11 @@
     } else if (decision.needs_web) {
       frags.push('DATO EN VIVO: responde con el dato ACTUAL y la fecha de consulta. Precios: una cifra principal en USD con hora aproximada, aclara que varia por exchange. Deportes: usa la fecha absoluta de hoy y la zona del usuario, manten torneo/seleccion del contexto y nunca traigas resultados de anos anteriores como si fueran el "proximo" o "actual".');
     }
+    if (decision.needs_web) {
+      // El modelo tiende a completar listas (ej. partidos) con datos inventados de memoria.
+      // Anclar cada afirmacion a una fuente real y auto-filtrar lo no comprobado.
+      frags.push('SOLO LO COMPROBADO (PASO FINAL antes de enviar): incluye UNICAMENTE datos que aparezcan EXPLICITAMENTE en las fuentes recuperadas en esta busqueda. NO agregues ni completes la lista con nada de tu memoria ni "por intuicion". Revisa item por item y ELIMINA cualquiera que no puedas respaldar con una fuente. Cita brevemente la fuente (sitio o URL) de los datos clave. Si solo pudiste confirmar parte, dilo claramente ("confirme N de la lista; podrian faltar o sobrar") en vez de rellenar. Si las fuentes se contradicen, senalalo; no inventes un promedio. Prefiero una lista corta 100% real que una larga con datos falsos.');
+    }
     if (decision.local_retail) {
       frags.push('COMPRA LOCAL/RETAIL: tratalo como decision de compra real, no charla. Normaliza el producto (ej. "2x4" -> "2x4x8 sin tratar" salvo que el usuario indique otra medida o tratamiento) y la tienda (homedepoot/home/HD -> Home Depot). Usa la ciudad del usuario si la dio. Si el usuario menciono un precio real que vio, usalo como referencia principal por encima de cualquier rango generico. Cierra con recomendacion accionable: opcion economica, balanceada y profesional. Para contratista prioriza durabilidad, garantia y un mismo ecosistema de baterias.');
     }
