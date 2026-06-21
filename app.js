@@ -3236,18 +3236,36 @@
     const current = String(doc || '');
     const patch = typeof response === 'string' ? parseReasonJson(response) : (response || {});
     const operations = Array.isArray(patch.operations) ? patch.operations : [];
-    if (operations.length > 24) throw new Error('La IA intento hacer demasiados cambios a la vez.');
+    if (operations.length > 80) throw new Error('La IA intento hacer demasiados cambios a la vez.');
     let next = current;
+    let applied = 0;
     operations.forEach((operation, index) => {
       const search = String(operation && operation.search || '');
       const replace = String(operation && operation.replace || '');
       if (!search) throw new Error('El parche ' + (index + 1) + ' no tiene texto de referencia.');
-      const first = next.indexOf(search);
-      if (first < 0) throw new Error('El parche ' + (index + 1) + ' no coincide con la pagina actual.');
-      if (first !== next.lastIndexOf(search)) throw new Error('El parche ' + (index + 1) + ' es ambiguo y no se aplico.');
-      next = next.slice(0, first) + replace + next.slice(first + search.length);
+      const at = locatePatch(next, search);
+      if (!at) throw new Error('El parche ' + (index + 1) + ' no coincide con la pagina actual.');
+      next = next.slice(0, at.index) + replace + next.slice(at.index + at.length);
+      applied++;
     });
-    return { doc: next, changed: next !== current, summary: String(patch.summary || '').trim(), operationCount: operations.length };
+    return { doc: next, changed: next !== current, summary: String(patch.summary || '').trim(), operationCount: applied };
+  }
+
+  // Localiza el texto de referencia de un parche. 1) match exacto; 2) si no, tolerante a
+  // diferencias de espacios/indentacion/saltos de linea (CRLF vs LF) — el modelo suele copiar
+  // el fragmento con otro formato. Ante varias coincidencias usa la PRIMERA (no rechaza).
+  function locatePatch(haystack, needle) {
+    const hay = String(haystack || '');
+    const ndl = String(needle || '');
+    if (!ndl) return null;
+    const exact = hay.indexOf(ndl);
+    if (exact >= 0) return { index: exact, length: ndl.length };
+    try {
+      const rx = new RegExp(ndl.replace(/[.*+?^${}()|[\]\\]/g, '\\$&').replace(/\s+/g, '\\s+'));
+      const m = rx.exec(hay);
+      if (m && m[0]) return { index: m.index, length: m[0].length };
+    } catch (_) {}
+    return null;
   }
   function openProgramEdit(doc) {
     if (!canUsePremium()) { showProModal('reasoning'); return; }
@@ -3315,31 +3333,42 @@
     const signal = state.abort.signal;
     const codeModel = reasonModel('spec_codigo', 'deepseek/deepseek-v4-pro');
     const programModel = reasonModel('program_coder', codeModel);
+    // La IA EDITA sobre el codigo: lee el HTML completo como contexto pero solo emite el DELTA
+    // (operaciones buscar/reemplazar), nunca reconstruye el documento.
+    const patchOnce = async (extraNote) => {
+      const userMsg = 'CAMBIO PEDIDO:\n' + change
+        + (extraNote ? '\n\n' + extraNote : '')
+        + '\n\nHTML ACTUAL (NO lo reescribas; copia el "search" EXACTO de aqui, con sus mismos espacios y saltos de linea):\n' + currentDoc;
+      const raw = await reasonChat({
+        model: programModel,
+        system: composeSystemWithMemory(PROGRAM_PATCH_PROMPT, convo, change),
+        messages: [{ role: 'user', content: userMsg }],
+        maxTokens: 8000,
+        temperature: 0.05,
+        reasoning: { enabled: true, effort: 'medium', exclude: true },
+        reasonStage: false
+      }, signal);
+      return applyProgramPatch(currentDoc, raw);
+    };
     try {
-      // 1) Parche quirurgico (rapido, preserva bytes). Ideal para cambios chicos.
+      // 1) Parche quirurgico: solo el cambio pedido, el resto intacto.
       bub.innerHTML = reasonStageHtml('codigo');
-      let patched = null;
-      try {
-        const raw = await reasonChat({
-          model: programModel,
-          system: composeSystemWithMemory(PROGRAM_PATCH_PROMPT, convo, change),
-          messages: [{ role: 'user', content: 'CAMBIO PEDIDO:\n' + change + '\n\nHTML ACTUAL (no lo reescribas; devuelve operaciones exactas):\n' + currentDoc }],
-          maxTokens: 8000,
-          temperature: 0.1,
-          reasoning: { enabled: true, effort: 'medium', exclude: true },
-          reasonStage: false
-        }, signal);
-        patched = applyProgramPatch(currentDoc, raw);
-      } catch (patchErr) {
-        patched = null; // el parche no era aplicable -> caemos a reescritura completa
+      let patched = null, lastErr = null;
+      try { patched = await patchOnce(''); } catch (e1) { lastErr = e1; }
+      // 2) Reintento quirurgico con feedback del fallo (sigue emitiendo solo el delta).
+      if (!(patched && patched.changed) && !signal.aborted) {
+        bub.innerHTML = reasonStageHtml('codigo');
+        try {
+          patched = await patchOnce('Tu intento anterior NO se pudo aplicar (' + ((lastErr && lastErr.message) || 'el texto de referencia no coincidio') + '). Copia el "search" EXACTAMENTE del HTML de abajo, con la misma indentacion, saltos de linea y comillas. Usa el fragmento UNICO mas corto posible.');
+        } catch (e2) { lastErr = e2; }
       }
       if (patched && patched.changed) {
         const summary = patched.summary || String(change).trim();
-        pushProgramResult(convo, bub, patched.doc, 'Cambio aplicado ✅: ' + summary + '. Se modificaron ' + patched.operationCount + ' fragmento(s); el resto quedo intacto. Abre la pagina para revisarla.', 'Edicion: ' + change, 'Edicion incremental (Programar)');
+        pushProgramResult(convo, bub, patched.doc, 'Cambio aplicado ✅: ' + summary + '. Solo se tocaron ' + patched.operationCount + ' fragmento(s); el resto quedo intacto. Abre la pagina para revisarla.', 'Edicion: ' + change, 'Edicion incremental (Programar)');
         return;
       }
-      // 2) Reescritura COMPLETA: para cambios grandes que el parche no puede hacer. Ya no se
-      //    bloquea por "seguridad": si algo no gusta, el usuario usa "↩ Version anterior".
+      // 3) Ultimo recurso (raro): solo si lo quirurgico NO logro aplicar nada — p.ej. un
+      //    rediseno total. Reescribe el doc. El usuario puede usar "↩ Version anterior".
       if (signal.aborted) return;
       bub.innerHTML = reasonStageHtml('codigo');
       const rewriteRaw = await reasonChat({
@@ -3353,9 +3382,9 @@
       }, signal);
       const newDoc = String(extractFencedCode(rewriteRaw, ['html', 'htm']) || '').trim();
       if (!newDoc || !/<html[\s>]/i.test(newDoc)) throw new Error('La IA no devolvio un HTML completo.');
-      pushProgramResult(convo, bub, newDoc, 'Cambio aplicado ✅ (reescritura completa): ' + String(change).trim() + '. Si algo no te gusta, abre Editar y usa "↩ Versión anterior" para volver atras.', 'Edicion: ' + change, 'Edicion completa (Programar)');
+      pushProgramResult(convo, bub, newDoc, 'Cambio aplicado ✅: ' + String(change).trim() + '. (No se pudo como edicion puntual, así que reescribí la página; si cambió algo de más, usa "↩ Versión anterior".)', 'Edicion: ' + change, 'Edicion completa (Programar)');
     } catch (e) {
-      bub.innerHTML = renderMarkdown('No se pudo aplicar el cambio: ' + ((e && e.message) || 'error') + '. Intenta de nuevo o describe el cambio con otras palabras.');
+      bub.innerHTML = renderMarkdown('No se pudo aplicar el cambio: ' + ((e && e.message) || 'error') + '. Intenta describirlo con otras palabras.');
     } finally {
       setBusy(false); state.abort = null;
     }
