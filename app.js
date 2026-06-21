@@ -3267,6 +3267,76 @@
     } catch (_) {}
     return null;
   }
+
+  // ── Autoverificacion del agente ──────────────────────────────────────────────
+  // Tras crear/editar, audita el HTML (gratis, en codigo) buscando fallos REALES y
+  // detectables. Si encuentra, corre UNA pasada de correccion quirurgica. Pagina limpia =
+  // cero costo extra (no llama a ningun modelo).
+  function auditProgramDoc(doc) {
+    const html = String(doc || '');
+    const issues = [];
+    // 1) Anclas del menu (#seccion) que apuntan a una seccion sin id real.
+    const ids = new Set();
+    let m;
+    const idRx = /\bid\s*=\s*["']([^"']+)["']/gi;
+    while ((m = idRx.exec(html))) ids.add(String(m[1]).toLowerCase());
+    const hrefRx = /href\s*=\s*["']#([^"'\s]+)["']/gi;
+    const missing = new Set();
+    while ((m = hrefRx.exec(html))) {
+      const name = String(m[1]).toLowerCase();
+      if (name && name !== 'top' && !ids.has(name)) missing.add(m[1]);
+    }
+    if (missing.size) issues.push('Enlaces del menu que apuntan a secciones inexistentes: ' + [...missing].map((x) => '#' + x).join(', ') + '. Crea esas secciones con su id correspondiente, o corrige el href para que apunte a una seccion que SI existe.');
+    // 2) Navegacion insegura que sacaria al usuario de la pagina.
+    const unsafe = [];
+    if (/href\s*=\s*["']\/(login|home|auth|dashboard)?["']/i.test(html)) unsafe.push('href a rutas de la app (/, /login, /home...)');
+    if (/href\s*=\s*["'](index|inicio)\.html?["']/i.test(html)) unsafe.push('href a archivos .html (la pagina es de UNA sola pantalla)');
+    if (/(location\.href|location\.assign|location\.replace|window\.location)\s*=/.test(html)) unsafe.push('navegacion por JavaScript (location.href / window.location)');
+    if (unsafe.length) issues.push('Navegacion que saca al usuario de la pagina: ' + unsafe.join('; ') + '. Cambiala por anclas #seccion; en botones usa onclick con scrollIntoView. Nunca uses rutas absolutas ni location/window.location.');
+    // 3) Relleno sin reemplazar.
+    if (/lorem ipsum/i.test(html)) issues.push('Hay texto "lorem ipsum" de relleno. Reemplazalo por contenido real y coherente con el tema de la pagina.');
+    return { ok: issues.length === 0, issues };
+  }
+
+  async function autoFixProgramDoc(doc, issues, convo, signal) {
+    const codeModel = reasonModel('spec_codigo', 'deepseek/deepseek-v4-pro');
+    const programModel = reasonModel('program_coder', codeModel);
+    const list = issues.map((it, n) => (n + 1) + ') ' + it).join('\n');
+    const raw = await reasonChat({
+      model: programModel,
+      system: composeSystemWithMemory(PROGRAM_PATCH_PROMPT, convo, 'autorrevision'),
+      messages: [{ role: 'user', content: 'REVISION AUTOMATICA de tu propia pagina. Corrige SOLO estos problemas, sin tocar nada mas:\n' + list + '\n\nHTML ACTUAL (copia el "search" EXACTO de aqui, con sus espacios):\n' + String(doc || '') }],
+      maxTokens: 8000,
+      temperature: 0.05,
+      reasoning: { enabled: true, effort: 'medium', exclude: true },
+      reasonStage: false
+    }, signal);
+    return applyProgramPatch(String(doc || ''), raw);
+  }
+
+  // Audita y, si hay fallos, intenta UNA correccion quirurgica. Devuelve {doc, fixed}.
+  async function verifyAndFixProgramDoc(doc, convo, bub) {
+    const current = String(doc || '');
+    const signal = state.abort && state.abort.signal;
+    try {
+      const audit = auditProgramDoc(current);
+      if (!audit.ok && !(signal && signal.aborted)) {
+        if (bub) bub.innerHTML = '<span class="gen-img-loading">🔎 Revisando la página<span class="dots"><i>.</i><i>.</i><i>.</i></span></span>';
+        const res = await autoFixProgramDoc(current, audit.issues, convo, signal);
+        if (res && res.changed) return { doc: res.doc, fixed: audit.issues.length };
+      }
+    } catch (_) {}
+    return { doc: current, fixed: 0 };
+  }
+
+  // Entrega un resultado de Programar pasando antes por la autoverificacion.
+  async function finishProgramDoc(convo, bub, doc, note, request, label) {
+    const v = await verifyAndFixProgramDoc(doc, convo, bub);
+    const finalNote = v.fixed
+      ? (note + '\n\n🔎 _Autorrevisión: ajusté ' + v.fixed + ' detalle(s) (enlaces/secciones) para que todo funcione._')
+      : note;
+    return pushProgramResult(convo, bub, v.doc, finalNote, request, label);
+  }
   function openProgramEdit(doc) {
     if (!canUsePremium()) { showProModal('reasoning'); return; }
     const d = String(doc || '').trim();
@@ -3364,7 +3434,7 @@
       }
       if (patched && patched.changed) {
         const summary = patched.summary || String(change).trim();
-        pushProgramResult(convo, bub, patched.doc, 'Cambio aplicado ✅: ' + summary + '. Solo se tocaron ' + patched.operationCount + ' fragmento(s); el resto quedo intacto. Abre la pagina para revisarla.', 'Edicion: ' + change, 'Edicion incremental (Programar)');
+        await finishProgramDoc(convo, bub, patched.doc, 'Cambio aplicado ✅: ' + summary + '. Solo se tocaron ' + patched.operationCount + ' fragmento(s); el resto quedo intacto. Abre la pagina para revisarla.', 'Edicion: ' + change, 'Edicion incremental (Programar)');
         return;
       }
       // 3) Ultimo recurso (raro): solo si lo quirurgico NO logro aplicar nada — p.ej. un
@@ -3382,7 +3452,7 @@
       }, signal);
       const newDoc = String(extractFencedCode(rewriteRaw, ['html', 'htm']) || '').trim();
       if (!newDoc || !/<html[\s>]/i.test(newDoc)) throw new Error('La IA no devolvio un HTML completo.');
-      pushProgramResult(convo, bub, newDoc, 'Cambio aplicado ✅: ' + String(change).trim() + '. (No se pudo como edicion puntual, así que reescribí la página; si cambió algo de más, usa "↩ Versión anterior".)', 'Edicion: ' + change, 'Edicion completa (Programar)');
+      await finishProgramDoc(convo, bub, newDoc, 'Cambio aplicado ✅: ' + String(change).trim() + '. (No se pudo como edicion puntual, así que reescribí la página; si cambió algo de más, usa "↩ Versión anterior".)', 'Edicion: ' + change, 'Edicion completa (Programar)');
     } catch (e) {
       bub.innerHTML = renderMarkdown('No se pudo aplicar el cambio: ' + ((e && e.message) || 'error') + '. Intenta describirlo con otras palabras.');
     } finally {
@@ -3436,7 +3506,7 @@
     try {
       const doc = String(await buildCodePipeline(request, request, convo, [], bub, state.abort.signal, true) || '').trim();
       if (!doc || !/<html[\s>]/i.test(doc)) throw new Error('La IA no devolvio un HTML completo.');
-      pushProgramResult(convo, bub, doc, 'Pagina lista ✅ — creada por una sola IA y guardada como un unico HTML. Abrela para verla a pantalla completa o pide un cambio puntual.', request, 'Pagina construida (Programar)');
+      await finishProgramDoc(convo, bub, doc, 'Pagina lista ✅ — creada por una sola IA y guardada como un unico HTML. Abrela para verla a pantalla completa o pide un cambio puntual.', request, 'Pagina construida (Programar)');
       void maybeUpdateConvoBrain(convo);
     } catch (e) {
       bub.innerHTML = renderMarkdown('No se pudo construir: ' + ((e && e.message) || 'error') + '.');
@@ -3459,7 +3529,7 @@
       const built = await buildCodePipeline(p.request, brief, convo, history, bub, state.abort.signal, true);
       const doc = String(built || '').trim();
       if (!doc) { bub.innerHTML = renderMarkdown('No se pudo construir la página. Intenta de nuevo.'); return; }
-      pushProgramResult(convo, bub, doc, 'Página lista ✅ — estructura, estilos e interacciones en un solo archivo. Usa **Vista previa**, **Editar** o **Descargar** abajo.', p.request, 'Pagina construida (Programar)');
+      await finishProgramDoc(convo, bub, doc, 'Página lista ✅ — estructura, estilos e interacciones en un solo archivo. Usa **Vista previa**, **Editar** o **Descargar** abajo.', p.request, 'Pagina construida (Programar)');
       void maybeUpdateConvoBrain(convo);
     } catch (e) {
       bub.innerHTML = renderMarkdown('No se pudo construir: ' + ((e && e.message) || 'error') + '.');
@@ -3570,7 +3640,7 @@
       saveConvos(); syncComposerMode();
       const doc = String(await buildCodePipeline(text, improved, convo, [], bub, signal, true) || '').trim();
       if (!doc || !/<html[\s>]/i.test(doc)) throw new Error('La IA no devolvio un HTML completo.');
-      pushProgramResult(convo, bub, doc, 'Pagina lista ✅ — creada por una sola IA y guardada como un unico HTML. Abrela para verla a pantalla completa o pide un cambio puntual.', text, 'Pagina construida (Programar)');
+      await finishProgramDoc(convo, bub, doc, 'Pagina lista ✅ — creada por una sola IA y guardada como un unico HTML. Abrela para verla a pantalla completa o pide un cambio puntual.', text, 'Pagina construida (Programar)');
       return;
     }
 
