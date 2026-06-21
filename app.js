@@ -1477,7 +1477,7 @@
     ]).catch(() => {});
   }
 
-  window.LTH_IA_TEST_API = { normalizeBrain, extractBrainFromUserMessage, buildBrainContextBlock, detectCrisisIntent, detectFreeSkillIntent, buildFreeSkillSystem, buildFreeSkillClarification, normalizeResearchQuery, detectFreeResearchIntent, buildFreeResearchContextBlock, buildDeviceMemoryRecallBlock, mergeConvoCollections, serializeConvoForCache, extractEntities, detectBrainConflicts, mergeBrain, parseDuckDuckGoResults, detectLiveWebIntent, buildPreviewDoc, applyConversationState, buildCategoryGuidance, buildTemporalSystemBlock, composeSystemWithMemory, ensureConvoBrain, reasonStageHtml, CODE_STRUCTURE_PROMPT, CODE_CSS_PROMPT, CODE_POLISH_PROMPT, ORCHESTRATOR_PROMPT, PROGRAM_WIZARD_PROMPT };
+  window.LTH_IA_TEST_API = { normalizeBrain, extractBrainFromUserMessage, buildBrainContextBlock, detectCrisisIntent, detectFreeSkillIntent, buildFreeSkillSystem, buildFreeSkillClarification, normalizeResearchQuery, detectFreeResearchIntent, buildFreeResearchContextBlock, buildDeviceMemoryRecallBlock, mergeConvoCollections, serializeConvoForCache, extractEntities, detectBrainConflicts, mergeBrain, parseDuckDuckGoResults, detectLiveWebIntent, buildPreviewDoc, applyConversationState, buildCategoryGuidance, buildTemporalSystemBlock, composeSystemWithMemory, ensureConvoBrain, reasonStageHtml, CODE_STRUCTURE_PROMPT, CODE_CSS_PROMPT, CODE_POLISH_PROMPT, ORCHESTRATOR_PROMPT, PROGRAM_WIZARD_PROMPT, programStepSignature, formatProgramChoice, buildProgramFallbackPlan, looksTrivial };
 
   async function loadConvos() {
     state.convos = loadCachedConvos();
@@ -1840,6 +1840,10 @@
 
       const manual = (state.manualModel !== 'auto' && state.manualModel !== 'free') ? MANUAL_MODELS[state.manualModel] : null;
       const manualAllowed = manual && (!manual.premium || canUsePremium());
+      // Charla trivial (saludo/agradecimiento): se salta el clasificador y la memoria para
+      // no gastar llamadas extra en algo como "hola". No aplica a manual ni a "Crear algo".
+      const trivial = !state.createMode && looksTrivial(text);
+      const trivialAuto = trivial && !manualAllowed && canUsePremium();
       let routeOpts = null;
       let freeSkill = null;
       if (manual && !manualAllowed) {
@@ -1854,7 +1858,12 @@
         routeOpts = { model: manual.model, maxTokens: manual.maxTokens, temperature: manual.temperature, reasoning: manual.reasoning };
         bub.innerHTML = engineThinkingHtml('premium');
       } else {
-        const route = await autoRoute(text, convo);
+        // Trivial: responde directo con el modelo barato (sin clasificador).
+        if (trivialAuto) {
+          const cheap = window.LTHRouter && window.LTHRouter.MODEL_CONFIG ? window.LTHRouter.MODEL_CONFIG.tiers.cheap : null;
+          if (cheap) { routeOpts = { model: cheap.primary, maxTokens: cheap.maxTokens, temperature: cheap.temperature, reasoning: cheap.reasoning }; bub.innerHTML = engineThinkingHtml('cheap'); }
+        }
+        const route = trivialAuto ? null : await autoRoute(text, convo);
         if (route && route.action === 'block') {
           const msg = 'No puedo ayudar con esa solicitud.';
           bub.innerHTML = renderMarkdown(msg);
@@ -1868,7 +1877,7 @@
           await generateImage(text, convo, wrap, bub);
           return;
         }
-        routeOpts = route ? { model: route.model, maxTokens: route.maxTokens, temperature: route.temperature, reasoning: route.reasoning, system: route.system } : null;
+        if (route) routeOpts = { model: route.model, maxTokens: route.maxTokens, temperature: route.temperature, reasoning: route.reasoning, system: route.system };
         if (route && route.tier) bub.innerHTML = engineThinkingHtml(route.tier);
         if (!routeOpts && isFreePlan()) {
           const researchIntent = detectFreeResearchIntent(text);
@@ -1923,7 +1932,7 @@
       saveConvos(); renderConvoList();
       syncPushOne(convo);
       fetchStatus();
-      void maybeUpdateConvoBrain(convo);
+      if (!trivial) void maybeUpdateConvoBrain(convo);
     } catch (err) {
       bub.classList.remove('cursor');
       wrap.remove();
@@ -2493,6 +2502,25 @@
     return frags.join('\n\n');
   }
 
+  // Detector de charla trivial (saludo/agradecimiento/ack puro). Conservador: solo si
+  // TODAS las palabras son de saludo/relleno, es corto y NO hay pregunta. Excluye
+  // correcciones ("no", "incorrecto", "mal") para no romper el ruteo a web del fix temporal.
+  const TRIVIAL_WORDS = new Set([
+    'hola', 'hola', 'holaa', 'holaaa', 'holi', 'holis', 'ola', 'hey', 'ey', 'buenas', 'buenos', 'buen',
+    'dia', 'dias', 'tarde', 'tardes', 'noche', 'noches', 'que', 'tal', 'onda', 'hubo', 'como', 'estas',
+    'esta', 'va', 'andas', 'saludos', 'gracias', 'muchas', 'mil', 'ok', 'oka', 'okay', 'okey', 'vale',
+    'listo', 'perfecto', 'genial', 'excelente', 'de', 'acuerdo', 'entendido', 'adios', 'chao', 'chau',
+    'bye', 'hasta', 'luego', 'pronto', 'nos', 'vemos', 'jaja', 'jeje', 'jiji', 'mady', 'ia', 'tu', 'y'
+  ]);
+  function looksTrivial(text) {
+    const raw = normalizeForSearch(text);
+    if (!raw) return false;
+    if (/[?¿]/.test(String(text || ''))) return false;
+    const words = raw.split(/\s+/).filter(Boolean);
+    if (!words.length || words.length > 5) return false;
+    return words.every((w) => TRIVIAL_WORDS.has(w));
+  }
+
   async function autoRoute(text, convo) {
     const R = window.LTHRouter;
     const plan = String((state.credits && state.credits.plan) || 'free').toLowerCase();
@@ -2680,7 +2708,7 @@
 
   async function openProgramWizard(request, convo, seed) {
     if (!canUsePremium()) { showProModal('reasoning'); return; }
-    state.program = { active: true, convo: convo, request: String(request || '').trim(), answers: [], plan: '', busy: false };
+    state.program = { active: true, convo: convo, request: String(request || '').trim(), answers: [], plan: '', busy: false, lastStep: null, lastAskSig: '' };
     // Desvio desde Razonar: el brief mejorado entra como contexto inicial.
     const s = String(seed || '').trim();
     if (s && s !== state.program.request) state.program.answers.push('Contexto: ' + s.slice(0, 400));
@@ -2700,35 +2728,92 @@
   }
 
   async function programNextStep() {
-    if (!state.program || !state.program.active) return;
+    const p = state.program;
+    if (!p || !p.active) return;
     setProgramBusy();
     let step;
     try { step = await programOrchestrate(); }
     catch (e) { renderProgramError(e && e.message); return; }
     if (!step || !step.phase) { renderProgramError(); return; }
     if (step.phase === 'plan' && String(step.plan || '').trim()) {
-      state.program.plan = String(step.plan).trim();
-      renderProgramPlan(state.program.plan);
+      p.plan = String(step.plan).trim();
+      p.lastStep = null;
+      p.lastAskSig = '';
+      renderProgramPlan(p.plan);
     } else {
+      const sig = programStepSignature(step);
+      if (sig && sig === p.lastAskSig && p.answers.length) {
+        p.plan = buildProgramFallbackPlan(p, step);
+        p.lastStep = null;
+        p.lastAskSig = '';
+        renderProgramPlan(p.plan);
+        return;
+      }
+      p.lastStep = step;
+      p.lastAskSig = sig;
       renderProgramStep(step);
     }
   }
 
-  function submitProgramChoice(value) {
-    value = String(value || '').trim();
-    if (!value || !state.program || !state.program.active) return;
-    state.program.answers.push(value);
-    programNextStep();
+  function normalizeProgramText(value, max = 180) {
+    const text = String(value || '').replace(/\s+/g, ' ').trim();
+    return text.length > max ? text.slice(0, max).trim() : text;
   }
 
+  function programStepSignature(step) {
+    if (!step || String(step.phase || '').trim().toLowerCase() !== 'ask') return '';
+    const question = normalizeProgramText(step.question, 160).toLowerCase();
+    const options = (Array.isArray(step.options) ? step.options : [])
+      .slice(0, 3)
+      .map((entry) => normalizeProgramText(entry && (entry.label || entry.value || ''), 80).toLowerCase())
+      .filter(Boolean)
+      .join('|');
+    return [question, options].filter(Boolean).join('::');
+  }
+
+  function formatProgramChoice(step, value) {
+    const answer = normalizeProgramText(value, 180);
+    if (!answer) return '';
+    const question = normalizeProgramText(step && step.question, 160);
+    return question ? (question + ' -> ' + answer) : answer;
+  }
+
+  function buildProgramFallbackPlan(program, repeatedStep) {
+    const request = normalizeProgramText(program && program.request, 240) || 'Construir el proyecto pedido por el usuario.';
+    const answers = Array.isArray(program && program.answers)
+      ? program.answers.map((item) => normalizeProgramText(item, 220)).filter(Boolean)
+      : [];
+    const pending = normalizeProgramText(repeatedStep && repeatedStep.question, 180);
+    const lines = [
+      '## Objetivo base',
+      '- ' + request,
+      '',
+      '## Decisiones ya confirmadas'
+    ];
+    if (answers.length) answers.forEach((item) => lines.push('- ' + item));
+    else lines.push('- Tomar la solicitud inicial como referencia principal.');
+    lines.push('', '## Siguiente paso', '- Ya hay suficiente contexto para construir la primera version.');
+    if (pending) lines.push('- Si quieres afinar algo antes de construir, usa "Ajustar" y responde: ' + pending);
+    return lines.join('\n');
+  }
+
+  function submitProgramChoice(value) {
+    if (!state.program || !state.program.active) return;
+    const formatted = formatProgramChoice(state.program.lastStep, value);
+    if (!formatted) return;
+    state.program.answers.push(formatted);
+    state.program.lastStep = null;
+    programNextStep();
+  }
   function renderProgramStep(step) {
     if (!el.programBody) return;
     const opts = Array.isArray(step.options) ? step.options.slice(0, 3) : [];
     let html = '<div class="pg-step"><div class="pg-q">' + escapeHtml(String(step.question || '¿Que quieres construir?')) + '</div><div class="pg-opts">';
     opts.forEach((o, i) => {
       const val = escapeHtml(String(o.value || o.label || ''));
+      const answer = escapeHtml(normalizeProgramText(String(o.label || o.value || ''), 180) || String(o.value || ''));
       const rec = (i === 0) || o.recommended === true;
-      html += '<button type="button" class="pg-opt" data-val="' + val + '"><span class="pg-opt-label">' + escapeHtml(String(o.label || o.value || '')) + '</span>' + (rec ? '<span class="pg-rec">Recomendada</span>' : '') + '</button>';
+      html += '<button type="button" class="pg-opt" data-val="' + val + '" data-answer="' + answer + '"><span class="pg-opt-label">' + escapeHtml(String(o.label || o.value || '')) + '</span>' + (rec ? '<span class="pg-rec">Recomendada</span>' : '') + '</button>';
     });
     html += '</div><div class="pg-custom"><input id="pgCustom" type="text" placeholder="o escribe lo tuyo…" autocomplete="off"></div><div class="pg-actions"><button id="pgNext" type="button" class="pg-next" disabled>Siguiente</button></div></div>';
     el.programBody.innerHTML = html;
@@ -2751,7 +2836,12 @@
       custom.addEventListener('input', () => { if (custom.value.trim()) { body.querySelectorAll('.pg-opt').forEach((x) => x.classList.remove('sel')); selected = ''; } refresh(); });
       custom.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); if (custom.value.trim()) submitProgramChoice(custom.value); } });
     }
-    if (next) next.addEventListener('click', () => { const v = (custom && custom.value.trim()) || selected; if (v) submitProgramChoice(v); });
+    if (next) next.addEventListener('click', () => {
+      const chosen = body.querySelector('.pg-opt.sel');
+      const preset = chosen ? (chosen.getAttribute('data-answer') || chosen.getAttribute('data-val') || '') : selected;
+      const v = (custom && custom.value.trim()) || preset;
+      if (v) submitProgramChoice(v);
+    });
   }
 
   function renderProgramPlan(planMd) {
@@ -3591,4 +3681,7 @@
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', init);
   else init();
 })();
+
+
+
 

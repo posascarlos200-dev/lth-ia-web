@@ -1,4 +1,4 @@
-// Regresion del router de actualidad/contexto (Capas 1-5).
+﻿// Regresion del router de actualidad/contexto (Capas 1-5).
 // Cubre el ruteo determinista derivado de los casos P1..P5 de
 // "Fallos de Mady Pro-(auto)". No usa red: solo valida validateDecision/chooseModel
 // y el estado de conversacion (entidad activa, estudio biblico, modo creador).
@@ -7,7 +7,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 const vm = require('node:vm');
 
-/* ─────────── 1) Router (vendor/lth-router.js) ─────────── */
+/* â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ 1) Router (vendor/lth-router.js) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
 const routerSrc = fs.readFileSync(path.join(__dirname, '..', 'vendor', 'lth-router.js'), 'utf8');
 const routerCtx = { window: {}, JSON, Math };
 vm.runInNewContext(routerSrc, routerCtx, { filename: 'lth-router.js' });
@@ -74,7 +74,7 @@ const routeOf = (raw) => R.chooseModel(decide(raw), pro);
 assert.equal(routeOf({ category: 'image_generation', target_tier: 'standard', confidence: 0.9 }).tier, 'image');
 assert.equal(routeOf({ category: 'unsafe', confidence: 0.9 }).action, 'block');
 
-/* ─────────── 2) Estado de conversacion + prompts (app.js) ─────────── */
+/* â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ 2) Estado de conversacion + prompts (app.js) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
 const appSrc = fs.readFileSync(path.join(__dirname, '..', 'app.js'), 'utf8');
 const noop = () => {};
 const store = new Map();
@@ -138,7 +138,7 @@ assert.match(webG2, /Fuentes:/);
 assert.match(api.buildCategoryGuidance({ needs_web: false, local_retail: { city: 'Dallas', store: 'Home Depot', product: '2x4' }, entities_mentioned: [] }, null), /RETAIL/);
 assert.match(api.buildCategoryGuidance({ needs_web: false, biblical_ref: { book: 'Apocalipsis' }, entities_mentioned: [] }, null), /BIBLICO/);
 
-/* ─────────── 3) Flujo de programacion en Razonar ─────────── */
+/* â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ 3) Flujo de programacion en Razonar â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
 // Orquestador con clarificacion de opciones para codigo.
 assert.match(api.ORCHESTRATOR_PROMPT, /codigo/i);
 assert.match(api.ORCHESTRATOR_PROMPT, /\(recomendada\)/);
@@ -158,4 +158,42 @@ assert.match(api.PROGRAM_WIZARD_PROMPT, /recomendada/i);
 assert.match(api.PROGRAM_WIZARD_PROMPT, /"phase": "ask"/);
 assert.match(api.PROGRAM_WIZARD_PROMPT, /"phase": "plan"/);
 
+const programStep = {
+  phase: 'ask',
+  question: 'Que estilo visual quieres para la pagina?',
+  options: [
+    { label: 'Deportivo moderno', value: 'deportivo-moderno', recommended: true },
+    { label: 'Oscuro premium', value: 'oscuro-premium' }
+  ]
+};
+assert.equal(typeof api.programStepSignature, 'function');
+assert.equal(typeof api.formatProgramChoice, 'function');
+assert.equal(typeof api.buildProgramFallbackPlan, 'function');
+assert.match(api.programStepSignature(programStep), /que estilo visual quieres/i);
+assert.equal(api.formatProgramChoice(programStep, 'Oscuro premium'), 'Que estilo visual quieres para la pagina? -> Oscuro premium');
+const fallbackPlan = api.buildProgramFallbackPlan({
+  request: 'Creame una pagina de futbol',
+  answers: [
+    'Tipo de pagina -> Landing page',
+    'Que estilo visual quieres para la pagina? -> Oscuro premium'
+  ]
+}, programStep);
+assert.match(fallbackPlan, /Creame una pagina de futbol/i);
+assert.match(fallbackPlan, /Landing page/);
+assert.match(fallbackPlan, /Ya hay suficiente contexto para construir la primera version/i);
+
+// Charla trivial: salta clasificador/memoria. Conservador y SIN romper correcciones.
+assert.equal(typeof api.looksTrivial, 'function');
+assert.equal(api.looksTrivial('hola'), true);
+assert.equal(api.looksTrivial('Hola Mady'), true);
+assert.equal(api.looksTrivial('buenos dias'), true);
+assert.equal(api.looksTrivial('gracias'), true);
+assert.equal(api.looksTrivial('ok perfecto'), true);
+assert.equal(api.looksTrivial('hola, cuanto esta el bitcoin?'), false, 'pregunta no es trivial');
+assert.equal(api.looksTrivial('quien es el presidente de usa'), false);
+assert.equal(api.looksTrivial('no, eso esta mal'), false, 'correccion no es trivial');
+assert.equal(api.looksTrivial('incorrecto'), false, 'correccion no es trivial');
+assert.equal(api.looksTrivial('hazme una pagina de deportes'), false);
+
 console.log('router-temporal-regression: OK');
+
