@@ -505,7 +505,7 @@
       }
     }
     if (errored) throw ApiError(errored, 500, credits);
-    return { text: full, credits, finishReason, truncated, events, sawReasoning };
+    return { text: full, credits };
   }
 
   /* ─────────────────── Conversaciones ─────────────────── */
