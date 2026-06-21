@@ -327,6 +327,17 @@
     return base;
   }
 
+  function renderProgramPolishLive(progress) {
+    const p = progress || {};
+    const parts = [reasonStageHtml('code_polish')];
+    const status = p.text
+      ? 'Recibiendo salida parcial del modelo...'
+      : (p.sawReasoning ? 'El modelo sigue procesando; aun no termina.' : 'Conectando con el modelo de pulido...');
+    parts.push('<div style="margin-top:10px;padding:10px 12px;border:1px solid rgba(84,255,220,.16);border-radius:12px;background:rgba(6,23,20,.45);font-size:12px;line-height:1.45;color:rgba(212,255,246,.82)"><strong style="color:#7fffe0">Actividad en vivo</strong><div style="margin-top:6px">' + escapeHtml(status) + '</div><div style="margin-top:6px;color:rgba(212,255,246,.58)">Eventos recibidos: ' + Number(p.events || 0) + '</div></div>');
+    if (p.text) parts.push('<div style="margin-top:12px">' + renderMarkdown(p.text, { preview: true }) + '</div>');
+    return parts.join('');
+  }
+
   async function callEdge(payload, signal) {
     const token = await ensureToken();
     if (!token) throw ApiError('Tu sesion expiro. Vuelve a entrar.', 401);
@@ -2701,8 +2712,8 @@
     bub.innerHTML = reasonStageHtml('code_css');
     const css = await reasonChat({ model: cssModel, system: composeSystemWithMemory(CODE_CSS_PROMPT, convo, improved), messages: [{ role: 'user', content: 'HTML DE ESTRUCTURA:\n' + html + brief }], maxTokens: 26000, temperature: 0.2, reasonStage: stage, stageLabel: 'Programar · CSS' }, signal);
 
-    bub.innerHTML = reasonStageHtml('code_polish');
-    const finalText = await reasonChat({
+    bub.innerHTML = renderProgramPolishLive({ text: '', events: 0, sawReasoning: false });
+    const finalResult = await streamReasonChat({
       model: polishModel,
       system: composeSystemWithMemory(CODE_POLISH_PROMPT, convo, improved),
       messages: [{ role: 'user', content: 'BRIEF FINAL DEL PROYECTO:\n' + improved + '\n\nHTML DE ESTRUCTURA:\n' + html + '\n\nCSS:\n' + css }],
@@ -2710,8 +2721,13 @@
       temperature: 0.15,
       reasonStage: stage,
       stageLabel: 'Programar · pulido'
-    }, signal);
-    return finalText;
+    }, signal, {
+      onProgress: (progress) => {
+        bub.innerHTML = renderProgramPolishLive(progress);
+        scrollDown();
+      }
+    });
+    return String(finalResult && finalResult.text || '').trim();
   }
 
   /* ─────────── Herramienta "Programar": asistente interactivo + build ─────────── */
@@ -3102,6 +3118,90 @@
       throw ApiError(stageErrorMessage(opts, data, res), data.status || res.status, data.credits);
     }
     return String(data.text || '').trim();
+  }
+
+  async function streamReasonChat(opts, signal, hooks) {
+    const payload = {
+      action: 'stream',
+      model: opts.model,
+      system: opts.system,
+      messages: opts.messages,
+      maxTokens: opts.maxTokens || 4000,
+      temperature: opts.temperature != null ? opts.temperature : 0.3,
+      reasonStage: opts.reasonStage !== false
+    };
+    if (opts.plugins && opts.plugins.length) payload.plugins = opts.plugins;
+    const res = await callEdge(payload, signal);
+    const ct = (res.headers.get('content-type') || '').toLowerCase();
+    if (!ct.includes('text/event-stream')) {
+      const data = await res.json().catch(() => ({}));
+      if (data && data.credits) { state.credits = mergeCredits(state.credits, data.credits); renderCredits(); }
+      throw ApiError(stageErrorMessage(opts, data, res), data.status || res.status, data.credits);
+    }
+
+    const reader = res.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = '';
+    let full = '';
+    let credits = null;
+    let errored = null;
+    let errorStatus = 500;
+    let events = 0;
+    let sawReasoning = false;
+
+    const emit = () => {
+      if (hooks && typeof hooks.onProgress === 'function') hooks.onProgress({ text: full, events, sawReasoning });
+    };
+
+    const handle = (evt) => {
+      if (!evt || !evt.type) return;
+      events += 1;
+      if (evt.type === 'content' && evt.text) {
+        full += evt.text;
+        emit();
+        return;
+      }
+      if (evt.type === 'reasoning') {
+        sawReasoning = true;
+        emit();
+        return;
+      }
+      if (evt.type === 'complete') {
+        if (typeof evt.text === 'string' && evt.text.length >= full.length) full = evt.text;
+        if (evt.credits) credits = evt.credits;
+        emit();
+        return;
+      }
+      if (evt.type === 'error') {
+        errored = evt.error || 'Error en el stream.';
+        errorStatus = Number(evt.status || 500) || 500;
+        if (evt.credits) credits = evt.credits;
+        emit();
+        return;
+      }
+      emit();
+    };
+
+    emit();
+    while (true) {
+      const result = await reader.read();
+      const value = result.value;
+      const done = result.done;
+      if (done) break;
+      buffer += decoder.decode(value, { stream: true }).replace(/\r\n/g, '\n');
+      let i = buffer.indexOf('\n\n');
+      while (i >= 0) {
+        const block = buffer.slice(0, i);
+        buffer = buffer.slice(i + 2);
+        const dataStr = block.split('\n').filter((l) => l.startsWith('data:')).map((l) => l.slice(5).trim()).join('\n').trim();
+        if (dataStr) {
+          try { handle(JSON.parse(dataStr)); } catch (_) {}
+        }
+        i = buffer.indexOf('\n\n');
+      }
+    }
+    if (errored) throw ApiError(stageErrorMessage(opts, { error: errored, status: errorStatus }, null), errorStatus, credits);
+    return { text: full, credits };
   }
 
   function mergeCredits(base, extra) {
@@ -3702,6 +3802,8 @@
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', init);
   else init();
 })();
+
+
 
 
 
