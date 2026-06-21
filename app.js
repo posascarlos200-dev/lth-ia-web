@@ -171,7 +171,6 @@
     osConnected: null,   // null = comprobando, true = conectado, false = sin conexion
     presenceTimer: null,
     reasoning: false,
-    reasonUses: null,     // estado de usos semanales de razonamiento {enabled,limit,used,remaining,resets_at}
     reasonModels: null,   // config de modelos del razonamiento por etapa (editable en admin)
     createMode: false,    // "Crear algo": fuerza generar HTML/CSS/JS visualizable
     programMode: false,   // herramienta "Programar": el siguiente envio abre el asistente
@@ -1823,41 +1822,12 @@
     try { return new Date(v).toLocaleString([], { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' }); } catch (_) { return ''; }
   }
 
-  // Usos semanales de razonamiento (barra propia, separada de creditos/ventana).
-  function reasonResetText(v) {
-    try { return 'el ' + new Date(v).toLocaleDateString([], { day: '2-digit', month: 'long' }); } catch (_) { return 'pronto'; }
-  }
-
-  function renderReasonUses() {
-    const r = state.reasonUses;
-    const enabled = r && r.enabled === true && Number(r.limit) > 0;
-    if (el.cpReasonRow) el.cpReasonRow.hidden = !enabled;
-    if (enabled && el.cpReason && el.cpReasonTxt) {
-      const limit = Math.max(1, Number(r.limit) || 7);
-      const used = Math.max(0, Math.min(limit, Number(r.used) || 0));
-      el.cpReason.style.width = Math.round((used / limit) * 100) + '%';
-      el.cpReasonTxt.textContent = used + '/' + limit;
-      el.cpReason.classList.toggle('danger', used >= limit);
-      el.cpReason.classList.toggle('warn', used >= limit - 1 && used < limit);
-    }
-    if (el.reasonBtn) {
-      const rem = enabled ? Math.max(0, Number(r.remaining) || 0) : null;
-      el.reasonBtn.title = enabled
-        ? 'Modo razonamiento · te quedan ' + rem + ' de ' + (r.limit || 7) + ' usos esta semana'
-        : 'Modo razonamiento (Pro)';
-    }
-  }
-
-  function applyReasonUses(reasoning) {
-    if (reasoning && typeof reasoning === 'object') state.reasonUses = reasoning;
-    renderReasonUses();
-  }
-
+  // El razonamiento ya no tiene usos semanales (se cobra por tokens). Solo cargamos la
+  // config de modelos por etapa (editable en admin) para reasonModel().
   async function fetchReasonStatus() {
     try {
       const res = await callEdge({ action: 'reason-status' });
       const data = await res.json().catch(() => ({}));
-      if (data && data.reasoning) applyReasonUses(data.reasoning);
       if (data && data.reasoningModels && typeof data.reasoningModels === 'object') state.reasonModels = data.reasoningModels;
     } catch (_) {}
   }
@@ -2818,6 +2788,7 @@
     if (!el.reasonBtn) return;
     el.reasonBtn.classList.toggle('on', !!state.reasoning);
     el.reasonBtn.setAttribute('aria-pressed', state.reasoning ? 'true' : 'false');
+    el.reasonBtn.title = 'Modo razonamiento (Pro) · se cobra por tokens';
   }
 
   function renderCreateBtn() {
@@ -3414,8 +3385,8 @@
     const signal = state.abort && state.abort.signal;
     const history = buildCloudMessages(convo, 'reasoning');
 
-    // 1) Clasificar BARATO (no reasonStage): aun NO consume uso. Asi la aclaracion y el
-    //    desvio a Programar (codigo) no gastan usos de razonamiento.
+    // 1) Clasificar BARATO con el orquestador (modelo flash). Se cobra por token como las
+    //    demas etapas; corre primero para decidir si aclara o desvia a Programar (codigo).
     bub.innerHTML = reasonStageHtml('orchestrate');
     let orch;
     try {
@@ -3452,17 +3423,17 @@
       return;
     }
 
-    // 3) No-codigo: AHORA si consume 1 uso (otorga el presupuesto de llamadas internas gratis).
-    if (!await consumeReasonUse(convo, bub)) return;
-
+    // 3) No-codigo: el razonamiento se cobra por TOKENS (entrada/salida) como los demas
+    //    modelos. Cada llamada interna (especialista + juez) reserva creditos normal
+    //    (reasonStage:false). Ya no hay usos semanales ni llamadas internas gratis.
     if (category === 'imagen') {
-      await generateImage(improved, convo, null, bub, true);
+      await generateImage(improved, convo, null, bub, false);
       return;
     }
 
     const spec = categorySpecialist(category, improved);
     bub.innerHTML = reasonStageHtml(spec.stage);
-    const draft = await reasonChat({ model: spec.model, system: composeSystemWithMemory(spec.system, convo, improved), messages: history, maxTokens: 9000, temperature: spec.temperature, plugins: spec.plugins }, signal);
+    const draft = await reasonChat({ model: spec.model, system: composeSystemWithMemory(spec.system, convo, improved), messages: history, maxTokens: 9000, temperature: spec.temperature, plugins: spec.plugins, reasonStage: false }, signal);
 
     bub.innerHTML = reasonStageHtml('judge');
     const judgeRaw = await reasonChat({
@@ -3470,7 +3441,8 @@
       system: composeSystemWithMemory(JUDGE_PROMPT, convo, text),
       messages: [{ role: 'user', content: 'PETICION ORIGINAL:\n' + text + '\n\nPROMPT MEJORADO:\n' + improved + '\n\nBORRADOR DEL ESPECIALISTA:\n' + draft }],
       maxTokens: 9000,
-      temperature: 0.1
+      temperature: 0.1,
+      reasonStage: false
     }, signal);
     const j = parseReasonJson(judgeRaw);
     const finalText = String(j.respuesta_final || draft).trim() || '_(sin respuesta)_';
@@ -3485,34 +3457,6 @@
     void maybeUpdateConvoBrain(convo);
   }
 
-  // Consume 1 uso de razonamiento (7/semana). Devuelve true si se otorgo; si no, muestra
-  // el mensaje y devuelve false. Solo se llama para razonamiento NO-codigo (el codigo va a Programar).
-  async function consumeReasonUse(convo, bub) {
-    try {
-      const useRes = await callEdge({ action: 'reason-use' }, state.abort && state.abort.signal);
-      const useJson = await useRes.json().catch(() => ({}));
-      const useData = useJson && useJson.reasoning ? useJson.reasoning : null;
-      applyReasonUses(useData);
-      if (!useRes.ok || useJson.success !== true) {
-        const msg = useData && useData.reason === 'weekly_exhausted'
-          ? 'Te quedaste sin usos de **razonamiento** esta semana (' + (useData.used || useData.limit || 7) + '/' + (useData.limit || 7) + '). Se reinician ' + reasonResetText(useData.resets_at) + '.'
-          : ((useData && useData.error) || 'El modo razonamiento no esta disponible en tu plan.');
-        bub.innerHTML = renderMarkdown(msg);
-        markAssistantTurn(convo, msg, 'Sin usos de razonamiento');
-        convo.messages.push({ id: uid(), role: 'assistant', content: msg, ts: Date.now() });
-        convo.updated = Date.now(); saveConvos(); renderConvoList(); syncPushOne(convo);
-        return false;
-      }
-      return true;
-    } catch (_) {
-      const msg = 'No se pudo iniciar el modo razonamiento. Intenta de nuevo.';
-      bub.innerHTML = renderMarkdown(msg);
-      convo.messages.push({ id: uid(), role: 'assistant', content: msg, ts: Date.now() });
-      convo.updated = Date.now(); saveConvos(); renderConvoList();
-      return false;
-    }
-  }
-
   async function reasonChat(opts, signal) {
     const payload = {
       action: 'chat',
@@ -3521,8 +3465,8 @@
       messages: opts.messages,
       maxTokens: opts.maxTokens || 4000,
       temperature: opts.temperature != null ? opts.temperature : 0.3,
-      // reasonStage=true => llamada interna gratis (bajo un uso de razonamiento ya consumido).
-      // Programar y el clasificador barato pasan reasonStage:false => se cobra por token.
+      // reasonStage ya NO exime del cobro: el razonamiento se cobra por tokens como todo
+      // lo demas. Se conserva el flag solo como metadato de etapa interna.
       reasonStage: opts.reasonStage !== false
     };
     if (opts.plugins && opts.plugins.length) payload.plugins = opts.plugins;
