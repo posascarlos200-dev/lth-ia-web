@@ -195,5 +195,24 @@ assert.equal(api.looksTrivial('no, eso esta mal'), false, 'correccion no es triv
 assert.equal(api.looksTrivial('incorrecto'), false, 'correccion no es trivial');
 assert.equal(api.looksTrivial('hazme una pagina de deportes'), false);
 
+// Programar: el documento se arma en CODIGO (no lo reconstruye un modelo).
+assert.equal(typeof api.extractFencedCode, 'function');
+assert.equal(typeof api.assembleProgramDoc, 'function');
+assert.equal(api.extractFencedCode('texto\n```css\n.a{color:red}\n```\nmas', ['css']), '.a{color:red}');
+assert.equal(api.extractFencedCode('```html\n<div>x</div>\n```', ['html']), '<div>x</div>');
+{
+  const doc = api.assembleProgramDoc('<main>Hola</main>', '.x{color:red}', 'console.log(1)');
+  assert.match(doc, /<!DOCTYPE html>/i, 'arma documento completo');
+  assert.match(doc, /<style>[\s\S]*\.x\{color:red\}/, 'incrusta el CSS');
+  assert.match(doc, /<script>[\s\S]*console\.log\(1\)/, 'incrusta el JS');
+  assert.match(doc, /<main>Hola<\/main>/, 'conserva el HTML');
+}
+{
+  // Si la estructura ya es un documento completo, inyecta CSS en head y JS antes de </body>.
+  const full = api.assembleProgramDoc('<!doctype html><html><head><title>t</title></head><body><h1>Hi</h1></body></html>', '.y{}', 'var z=1');
+  assert.match(full, /<style>[\s\S]*\.y\{\}[\s\S]*<\/head>/, 'CSS al head');
+  assert.match(full, /<script>[\s\S]*var z=1[\s\S]*<\/body>/, 'JS antes de cerrar body');
+}
+
 console.log('router-temporal-regression: OK');
 

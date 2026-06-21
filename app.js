@@ -95,6 +95,14 @@
     'Revisa y corrige antes de entregar: enlaces o secciones rotas, accesibilidad basica, responsive en movil, consistencia visual y que NO falte nada del brief. El resultado debe abrir y verse bien tal cual, sin pasos extra.',
     'Devuelve el documento final en UN bloque ```html y, debajo, 2-3 lineas en espanol de lo que incluiste y como usarlo. No transcribas el proceso ni menciones los agentes.'
   ].join('\n');
+  // Agente de interactividad: SOLO JavaScript (no reescribe HTML ni CSS). El documento
+  // final se ensambla en codigo (estructura + CSS + JS), no lo reconstruye un modelo.
+  const CODE_JS_PROMPT = [
+    'Eres el AGENTE DE INTERACTIVIDAD (JavaScript) del build de Mady.',
+    'Recibes el HTML de estructura (y un extracto del CSS ya aplicado). Escribe SOLO el JavaScript que la pagina necesita para funcionar: menus, navegacion, tabs, sliders, modales, formularios, scroll suave, lo que pida el proyecto. Usa los id/clases que YA existen en el HTML.',
+    'NO reescribas el HTML ni el CSS. NO devuelvas un documento completo. Si la pagina es estatica y no necesita JS, devuelve un bloque con un comentario breve.',
+    'Devuelve SOLO el JavaScript en UN bloque ```js, sin explicaciones ni HTML.'
+  ].join('\n');
 
   // Asistente de la herramienta "Programar": guia al usuario UNA decision a la vez con
   // tarjetas presionables (max 3, la 1a recomendada) o texto propio, hasta tener un plan.
@@ -1498,7 +1506,7 @@
     ]).catch(() => {});
   }
 
-  window.LTH_IA_TEST_API = { normalizeBrain, extractBrainFromUserMessage, buildBrainContextBlock, detectCrisisIntent, detectFreeSkillIntent, buildFreeSkillSystem, buildFreeSkillClarification, normalizeResearchQuery, detectFreeResearchIntent, buildFreeResearchContextBlock, buildDeviceMemoryRecallBlock, mergeConvoCollections, serializeConvoForCache, extractEntities, detectBrainConflicts, mergeBrain, parseDuckDuckGoResults, detectLiveWebIntent, buildPreviewDoc, applyConversationState, buildCategoryGuidance, buildTemporalSystemBlock, composeSystemWithMemory, ensureConvoBrain, reasonStageHtml, CODE_STRUCTURE_PROMPT, CODE_CSS_PROMPT, CODE_POLISH_PROMPT, ORCHESTRATOR_PROMPT, PROGRAM_WIZARD_PROMPT, programStepSignature, formatProgramChoice, buildProgramFallbackPlan, looksTrivial };
+  window.LTH_IA_TEST_API = { normalizeBrain, extractBrainFromUserMessage, buildBrainContextBlock, detectCrisisIntent, detectFreeSkillIntent, buildFreeSkillSystem, buildFreeSkillClarification, normalizeResearchQuery, detectFreeResearchIntent, buildFreeResearchContextBlock, buildDeviceMemoryRecallBlock, mergeConvoCollections, serializeConvoForCache, extractEntities, detectBrainConflicts, mergeBrain, parseDuckDuckGoResults, detectLiveWebIntent, buildPreviewDoc, applyConversationState, buildCategoryGuidance, buildTemporalSystemBlock, composeSystemWithMemory, ensureConvoBrain, reasonStageHtml, CODE_STRUCTURE_PROMPT, CODE_CSS_PROMPT, CODE_POLISH_PROMPT, ORCHESTRATOR_PROMPT, PROGRAM_WIZARD_PROMPT, programStepSignature, formatProgramChoice, buildProgramFallbackPlan, looksTrivial, extractFencedCode, assembleProgramDoc };
 
   async function loadConvos() {
     state.convos = loadCachedConvos();
@@ -2681,6 +2689,8 @@
       codigo: 'Programando la solución',
       code_structure: 'Armando la estructura',
       code_css: 'Diseñando el estilo (CSS)',
+      code_js: 'Programando interacciones (JS)',
+      code_assemble: 'Armando el documento final',
       code_polish: 'Puliendo y armando todo',
       chat_max: 'Investigando en la web',
       chat_simple: 'Pensando la respuesta',
@@ -2698,48 +2708,94 @@
   // Build de codigo en 3 agentes (estructura -> css -> pulido). Usado por la herramienta
   // Programar con billed=true (cobro por token; NO reasonStage). Tokens altos para escritura
   // extensa (x3); el tope real lo fija ai_plan_models (deepseek 30000).
+  // Extrae el codigo de un bloque ``` (por lenguaje preferido; si no, el primer bloque; si
+  // no hay fences, el texto crudo).
+  function extractFencedCode(text, langs) {
+    const t = String(text || '');
+    const rx = /```([\w+-]*)\n?([\s\S]*?)```/g;
+    let m; let firstAny = null;
+    while ((m = rx.exec(t))) {
+      const lang = String(m[1] || '').toLowerCase();
+      const code = String(m[2] || '').replace(/\s+$/, '');
+      if (firstAny == null && code.trim()) firstAny = code;
+      if (langs.indexOf(lang) !== -1 && code.trim()) return code;
+    }
+    return firstAny != null ? firstAny : t.trim();
+  }
+
+  // Ensambla el documento final EN CODIGO (estructura + CSS + JS). Determinista: nunca se
+  // trunca ni reconstruye con un modelo.
+  function assembleProgramDoc(html, css, js) {
+    let doc = String(html || '').trim();
+    const cssBlock = String(css || '').trim() ? ('<style>\n' + String(css).trim() + '\n</style>') : '';
+    const jsBlock = String(js || '').trim() ? ('<script>\n' + String(js).trim() + '\n</script>') : '';
+    const isFull = /<!doctype/i.test(doc) || /<html[\s>]/i.test(doc);
+    if (isFull) {
+      if (cssBlock && !/<style/i.test(doc)) {
+        doc = /<\/head>/i.test(doc)
+          ? doc.replace(/<\/head>/i, cssBlock + '\n</head>')
+          : (/<body[^>]*>/i.test(doc) ? doc.replace(/<body[^>]*>/i, (mm) => '<head>' + cssBlock + '</head>\n' + mm) : (cssBlock + '\n' + doc));
+      }
+      if (jsBlock) doc = /<\/body>/i.test(doc) ? doc.replace(/<\/body>/i, jsBlock + '\n</body>') : (doc + '\n' + jsBlock);
+      return doc;
+    }
+    return '<!DOCTYPE html>\n<html lang="es">\n<head>\n<meta charset="utf-8">\n<meta name="viewport" content="width=device-width, initial-scale=1">\n' + cssBlock + '\n</head>\n<body>\n' + doc + '\n' + jsBlock + '\n</body>\n</html>';
+  }
+
+  function renderProgramStageLive(stageKey, progress) {
+    const p = progress || {};
+    return reasonStageHtml(stageKey) + '<div style="margin-top:8px;font-size:12px;color:rgba(212,255,246,.6)">Escribiendo… ' + Number(p.events || 0) + ' eventos</div>';
+  }
+
+  // Corre una etapa por STREAMING (evita el timeout duro del edge) con 1 continuacion si se
+  // trunca por longitud. Devuelve el texto crudo combinado.
+  async function streamProgramAgent(baseOpts, stageKey, bub, signal) {
+    let combined = '';
+    for (let pass = 0; pass < 2; pass += 1) {
+      const messages = pass === 0
+        ? baseOpts.messages
+        : [{ role: 'user', content: 'CONTINUA EXACTAMENTE desde donde te quedaste, sin repetir lo ya escrito ni reiniciar, y cierra el bloque de codigo.\n\nULTIMO:\n' + combined.slice(-8000) }];
+      const r = await streamReasonChat({
+        model: baseOpts.model, system: baseOpts.system, messages: messages,
+        maxTokens: pass === 0 ? baseOpts.maxTokens : Math.min(baseOpts.maxTokens, 10000),
+        temperature: baseOpts.temperature, reasonStage: baseOpts.reasonStage, stageLabel: baseOpts.stageLabel
+      }, signal, { onProgress: (pr) => { bub.innerHTML = renderProgramStageLive(stageKey, pr); scrollDown(); } });
+      combined += String(r && r.text || '');
+      if (!(r && r.truncated)) break;
+    }
+    return combined;
+  }
+
+  // Build de codigo en 3 agentes que NO se pisan: estructura (HTML) -> css (CSS) -> js (JS).
+  // El documento final se ENSAMBLA en codigo, no lo reconstruye un modelo (antes el "pulido"
+  // rehacia todo el doc -> salida enorme que se truncaba y desperdiciaba tokens).
   async function buildCodePipeline(text, improved, convo, history, bub, signal, billed) {
     const codeModel = reasonModel('spec_codigo', 'deepseek/deepseek-v4-pro');
     const structureModel = reasonModel('program_structure', codeModel);
     const cssModel = reasonModel('program_css', codeModel);
-    const polishModel = reasonModel('program_polish', codeModel);
+    const jsModel = reasonModel('program_js', codeModel);
     const brief = '\n\nBRIEF DEL PROYECTO (siguelo al pie de la letra):\n' + improved;
     const stage = billed ? false : undefined; // billed => reasonStage:false (cobro por token)
 
+    // 1) Estructura (solo HTML).
     bub.innerHTML = reasonStageHtml('code_structure');
-    const html = await reasonChat({ model: structureModel, system: composeSystemWithMemory(CODE_STRUCTURE_PROMPT + brief, convo, improved), messages: history, maxTokens: 26000, temperature: 0.2, reasonStage: stage, stageLabel: 'Programar · estructura' }, signal);
+    const htmlRaw = await streamProgramAgent({ model: structureModel, system: composeSystemWithMemory(CODE_STRUCTURE_PROMPT + brief, convo, improved), messages: history, maxTokens: 18000, temperature: 0.2, reasonStage: stage, stageLabel: 'Programar · estructura' }, 'code_structure', bub, signal);
+    const html = extractFencedCode(htmlRaw, ['html', 'markup', 'xml']);
 
+    // 2) CSS (solo CSS; no reescribe el HTML).
     bub.innerHTML = reasonStageHtml('code_css');
-    const css = await reasonChat({ model: cssModel, system: composeSystemWithMemory(CODE_CSS_PROMPT, convo, improved), messages: [{ role: 'user', content: 'HTML DE ESTRUCTURA:\n' + html + brief }], maxTokens: 26000, temperature: 0.2, reasonStage: stage, stageLabel: 'Programar · CSS' }, signal);
+    const cssRaw = await streamProgramAgent({ model: cssModel, system: composeSystemWithMemory(CODE_CSS_PROMPT, convo, improved), messages: [{ role: 'user', content: 'HTML DE ESTRUCTURA:\n' + html + brief }], maxTokens: 18000, temperature: 0.2, reasonStage: stage, stageLabel: 'Programar · CSS' }, 'code_css', bub, signal);
+    const css = extractFencedCode(cssRaw, ['css']);
 
-    let combinedPolish = '';
-    let finalResult = null;
-    for (let pass = 0; pass < 2; pass += 1) {
-      const isContinuation = pass > 0;
-      const prompt = isContinuation
-        ? 'CONTINUA EXACTAMENTE desde donde te quedaste en el mismo documento HTML. NO reinicies desde cero, NO repitas bloques completos y cierra lo que falte. Si ya habias abierto ```html, sigue dentro del mismo bloque hasta terminarlo y luego agrega las 2-3 lineas finales en espanol.\n\nULTIMA SALIDA ENTREGADA:\n' + combinedPolish.slice(-12000)
-        : 'BRIEF FINAL DEL PROYECTO:\n' + improved + '\n\nHTML DE ESTRUCTURA:\n' + html + '\n\nCSS:\n' + css;
-      if (!isContinuation) bub.innerHTML = renderProgramPolishLive({ text: '', events: 0, sawReasoning: false });
-      finalResult = await streamReasonChat({
-        model: polishModel,
-        system: composeSystemWithMemory(CODE_POLISH_PROMPT, convo, improved),
-        messages: [{ role: 'user', content: prompt }],
-        maxTokens: isContinuation ? 12000 : 20000,
-        temperature: 0.15,
-        reasonStage: stage,
-        stageLabel: isContinuation ? 'Programar · pulido (continuacion)' : 'Programar · pulido'
-      }, signal, {
-        onProgress: (progress) => {
-          const liveText = combinedPolish + String(progress && progress.text || '');
-          bub.innerHTML = renderProgramPolishLive({ text: liveText, events: progress && progress.events, sawReasoning: progress && progress.sawReasoning });
-          scrollDown();
-        }
-      });
-      combinedPolish += String(finalResult && finalResult.text || '');
-      if (!(finalResult && finalResult.truncated)) break;
-      combinedPolish += '\n';
-    }
-    return String(combinedPolish || '').trim();
+    // 3) JS (solo interacciones).
+    bub.innerHTML = reasonStageHtml('code_js');
+    const jsRaw = await streamProgramAgent({ model: jsModel, system: composeSystemWithMemory(CODE_JS_PROMPT, convo, improved), messages: [{ role: 'user', content: 'HTML:\n' + html + '\n\nCSS (resumen):\n' + css.slice(0, 1800) + brief }], maxTokens: 8000, temperature: 0.2, reasonStage: stage, stageLabel: 'Programar · interacciones' }, 'code_js', bub, signal);
+    const js = extractFencedCode(jsRaw, ['js', 'javascript']);
+
+    // 4) Ensamblado en CODIGO: un solo documento completo (nunca se corta).
+    bub.innerHTML = reasonStageHtml('code_assemble');
+    const doc = assembleProgramDoc(html, css, js);
+    return '```html\n' + doc + '\n```\n\nPagina lista: estructura, estilos e interacciones integrados en un solo archivo. Abrela con **Vista previa**.';
   }
 
   /* ─────────── Herramienta "Programar": asistente interactivo + build ─────────── */
