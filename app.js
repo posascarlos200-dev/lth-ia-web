@@ -823,7 +823,8 @@
         specialistModel: String(review.specialistModel || '').slice(0, 200),
         attempts: Math.max(0, Number(review.attempts || 0) || 0),
         createdAt: Number(review.createdAt || Date.now()) || Date.now(),
-        completedAt: Number(review.completedAt || 0) || 0
+        completedAt: Number(review.completedAt || 0) || 0,
+        leaseUntil: Number(review.leaseUntil || 0) || 0
       };
     }
     return next;
@@ -3020,6 +3021,32 @@
   }
 
   const activeReasonReviews = new Set();
+  const MAX_REASON_REVIEW_RUNS = 1;
+
+  async function commitReasoningReviewResult(convoId, messageId, snapshot, judge) {
+    const liveConvo = state.convos.find((entry) => entry && entry.id === convoId);
+    const liveMessage = liveConvo && (liveConvo.messages || []).find((entry) => entry && entry.id === messageId);
+    if (!liveConvo || !liveMessage) return;
+    const draft = String(snapshot?.draft || '');
+    const finalText = applyJudgeCorrections(draft, judge).trim() || draft.trim() || '_(sin respuesta)_';
+    liveMessage.content = finalText;
+    const verdict = extractVerdict(judge || {});
+    if (verdict) liveMessage.verdict = verdict;
+    liveMessage.reasoningReview = {
+      status: 'complete',
+      attempts: Math.max(0, Number(snapshot?.attempts || 0)),
+      createdAt: Number(snapshot?.createdAt || Date.now()),
+      completedAt: Date.now(),
+      leaseUntil: 0
+    };
+    markAssistantTurn(liveConvo, finalText, 'Respuesta razonada');
+    liveConvo.updated = Date.now();
+    saveConvos();
+    if (state.activeId === liveConvo.id) renderMessages();
+    renderConvoList();
+    await syncPushOne(liveConvo).catch(() => {});
+    void maybeUpdateConvoBrain(liveConvo);
+  }
 
   async function finalizeReasoningReview(convoId, messageId) {
     const jobKey = String(convoId || '') + ':' + String(messageId || '');
@@ -3028,25 +3055,43 @@
     const message = convo && (convo.messages || []).find((entry) => entry && entry.id === messageId);
     const review = message && message.reasoningReview;
     if (!convo || !message || !review || review.status === 'complete' || !String(review.draft || '').trim()) return;
+    const now = Date.now();
+    if (review.status === 'reviewing' && Number(review.leaseUntil || 0) > now) return;
+
+    const snapshot = {
+      original: String(review.original || ''),
+      improved: String(review.improved || review.original || ''),
+      draft: String(review.draft || ''),
+      specialistModel: String(review.specialistModel || ''),
+      attempts: Math.max(0, Number(review.attempts || 0)),
+      createdAt: Number(review.createdAt || now)
+    };
+    if (snapshot.attempts >= MAX_REASON_REVIEW_RUNS) {
+      await commitReasoningReviewResult(convoId, messageId, snapshot, {
+        veredicto: 'RECHAZADO', confianza: null, fuentes: [],
+        advertencia: 'La revision automatica ya uso su unico intento; se conserva intacta la respuesta del especialista.',
+        correcciones: []
+      });
+      return;
+    }
 
     activeReasonReviews.add(jobKey);
     review.status = 'reviewing';
-    review.attempts = Math.max(0, Number(review.attempts || 0)) + 1;
+    review.attempts = snapshot.attempts + 1;
+    review.leaseUntil = now + 180000;
+    snapshot.attempts = review.attempts;
     message.content = '_Verificando y puliendo la respuesta…_';
     convo.updated = Date.now();
     saveConvos();
     if (state.activeId === convo.id) renderMessages();
-    void syncPushOne(convo);
+    await syncPushOne(convo).catch(() => {});
 
-    const original = String(review.original || '');
-    const improved = String(review.improved || original);
-    const draft = String(review.draft || '');
     let judge = null;
     try {
       try {
-        judge = await runJudgeReview(reasonModel('judge', 'anthropic/claude-opus-4.8'), original, improved, draft, convo, null, 100000);
+        judge = await runJudgeReview(reasonModel('judge', 'anthropic/claude-opus-4.8'), snapshot.original, snapshot.improved, snapshot.draft, convo, null, 100000);
       } catch (_) {
-        judge = await runJudgeReview(reasonModel('orchestrator', 'google/gemini-2.5-flash'), original, improved, draft, convo, null, 45000);
+        judge = await runJudgeReview(reasonModel('orchestrator', 'google/gemini-2.5-flash'), snapshot.original, snapshot.improved, snapshot.draft, convo, null, 45000);
       }
     } catch (_) {
       judge = {
@@ -3059,24 +3104,7 @@
     }
 
     try {
-      const finalText = applyJudgeCorrections(draft, judge).trim() || draft.trim() || '_(sin respuesta)_';
-      message.content = finalText;
-      const verdict = extractVerdict(judge || {});
-      if (verdict) message.verdict = verdict;
-      message.reasoningReview = {
-        status: 'complete',
-        attempts: review.attempts,
-        createdAt: review.createdAt,
-        completedAt: Date.now()
-      };
-      markAssistantTurn(convo, finalText, 'Respuesta razonada');
-      convo.updated = Date.now();
-      saveConvos();
-      if (state.activeId === convo.id) renderMessages();
-      renderConvoList();
-      await syncPushOne(convo).catch(() => {});
-      fetchStatus();
-      void maybeUpdateConvoBrain(convo);
+      await commitReasoningReviewResult(convoId, messageId, snapshot, judge);
     } finally {
       activeReasonReviews.delete(jobKey);
     }
@@ -3086,7 +3114,8 @@
     for (const convo of state.convos || []) {
       for (const message of convo?.messages || []) {
         const status = message?.reasoningReview?.status;
-        if ((status === 'pending' || status === 'reviewing') && String(message.reasoningReview?.draft || '').trim()) {
+        const leaseExpired = Number(message?.reasoningReview?.leaseUntil || 0) <= Date.now();
+        if ((status === 'pending' || (status === 'reviewing' && leaseExpired)) && String(message.reasoningReview?.draft || '').trim()) {
           void finalizeReasoningReview(convo.id, message.id);
         }
       }

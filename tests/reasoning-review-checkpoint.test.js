@@ -25,16 +25,20 @@ context.globalThis = context;
 vm.runInNewContext(source, context, { filename: 'app.js' });
 
 const api = context.window.LTH_IA_TEST_API;
+assert.match(source, /const MAX_REASON_REVIEW_RUNS = 1;/, 'el juez debe tener un maximo absoluto de una ejecucion');
+assert.match(source, /const liveMessage = liveConvo/, 'el resultado debe aplicarse al mensaje vivo tras sincronizar');
+assert.doesNotMatch(source.match(/async function finalizeReasoningReview[\s\S]*?\n  function resumePendingReasonReviews/)?.[0] || '', /fetchStatus\(\)/, 'finalizar no debe reactivar la reanudacion mediante fetchStatus');
 const pending = {
   id: 'chat_reason', title: 'Razonamiento', updated: 1,
   messages: [{
     id: 'answer_1', role: 'assistant', content: '_Verificando y puliendo la respuesta…_', ts: 10,
-    reasoningReview: { status: 'pending', original: 'pedido', improved: 'pedido mejorado', draft: 'borrador valioso', specialistModel: 'modelo-a', attempts: 0, createdAt: 10 }
+    reasoningReview: { status: 'pending', original: 'pedido', improved: 'pedido mejorado', draft: 'borrador valioso', specialistModel: 'modelo-a', attempts: 0, createdAt: 10, leaseUntil: 123 }
   }]
 };
 const stored = api.serializeConvoForCache(pending);
 assert.equal(stored.messages[0].reasoningReview.draft, 'borrador valioso');
 assert.equal(stored.messages[0].reasoningReview.status, 'pending');
+assert.equal(stored.messages[0].reasoningReview.leaseUntil, 123);
 
 const completed = {
   id: 'chat_reason', title: 'Razonamiento', updated: 2,
