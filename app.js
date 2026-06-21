@@ -317,6 +317,16 @@
     const e = new Error(message); e.status = status; e.credits = credits; return e;
   }
 
+  function stageErrorMessage(opts, data, res) {
+    const stageLabel = String(opts && opts.stageLabel || '').trim();
+    const status = Number((data && data.status) || (res && res.status) || 0) || 0;
+    const detail = String(data && data.error || '').trim();
+    const base = stageLabel ? ('Fallo en ' + stageLabel + '.') : 'Fallo una etapa del razonamiento.';
+    if (status === 546) return base + ' Se agoto el tiempo de espera del modelo.';
+    if (detail) return base + ' ' + detail;
+    return base;
+  }
+
   async function callEdge(payload, signal) {
     const token = await ensureToken();
     if (!token) throw ApiError('Tu sesion expiro. Vuelve a entrar.', 401);
@@ -2679,17 +2689,28 @@
   // extensa (x3); el tope real lo fija ai_plan_models (deepseek 30000).
   async function buildCodePipeline(text, improved, convo, history, bub, signal, billed) {
     const codeModel = reasonModel('spec_codigo', 'deepseek/deepseek-v4-pro');
+    const structureModel = reasonModel('program_structure', codeModel);
+    const cssModel = reasonModel('program_css', codeModel);
+    const polishModel = reasonModel('program_polish', codeModel);
     const brief = '\n\nBRIEF DEL PROYECTO (siguelo al pie de la letra):\n' + improved;
     const stage = billed ? false : undefined; // billed => reasonStage:false (cobro por token)
 
     bub.innerHTML = reasonStageHtml('code_structure');
-    const html = await reasonChat({ model: codeModel, system: composeSystemWithMemory(CODE_STRUCTURE_PROMPT + brief, convo, improved), messages: history, maxTokens: 26000, temperature: 0.2, reasonStage: stage }, signal);
+    const html = await reasonChat({ model: structureModel, system: composeSystemWithMemory(CODE_STRUCTURE_PROMPT + brief, convo, improved), messages: history, maxTokens: 26000, temperature: 0.2, reasonStage: stage, stageLabel: 'Programar · estructura' }, signal);
 
     bub.innerHTML = reasonStageHtml('code_css');
-    const css = await reasonChat({ model: codeModel, system: composeSystemWithMemory(CODE_CSS_PROMPT, convo, improved), messages: [{ role: 'user', content: 'HTML DE ESTRUCTURA:\n' + html + brief }], maxTokens: 26000, temperature: 0.2, reasonStage: stage }, signal);
+    const css = await reasonChat({ model: cssModel, system: composeSystemWithMemory(CODE_CSS_PROMPT, convo, improved), messages: [{ role: 'user', content: 'HTML DE ESTRUCTURA:\n' + html + brief }], maxTokens: 26000, temperature: 0.2, reasonStage: stage, stageLabel: 'Programar · CSS' }, signal);
 
     bub.innerHTML = reasonStageHtml('code_polish');
-    const finalText = await reasonChat({ model: codeModel, system: composeSystemWithMemory(CODE_POLISH_PROMPT, convo, improved), messages: [{ role: 'user', content: 'PETICION ORIGINAL:\n' + text + brief + '\n\nHTML DE ESTRUCTURA:\n' + html + '\n\nCSS:\n' + css }], maxTokens: 28000, temperature: 0.15, reasonStage: stage }, signal);
+    const finalText = await reasonChat({
+      model: polishModel,
+      system: composeSystemWithMemory(CODE_POLISH_PROMPT, convo, improved),
+      messages: [{ role: 'user', content: 'BRIEF FINAL DEL PROYECTO:\n' + improved + '\n\nHTML DE ESTRUCTURA:\n' + html + '\n\nCSS:\n' + css }],
+      maxTokens: 20000,
+      temperature: 0.15,
+      reasonStage: stage,
+      stageLabel: 'Programar · pulido'
+    }, signal);
     return finalText;
   }
 
@@ -2719,7 +2740,7 @@
   async function programOrchestrate() {
     const p = state.program;
     const raw = await reasonChat({
-      model: 'google/gemini-2.5-flash',
+      model: reasonModel('program_planner', 'google/gemini-2.5-flash'),
       system: composeSystemWithMemory(PROGRAM_WIZARD_PROMPT, p.convo, p.request),
       messages: [{ role: 'user', content: JSON.stringify({ request: p.request, answers: p.answers }, null, 2) }],
       maxTokens: 1200, temperature: 0.3, reasonStage: false
@@ -3078,7 +3099,7 @@
     const data = await res.json().catch(() => ({}));
     if (!res.ok || data.success === false) {
       if (data && data.credits) { state.credits = mergeCredits(state.credits, data.credits); renderCredits(); }
-      throw ApiError(data.error || 'Fallo una etapa del razonamiento.', data.status || res.status, data.credits);
+      throw ApiError(stageErrorMessage(opts, data, res), data.status || res.status, data.credits);
     }
     return String(data.text || '').trim();
   }
@@ -3681,6 +3702,7 @@
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', init);
   else init();
 })();
+
 
 
 
