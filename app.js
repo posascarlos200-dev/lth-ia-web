@@ -153,6 +153,7 @@
     createMode: false,    // "Crear algo": fuerza generar HTML/CSS/JS visualizable
     programMode: false,   // herramienta "Programar": el siguiente envio abre el asistente
     program: null,        // sesion activa del asistente { active, convo, request, answers, plan, busy }
+    programEdit: null,    // edicion en curso de una pagina ya hecha { doc, convo }
     manualModel: 'auto'   // 'auto' = ruteo automatico; o un id de MANUAL_MODELS
   };
 
@@ -263,7 +264,8 @@
           + '<div class="code-preview-frame" hidden>'
           + '<div class="code-preview-bar"><button class="code-preview-fs" type="button" data-preview-fullscreen="1" title="Pantalla completa">⛶ Pantalla completa</button>'
           + '<button class="code-preview-fs" type="button" data-preview-download="single" title="Descargar como un solo archivo HTML">⬇ HTML</button>'
-          + '<button class="code-preview-fs" type="button" data-preview-download="zip" title="Descargar HTML, CSS y JS separados (.zip)">⬇ .zip (3 archivos)</button></div>'
+          + '<button class="code-preview-fs" type="button" data-preview-download="zip" title="Descargar HTML, CSS y JS separados (.zip)">⬇ .zip (3 archivos)</button>'
+          + '<button class="code-preview-fs" type="button" data-preview-edit="1" title="Editar esta página (cambia colores, agrega secciones, etc.)">✎ Editar</button></div>'
           + '<iframe class="code-preview-iframe" sandbox="allow-scripts allow-modals allow-popups" loading="lazy" srcdoc="' + previewAttr(doc) + '"></iframe></div></div>';
       }
     }
@@ -3073,6 +3075,102 @@
     } catch (_) {}
   }
 
+  /* ─────────── Editar una pagina ya hecha (re-corre solo la parte que cambia) ─────────── */
+  const EDIT_ROUTER_PROMPT = [
+    'Eres el router de EDICIONES de paginas web. Recibes el cambio que pide el usuario sobre una pagina ya hecha (HTML+CSS+JS).',
+    'Decide que partes hay que regenerar. Devuelve SOLO JSON valido: { "html": false, "css": false, "js": false, "instruccion": "" }',
+    'html=true si cambia contenido, textos, secciones o estructura. css=true si cambia colores, estilos, tamaños, espaciados o layout visual. js=true si cambia comportamiento, interacciones, menus o animaciones por codigo.',
+    'Marca SOLO lo necesario (una o varias). "instruccion" = el cambio reformulado claro y conciso.'
+  ].join('\n');
+
+  function openProgramEdit(doc) {
+    if (!canUsePremium()) { showProModal('reasoning'); return; }
+    const d = String(doc || '').trim();
+    if (!d) return;
+    state.programEdit = { doc: d, convo: activeConvo() };
+    openProgramModal();
+    renderProgramEditForm();
+  }
+
+  function renderProgramEditForm() {
+    if (!el.programBody) return;
+    const examples = ['Cambia los colores a un tema oscuro', 'Agrega una sección de contacto', 'Hazlo más moderno', 'Que el menú funcione en móvil'];
+    el.programBody.innerHTML = '<div class="pg-step"><div class="pg-q">✎ ¿Qué quieres cambiar o agregar?</div><div class="pg-opts">'
+      + examples.map((ex) => '<button type="button" class="pg-opt" data-edit-ex="' + escapeHtml(ex) + '"><span class="pg-opt-label">' + escapeHtml(ex) + '</span></button>').join('')
+      + '</div><div class="pg-custom"><input id="pgEdit" type="text" placeholder="Escribe el cambio…" autocomplete="off"></div>'
+      + '<div class="pg-actions"><button id="pgEditCancel" type="button" class="pg-ghost">Cancelar</button><button id="pgEditApply" type="button" class="pg-next" disabled>Aplicar cambio</button></div></div>';
+    const input = el.programBody.querySelector('#pgEdit');
+    const apply = el.programBody.querySelector('#pgEditApply');
+    const cancel = el.programBody.querySelector('#pgEditCancel');
+    const refresh = () => { if (apply) apply.disabled = !(input && input.value.trim()); };
+    el.programBody.querySelectorAll('[data-edit-ex]').forEach((b) => b.addEventListener('click', () => { if (input) { input.value = b.getAttribute('data-edit-ex') || ''; refresh(); input.focus(); } }));
+    if (input) {
+      input.addEventListener('input', refresh);
+      input.addEventListener('keydown', (e) => { if (e.key === 'Enter' && input.value.trim()) { e.preventDefault(); runProgramEdit(input.value.trim()); } });
+      input.focus();
+    }
+    if (apply) apply.addEventListener('click', () => { if (input && input.value.trim()) runProgramEdit(input.value.trim()); });
+    if (cancel) cancel.addEventListener('click', closeProgramModal);
+  }
+
+  async function runProgramEdit(change) {
+    const ed = state.programEdit;
+    if (!ed || !ed.doc || state.busy) return;
+    const convo = ed.convo || activeConvo() || ensureActiveConvo(change);
+    const parts = splitProgramDocParts(ed.doc);
+    closeProgramModal();
+    state.programEdit = null;
+    const built = bubbleEl('ai', '<span class="gen-img-loading">Analizando el cambio<span class="dots"><i>.</i><i>.</i><i>.</i></span></span>');
+    const bub = built.bub;
+    el.messages.appendChild(built.wrap); scrollDown();
+    setBusy(true); state.abort = new AbortController();
+    const signal = state.abort.signal;
+    try {
+      let route = {};
+      try {
+        const raw = await reasonChat({ model: 'google/gemini-2.5-flash-lite', system: EDIT_ROUTER_PROMPT, messages: [{ role: 'user', content: 'CAMBIO PEDIDO:\n' + change }], maxTokens: 400, temperature: 0, reasonStage: false }, signal);
+        route = parseReasonJson(raw);
+      } catch (_) { route = {}; }
+      const instruccion = String(route.instruccion || change).trim();
+      let touchHtml = route.html === true, touchCss = route.css === true, touchJs = route.js === true;
+      if (!touchHtml && !touchCss && !touchJs) { touchHtml = true; touchCss = true; }
+
+      const codeModel = reasonModel('spec_codigo', 'deepseek/deepseek-v4-pro');
+      let html = parts.html, css = parts.css, js = parts.js;
+
+      if (touchHtml) {
+        bub.innerHTML = reasonStageHtml('code_structure');
+        const r = await streamProgramAgent({ model: codeModel, system: 'Eres el editor de HTML. Recibes el HTML actual y un cambio. Devuelve el HTML COMPLETO actualizado en UN bloque ```html, aplicando el cambio y conservando intacto lo que no cambia. No incluyas CSS ni JS inline (van aparte).', messages: [{ role: 'user', content: 'CAMBIO:\n' + instruccion + '\n\nHTML ACTUAL:\n' + html }], maxTokens: 16000, temperature: 0.2, reasonStage: false, stageLabel: 'Editar · HTML' }, 'code_structure', bub, signal);
+        html = extractFencedCode(r, ['html', 'markup', 'xml']);
+      }
+      if (touchCss) {
+        bub.innerHTML = reasonStageHtml('code_css');
+        const r = await streamProgramAgent({ model: codeModel, system: 'Eres el editor de CSS. Recibes el HTML (contexto) y el CSS actual y un cambio. Devuelve el CSS COMPLETO actualizado en UN bloque ```css, aplicando el cambio y conservando lo que sirve. No reescribas el HTML.', messages: [{ role: 'user', content: 'CAMBIO:\n' + instruccion + '\n\nHTML (contexto):\n' + html + '\n\nCSS ACTUAL:\n' + css }], maxTokens: 16000, temperature: 0.2, reasonStage: false, stageLabel: 'Editar · CSS' }, 'code_css', bub, signal);
+        css = extractFencedCode(r, ['css']);
+      }
+      if (touchJs) {
+        bub.innerHTML = reasonStageHtml('code_js');
+        const r = await streamProgramAgent({ model: codeModel, system: 'Eres el editor de JavaScript. Recibes el HTML (contexto) y el JS actual y un cambio. Devuelve el JS COMPLETO actualizado en UN bloque ```js. No reescribas el HTML ni el CSS.', messages: [{ role: 'user', content: 'CAMBIO:\n' + instruccion + '\n\nHTML (contexto):\n' + html + '\n\nJS ACTUAL:\n' + (js || '// (sin JS aun)') }], maxTokens: 8000, temperature: 0.2, reasonStage: false, stageLabel: 'Editar · JS' }, 'code_js', bub, signal);
+        js = extractFencedCode(r, ['js', 'javascript']);
+      }
+
+      bub.innerHTML = reasonStageHtml('code_assemble');
+      const doc = assembleProgramDoc(html, css, js);
+      const finalCode = '```html\n' + doc + '\n```\n\nCambio aplicado: ' + instruccion + '. Ábrela con **Vista previa** o descárgala.';
+      bub.innerHTML = renderMarkdown(finalCode, { preview: true });
+      const m = { id: uid(), role: 'assistant', content: finalCode, ts: Date.now() };
+      markAssistantTurn(convo, finalCode, 'Edicion de pagina (Programar)');
+      convo.messages.push(m);
+      convo.updated = Date.now();
+      saveConvos(); renderMessages(); renderConvoList(); syncPushOne(convo); fetchStatus();
+      void saveProgramArtifact(convo, m.id, 'Edicion: ' + instruccion, finalCode);
+    } catch (e) {
+      bub.innerHTML = renderMarkdown('No se pudo editar: ' + ((e && e.message) || 'error') + '.');
+    } finally {
+      setBusy(false); state.abort = null;
+    }
+  }
+
   async function confirmProgramPlan() {
     const p = state.program;
     if (!p || !p.active || state.busy) return;
@@ -3914,6 +4012,13 @@
           const iframe = dlWrap && dlWrap.querySelector('.code-preview-iframe');
           const doc = iframe ? iframe.getAttribute('srcdoc') : '';
           downloadPreviewDoc(doc, dlBtn.getAttribute('data-preview-download'));
+          return;
+        }
+        const editBtn = e.target.closest && e.target.closest('[data-preview-edit]');
+        if (editBtn) {
+          const eWrap = editBtn.closest('.code-preview');
+          const eIframe = eWrap && eWrap.querySelector('.code-preview-iframe');
+          openProgramEdit(eIframe ? eIframe.getAttribute('srcdoc') : '');
           return;
         }
         const btn = e.target.closest && e.target.closest('[data-preview-toggle]');
