@@ -263,11 +263,19 @@
       + '<div class="code-preview-bar"><span class="code-preview-title">Vista de la página</span>'
       + '<button class="code-preview-fs" type="button" data-preview-download="single" title="Descargar como un solo archivo HTML">⬇ HTML</button>'
       + '<button class="code-preview-fs" type="button" data-preview-edit="1" title="Editar esta página">✎ Editar</button><button class="code-preview-fs code-preview-close" type="button" data-preview-close="1" title="Volver al chat">← Volver</button></div>'
-      + '<iframe class="code-preview-iframe" sandbox="allow-scripts allow-modals allow-popups" loading="lazy" srcdoc="' + previewAttr(withPreviewShim(doc)) + '"></iframe></div></div>';
+      + '<iframe class="code-preview-iframe" sandbox="allow-scripts allow-modals allow-popups" loading="lazy" data-doc="' + previewAttr(doc) + '" src="' + previewDataUrl(withPreviewShim(doc)) + '"></iframe></div></div>';
   }
 
   function previewAttr(s) {
     return String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/"/g, '&quot;');
+  }
+
+  // El visor carga la pagina como data: URL (no srcdoc). Asi el DOCUMENTO de la pagina
+  // generada es la propia data: URL: cualquier navegacion a una ruta absoluta de la app
+  // (href="/" o location.href="/login") resuelve contra la data: URL -> falla sin cargar
+  // nada (NUNCA el login de LTH IA). Los #hash siguen funcionando (misma data: URL).
+  function previewDataUrl(html) {
+    return 'data:text/html;charset=utf-8,' + encodeURIComponent(String(html == null ? '' : html));
   }
 
   // Markdown ligero y seguro (escapa primero, luego aplica formato).
@@ -4105,7 +4113,7 @@
         if (dlBtn) {
           const dlWrap = dlBtn.closest('.code-preview');
           const iframe = dlWrap && dlWrap.querySelector('.code-preview-iframe');
-          const doc = lastProgramDoc(activeConvo()) || (iframe ? iframe.getAttribute('srcdoc') : '');
+          const doc = lastProgramDoc(activeConvo()) || (iframe ? iframe.getAttribute('data-doc') : '');
           downloadPreviewDoc(doc, dlBtn.getAttribute('data-preview-download'));
           return;
         }
