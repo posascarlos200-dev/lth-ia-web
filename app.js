@@ -1,4 +1,4 @@
-﻿/* ════════════════════════════════════════════════════════════
+/* ════════════════════════════════════════════════════════════
    LTH IA Web · app.js
    Chat movil con Mady. Auth Supabase (email/password) + edge
    function lth-ia-cloud (stream SSE) + historial sincronizado
@@ -110,16 +110,37 @@
   // Asistente de la herramienta "Programar": guia al usuario UNA decision a la vez con
   // tarjetas presionables (max 3, la 1a recomendada) o texto propio, hasta tener un plan.
   const PROGRAM_WIZARD_PROMPT = [
-    'Eres el ASISTENTE DE PLANEACION de la herramienta "Programar" de Mady. Ayudas al usuario a definir EXACTAMENTE que pagina/proyecto web quiere, UNA decision a la vez.',
-    'Recibes un JSON con { request: pedido inicial, answers: [respuestas que el usuario ya eligio] }.',
+    'Eres la misma IA del modo Programar de Mady, en su fase breve de preparacion. Tu objetivo es convertir la idea del usuario en un PROMPT MAESTRO preciso para generar un unico HTML excelente.',
+    'Recibes un JSON con { request: pedido inicial, answers: respuestas confirmadas, max_questions: 3, remaining_questions }.',
     'Tu trabajo en cada paso:',
-    '- Si aun falta definir algo clave (tipo de pagina, secciones, estilo/paleta, contenido, interacciones, framework si aplica), devuelve UNA sola pregunta breve con 2-3 OPCIONES concretas; la PRIMERA es la mas recomendada. Permite siempre que el usuario escriba la suya.',
-    '- Pregunta lo MAS importante primero; no repitas lo ya respondido en answers. Pueden ser varias rondas hasta tener todo claro.',
-    '- Cuando ya tengas suficiente para construir, devuelve el PLAN final completo (no mas preguntas).',
+    '- Haz como maximo 3 preguntas en total y solo si cambian materialmente el resultado: 1) objetivo/contenido, 2) estilo visual, 3) interacciones. Omite lo que ya este claro.',
+    '- Devuelve UNA pregunta breve con 2-3 opciones concretas. La PRIMERA debe ser tu recomendacion profesional para este proyecto, no una opcion generica. Incluye description con una razon corta y util.',
+    '- No preguntes por framework: el resultado siempre sera un unico HTML autocontenido con CSS y JS internos.',
+    '- Cuando ya haya suficiente contexto o remaining_questions sea 0, devuelve el PROMPT MAESTRO final. Debe preservar literalmente las decisiones del usuario y completar solo detalles razonables.',
     'Devuelve SOLO JSON valido, sin texto fuera del JSON. Dos formatos:',
-    'Para preguntar: { "phase": "ask", "question": "texto breve", "options": [{"label":"Opcion (recomendada)","value":"valor corto","recommended":true},{"label":"...","value":"..."}], "allow_custom": true }',
-    'Para el plan: { "phase": "plan", "plan": "Markdown con: tipo de pagina, secciones concretas en orden, estilo/paleta, contenido de ejemplo, e interacciones. Claro y accionable para construir." }',
+    'Para preguntar: { "phase": "ask", "question": "texto breve", "options": [{"label":"Opcion concreta","value":"valor claro","description":"por que conviene","recommended":true},{"label":"...","value":"...","description":"..."}], "allow_custom": true }',
+    'Para finalizar: { "phase": "plan", "plan": "PROMPT MAESTRO con objetivo, publico, contenido y secciones en orden, direccion visual/paleta, responsive movil, interacciones exactas, accesibilidad y criterios de terminado. Indica que la salida sera un solo HTML autocontenido." }',
     'Maximo 3 opciones por pregunta. Las opciones deben ser distintas y concretas (no "si/no" vagos).'
+  ].join('\n');
+
+  const PROGRAM_CODER_PROMPT = [
+    'Eres la UNICA IA programadora del modo Programar de Mady. Construyes una pagina web completa en un solo archivo HTML autocontenido.',
+    'Cumple exactamente el pedido del usuario. Antes de escribir, organiza internamente la estructura, el diseno y las interacciones; no muestres ese razonamiento.',
+    'El documento debe empezar con <!DOCTYPE html>, incluir todo el CSS dentro de <style> y todo el JavaScript dentro de <script>. No crees archivos separados.',
+    'NAVEGACION DE UNA SOLA PAGINA: cada opcion del menu debe apuntar a una seccion real mediante hashes (#inicio, #servicios, #contacto). Nunca uses href="/", rutas como /inicio, index.html ni enlaces relativos para navegar dentro de la pagina.',
+    'Entrega contenido realista y completo, diseno responsive, accesibilidad basica y controles funcionales. No uses dependencias externas que requieran claves.',
+    'Devuelve SOLO un bloque ```html con el documento completo. No agregues explicaciones fuera del bloque.'
+  ].join('\n');
+
+  const PROGRAM_PATCH_PROMPT = [
+    'Eres la UNICA IA editora de una pagina guardada como un solo HTML.',
+    'Este chat representa UN SOLO PROYECTO persistente. Cada peticion modifica la version actual; nunca empieces otro proyecto ni reemplaces la pagina por una distinta. Si el usuario pide otro proyecto, devuelve operations vacio y explica en summary que debe abrir un chat nuevo.',
+    'Antes de responder, razona internamente sobre la intencion, localiza los elementos y estados relacionados y revisa sus dependencias en HTML, CSS y JS. Ejemplo: "mejora visualmente el logo de modo nocturno" exige encontrar el logo y las reglas [data-theme="dark"] o equivalentes, y modificar solo lo necesario para ese estado.',
+    'Aplica UNICAMENTE el cambio pedido. Conserva byte por byte todo lo que no necesita cambiar: no redisenes, no limpies, no reformatees y no reconstruyas el documento.',
+    'Responde SOLO JSON valido con esta forma: {"summary":"resumen breve","operations":[{"search":"texto exacto existente","replace":"texto nuevo"}]}.',
+    'Cada search debe ser una cadena exacta copiada del HTML actual y aparecer UNA sola vez. Incluye suficiente contexto para que sea unica.',
+    'Usa la menor cantidad de operaciones y el menor texto posible. Para insertar, reemplaza un cierre o fragmento cercano por ese mismo fragmento mas la insercion.',
+    'No uses markdown ni bloques de codigo. Nunca devuelvas el HTML completo. Si el pedido no requiere cambios, devuelve operations vacio.'
   ].join('\n');
 
   // Motor LTH OS (PC): se enruta por la cola remote_commands (accion ia-ask),
@@ -218,16 +239,31 @@
     return '<!DOCTYPE html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><style>' + css + '</style></head><body>' + htmlBlock + '<script>' + js + '</script></body></html>';
   }
 
+  // El iframe de la vista previa es sandbox SIN allow-same-origin: ahi localStorage/
+  // sessionStorage LANZAN error y rompen todo el script (ej. el toggle de modo oscuro que
+  // guarda el tema). Inyectamos un storage falso (en memoria) al inicio para que no truene.
+  function withPreviewShim(doc) {
+    const shim = '<script>(function(){function mk(){var s={};return{getItem:function(k){return Object.prototype.hasOwnProperty.call(s,k)?s[k]:null},setItem:function(k,v){s[k]=String(v)},removeItem:function(k){delete s[k]},clear:function(){s={}},key:function(i){return Object.keys(s)[i]||null},get length(){return Object.keys(s).length}}}var bad=false;try{window.localStorage.getItem("__t")}catch(e){bad=true}if(bad){try{Object.defineProperty(window,"localStorage",{value:mk(),configurable:true});Object.defineProperty(window,"sessionStorage",{value:mk(),configurable:true})}catch(_){try{window.localStorage=mk();window.sessionStorage=mk()}catch(__){}}}})();<\/script>';
+    // Un HTML autocontenido no debe escapar hacia las rutas de LTH IA. Por ejemplo,
+    // href="/" antes cargaba el login dentro del visor. Los hashes siguen funcionando;
+    // las rutas internas se convierten en scroll local y los enlaces externos abren aparte.
+    const navigationGuard = '<script>(function(){function localTarget(raw){var clean=String(raw||"").split("?")[0].split("#")[0].replace(/^\\.\\//,"").replace(/^\\/+|\\/+$/g,"");var name=clean.split("/").pop().replace(/\\.html?$/i,"");return name&&document.getElementById(name)}function internal(raw){if(!raw||raw==="#")return true;if(raw.charAt(0)==="#")return false;if(/^(mailto:|tel:|sms:|javascript:)/i.test(raw))return false;try{var base=new URL(document.baseURI);var url=new URL(raw,base);return url.origin===base.origin}catch(_){return !/^[a-z][a-z0-9+.-]*:/i.test(raw)}}document.addEventListener("click",function(e){var a=e.target&&e.target.closest?e.target.closest("a[href]"):null;if(!a)return;var raw=String(a.getAttribute("href")||"").trim();if(raw.charAt(0)==="#"){if(raw==="#"){e.preventDefault();window.scrollTo({top:0,behavior:"smooth"})}return}if(internal(raw)){e.preventDefault();var target=localTarget(raw);if(target)target.scrollIntoView({behavior:"smooth",block:"start"});else window.scrollTo({top:0,behavior:"smooth"});return}if(/^https?:/i.test(raw)){a.target="_blank";a.rel="noopener noreferrer"}},true);document.addEventListener("submit",function(e){var form=e.target;if(!form||form.tagName!=="FORM")return;var action=String(form.getAttribute("action")||"").trim();if(!action||internal(action))e.preventDefault()},true)})();<\/script>';
+    const injected = shim + navigationGuard;
+    const d = String(doc || '');
+    if (/<head[^>]*>/i.test(d)) return d.replace(/<head[^>]*>/i, (mm) => mm + injected);
+    if (/<html[^>]*>/i.test(d)) return d.replace(/<html[^>]*>/i, (mm) => mm + '<head>' + injected + '</head>');
+    return injected + d;
+  }
+
   // Bloque de Vista previa (iframe + barra de acciones) a partir de un documento HTML.
   function buildPreviewBlockHtml(doc) {
     if (!doc || !String(doc).trim()) return '';
-    return '<div class="code-preview"><button class="code-preview-btn" type="button" data-preview-toggle="1">▶ Vista previa</button>'
+    return '<div class="code-preview"><button class="code-preview-btn" type="button" data-preview-toggle="1">⛶ Abrir página</button>'
       + '<div class="code-preview-frame" hidden>'
-      + '<div class="code-preview-bar"><button class="code-preview-fs" type="button" data-preview-fullscreen="1" title="Pantalla completa">⛶ Pantalla completa</button>'
+      + '<div class="code-preview-bar"><span class="code-preview-title">Vista de la página</span>'
       + '<button class="code-preview-fs" type="button" data-preview-download="single" title="Descargar como un solo archivo HTML">⬇ HTML</button>'
-      + '<button class="code-preview-fs" type="button" data-preview-download="zip" title="Descargar HTML, CSS y JS separados (.zip)">⬇ .zip (3 archivos)</button>'
-      + '<button class="code-preview-fs" type="button" data-preview-edit="1" title="Editar esta página (cambia colores, agrega secciones, etc.)">✎ Editar</button></div>'
-      + '<iframe class="code-preview-iframe" sandbox="allow-scripts allow-modals allow-popups" loading="lazy" srcdoc="' + previewAttr(doc) + '"></iframe></div></div>';
+      + '<button class="code-preview-fs" type="button" data-preview-edit="1" title="Editar esta página">✎ Editar</button><button class="code-preview-fs code-preview-close" type="button" data-preview-close="1" title="Volver al chat">← Volver</button></div>'
+      + '<iframe class="code-preview-iframe" sandbox="allow-scripts allow-modals allow-popups" loading="lazy" srcdoc="' + previewAttr(withPreviewShim(doc)) + '"></iframe></div></div>';
   }
 
   function previewAttr(s) {
@@ -1603,7 +1639,7 @@
     ]).catch(() => {});
   }
 
-  window.LTH_IA_TEST_API = { normalizeBrain, extractBrainFromUserMessage, buildBrainContextBlock, detectCrisisIntent, detectFreeSkillIntent, buildFreeSkillSystem, buildFreeSkillClarification, normalizeResearchQuery, detectFreeResearchIntent, buildFreeResearchContextBlock, buildDeviceMemoryRecallBlock, mergeConvoCollections, serializeConvoForCache, extractEntities, detectBrainConflicts, mergeBrain, parseDuckDuckGoResults, detectLiveWebIntent, buildPreviewDoc, applyConversationState, buildCategoryGuidance, buildTemporalSystemBlock, composeSystemWithMemory, ensureConvoBrain, reasonStageHtml, CODE_STRUCTURE_PROMPT, CODE_CSS_PROMPT, CODE_POLISH_PROMPT, ORCHESTRATOR_PROMPT, PROGRAM_WIZARD_PROMPT, programStepSignature, formatProgramChoice, buildProgramFallbackPlan, looksTrivial, extractFencedCode, assembleProgramDoc, splitProgramDocParts };
+  window.LTH_IA_TEST_API = { normalizeBrain, extractBrainFromUserMessage, buildBrainContextBlock, detectCrisisIntent, detectFreeSkillIntent, buildFreeSkillSystem, buildFreeSkillClarification, normalizeResearchQuery, detectFreeResearchIntent, buildFreeResearchContextBlock, buildDeviceMemoryRecallBlock, mergeConvoCollections, serializeConvoForCache, extractEntities, detectBrainConflicts, mergeBrain, parseDuckDuckGoResults, detectLiveWebIntent, buildPreviewDoc, withPreviewShim, closePreviewFrame, applyConversationState, buildCategoryGuidance, buildTemporalSystemBlock, composeSystemWithMemory, ensureConvoBrain, reasonStageHtml, CODE_STRUCTURE_PROMPT, CODE_CSS_PROMPT, CODE_POLISH_PROMPT, ORCHESTRATOR_PROMPT, PROGRAM_WIZARD_PROMPT, PROGRAM_CODER_PROMPT, PROGRAM_PATCH_PROMPT, applyProgramPatch, programStepSignature, formatProgramChoice, buildProgramFallbackPlan, looksTrivial, looksLikeNewProgramProject, extractFencedCode, assembleProgramDoc, splitProgramDocParts };
 
   async function loadConvos() {
     state.convos = loadCachedConvos();
@@ -1923,7 +1959,7 @@
       return;
     }
 
-    // Herramienta "Programar": el envio abre el asistente interactivo (no chat normal).
+    // Programar prepara primero un prompt maestro breve y luego la misma IA crea el HTML.
     if (state.programMode) {
       setBusy(true); state.abort = new AbortController();
       try { await openProgramWizard(text, convo); }
@@ -2833,11 +2869,7 @@
     try { const m = String(raw || '').match(/\{[\s\S]*\}/); return m ? JSON.parse(m[0]) : {}; } catch (_) { return {}; }
   }
 
-  // Build de codigo en 3 agentes (estructura -> css -> pulido). Usado por la herramienta
-  // Programar con billed=true (cobro por token; NO reasonStage). Tokens altos para escritura
-  // extensa (x3); el tope real lo fija ai_plan_models (deepseek 30000).
-  // Extrae el codigo de un bloque ``` (por lenguaje preferido; si no, el primer bloque; si
-  // no hay fences, el texto crudo).
+  // Extrae el codigo de un bloque ``` (por lenguaje preferido; si no, el primer bloque).
   function extractFencedCode(text, langs) {
     const t = String(text || '');
     const rx = /```([\w+-]*)\n?([\s\S]*?)```/g;
@@ -2851,20 +2883,14 @@
     return firstAny != null ? firstAny : t.trim();
   }
 
-  // Ensambla el documento final EN CODIGO (estructura + CSS + JS). Determinista: nunca se
-  // trunca ni reconstruye con un modelo.
   function assembleProgramDoc(html, css, js) {
     let doc = String(html || '').trim();
     const cssBlock = String(css || '').trim() ? ('<style>\n' + String(css).trim() + '\n</style>') : '';
-    const jsBlock = String(js || '').trim() ? ('<script>\n' + String(js).trim() + '\n</script>') : '';
+    const jsBlock = String(js || '').trim() ? ('<script>\n' + String(js).trim() + '\n<\/script>') : '';
     const isFull = /<!doctype/i.test(doc) || /<html[\s>]/i.test(doc);
     if (isFull) {
-      if (cssBlock && !/<style/i.test(doc)) {
-        doc = /<\/head>/i.test(doc)
-          ? doc.replace(/<\/head>/i, cssBlock + '\n</head>')
-          : (/<body[^>]*>/i.test(doc) ? doc.replace(/<body[^>]*>/i, (mm) => '<head>' + cssBlock + '</head>\n' + mm) : (cssBlock + '\n' + doc));
-      }
-      if (jsBlock) doc = /<\/body>/i.test(doc) ? doc.replace(/<\/body>/i, jsBlock + '\n</body>') : (doc + '\n' + jsBlock);
+      if (cssBlock && !/<style/i.test(doc)) doc = /<\/head>/i.test(doc) ? doc.replace(/<\/head>/i, cssBlock + '\n</head>') : cssBlock + '\n' + doc;
+      if (jsBlock) doc = /<\/body>/i.test(doc) ? doc.replace(/<\/body>/i, jsBlock + '\n</body>') : doc + '\n' + jsBlock;
       return doc;
     }
     return '<!DOCTYPE html>\n<html lang="es">\n<head>\n<meta charset="utf-8">\n<meta name="viewport" content="width=device-width, initial-scale=1">\n' + cssBlock + '\n</head>\n<body>\n' + doc + '\n' + jsBlock + '\n</body>\n</html>';
@@ -2875,14 +2901,10 @@
     return reasonStageHtml(stageKey) + '<div style="margin-top:8px;font-size:12px;color:rgba(212,255,246,.6)">Escribiendo… ' + Number(p.events || 0) + ' eventos</div>';
   }
 
-  // Corre una etapa por STREAMING (evita el timeout duro del edge) con 1 continuacion si se
-  // trunca por longitud. Devuelve el texto crudo combinado.
   async function streamProgramAgent(baseOpts, stageKey, bub, signal) {
     let combined = '';
     for (let pass = 0; pass < 2; pass += 1) {
-      const messages = pass === 0
-        ? baseOpts.messages
-        : [{ role: 'user', content: 'CONTINUA EXACTAMENTE desde donde te quedaste, sin repetir lo ya escrito ni reiniciar, y cierra el bloque de codigo.\n\nULTIMO:\n' + combined.slice(-8000) }];
+      const messages = pass === 0 ? baseOpts.messages : [{ role: 'user', content: 'CONTINUA EXACTAMENTE desde donde te quedaste, sin repetir lo ya escrito ni reiniciar, y cierra el bloque de codigo.\n\nULTIMO:\n' + combined.slice(-8000) }];
       const r = await streamReasonChat({
         model: baseOpts.model, system: baseOpts.system, messages: messages,
         maxTokens: pass === 0 ? baseOpts.maxTokens : Math.min(baseOpts.maxTokens, 10000),
@@ -2894,37 +2916,25 @@
     return combined;
   }
 
-  // Build de codigo en 3 agentes que NO se pisan: estructura (HTML) -> css (CSS) -> js (JS).
-  // El documento final se ENSAMBLA en codigo, no lo reconstruye un modelo (antes el "pulido"
-  // rehacia todo el doc -> salida enorme que se truncaba y desperdiciaba tokens).
+  // Una sola IA produce el unico HTML. Una peticion = una llamada facturable.
   async function buildCodePipeline(text, improved, convo, history, bub, signal, billed) {
     const codeModel = reasonModel('spec_codigo', 'deepseek/deepseek-v4-pro');
-    const structureModel = reasonModel('program_structure', codeModel);
-    const cssModel = reasonModel('program_css', codeModel);
-    const jsModel = reasonModel('program_js', codeModel);
-    const brief = '\n\nBRIEF DEL PROYECTO (siguelo al pie de la letra):\n' + improved;
-    const stage = billed ? false : undefined; // billed => reasonStage:false (cobro por token)
-
-    // 1) Estructura (solo HTML).
-    bub.innerHTML = reasonStageHtml('code_structure');
-    const htmlRaw = await streamProgramAgent({ model: structureModel, system: composeSystemWithMemory(CODE_STRUCTURE_PROMPT + brief, convo, improved), messages: history, maxTokens: 18000, temperature: 0.2, reasonStage: stage, stageLabel: 'Programar · estructura' }, 'code_structure', bub, signal);
-    const html = extractFencedCode(htmlRaw, ['html', 'markup', 'xml']);
-
-    // 2) CSS (solo CSS; no reescribe el HTML).
-    bub.innerHTML = reasonStageHtml('code_css');
-    const cssRaw = await streamProgramAgent({ model: cssModel, system: composeSystemWithMemory(CODE_CSS_PROMPT, convo, improved), messages: [{ role: 'user', content: 'HTML DE ESTRUCTURA:\n' + html + brief }], maxTokens: 18000, temperature: 0.2, reasonStage: stage, stageLabel: 'Programar · CSS' }, 'code_css', bub, signal);
-    const css = extractFencedCode(cssRaw, ['css']);
-
-    // 3) JS (solo interacciones).
-    bub.innerHTML = reasonStageHtml('code_js');
-    const jsRaw = await streamProgramAgent({ model: jsModel, system: composeSystemWithMemory(CODE_JS_PROMPT, convo, improved), messages: [{ role: 'user', content: 'HTML:\n' + html + brief }], maxTokens: 14000, temperature: 0.2, reasonStage: stage, stageLabel: 'Programar · interacciones' }, 'code_js', bub, signal);
-    const js = extractFencedCode(jsRaw, ['js', 'javascript']);
-
-    // 4) Ensamblado en CODIGO: un solo documento completo (nunca se corta).
-    bub.innerHTML = reasonStageHtml('code_assemble');
-    return assembleProgramDoc(html, css, js);
+    const programModel = reasonModel('program_coder', codeModel);
+    const brief = 'PEDIDO DEL USUARIO:\n' + text + (improved && improved !== text ? ('\n\nCONTEXTO ADICIONAL:\n' + improved) : '');
+    const stage = billed ? false : undefined;
+    bub.innerHTML = reasonStageHtml('codigo');
+    const raw = await streamProgramAgent({
+      model: programModel,
+      system: composeSystemWithMemory(PROGRAM_CODER_PROMPT, convo, text),
+      messages: [{ role: 'user', content: brief }],
+      maxTokens: 30000,
+      temperature: 0.2,
+      reasonStage: stage,
+      stageLabel: 'Programar · pagina completa'
+    }, 'codigo', bub, signal);
+    const doc = extractFencedCode(raw, ['html', 'markup', 'xml']);
+    return assembleProgramDoc(doc, '', '');
   }
-
   /* ─────────── Herramienta "Programar": asistente interactivo + build ─────────── */
   function openProgramModal() { if (el.programModal) el.programModal.hidden = false; }
   function closeProgramModal() { if (el.programModal) el.programModal.hidden = true; }
@@ -2951,11 +2961,12 @@
 
   async function programOrchestrate() {
     const p = state.program;
+    const codeModel = reasonModel('spec_codigo', 'deepseek/deepseek-v4-pro');
     const raw = await reasonChat({
-      model: reasonModel('program_planner', 'google/gemini-2.5-flash'),
+      model: reasonModel('program_coder', codeModel),
       system: composeSystemWithMemory(PROGRAM_WIZARD_PROMPT, p.convo, p.request),
-      messages: [{ role: 'user', content: JSON.stringify({ request: p.request, answers: p.answers }, null, 2) }],
-      maxTokens: 1200, temperature: 0.3, reasonStage: false
+      messages: [{ role: 'user', content: JSON.stringify({ request: p.request, answers: p.answers, max_questions: 3, remaining_questions: Math.max(0, 3 - p.answers.length) }, null, 2) }],
+      maxTokens: 1800, temperature: 0.25, reasonStage: false
     }, null);
     return parseReasonJson(raw);
   }
@@ -2974,6 +2985,13 @@
       p.lastAskSig = '';
       renderProgramPlan(p.plan);
     } else {
+      if (p.answers.length >= 3) {
+        p.plan = buildProgramFallbackPlan(p, step);
+        p.lastStep = null;
+        p.lastAskSig = '';
+        renderProgramPlan(p.plan);
+        return;
+      }
       const sig = programStepSignature(step);
       if (sig && sig === p.lastAskSig && p.answers.length) {
         p.plan = buildProgramFallbackPlan(p, step);
@@ -3018,16 +3036,37 @@
       : [];
     const pending = normalizeProgramText(repeatedStep && repeatedStep.question, 180);
     const lines = [
-      '## Objetivo base',
+      '# PROMPT MAESTRO PARA GENERAR EL HTML',
+      '',
+      '## Objetivo y alcance',
       '- ' + request,
       '',
-      '## Decisiones ya confirmadas'
+      '## Decisiones confirmadas por el usuario'
     ];
     if (answers.length) answers.forEach((item) => lines.push('- ' + item));
     else lines.push('- Tomar la solicitud inicial como referencia principal.');
-    lines.push('', '## Siguiente paso', '- Ya hay suficiente contexto para construir la primera version.');
-    if (pending) lines.push('- Si quieres afinar algo antes de construir, usa "Ajustar" y responde: ' + pending);
+    lines.push(
+      '',
+      '## Requisitos de construccion',
+      '- Entregar un unico documento HTML autocontenido con CSS dentro de <style> y JavaScript dentro de <script>.',
+      '- Crear todas las secciones y contenido necesarios para cumplir el objetivo; no usar lorem ipsum ni controles decorativos sin funcion.',
+      '- Priorizar una experiencia movil excelente, luego adaptar de forma responsive a tablet y escritorio.',
+      '- Mantener jerarquia visual clara, contraste legible, navegacion accesible y estados focus/hover.',
+      '- Implementar y comprobar cada interaccion solicitada sin dependencias que requieran claves.',
+      '- Hacer que el menu navegue solo con hashes a secciones del mismo documento; nunca usar href="/", rutas internas ni index.html.',
+      '- Considerar terminado solo cuando la pagina se vea completa y sus controles funcionen.'
+    );
+    if (pending) lines.push('', '## Criterio profesional', '- Resolver profesionalmente este detalle aun abierto sin contradecir las decisiones confirmadas: ' + pending);
     return lines.join('\n');
+  }
+
+  function closePreviewFrame(frame) {
+    if (!frame) return;
+    const wrap = frame.closest('.code-preview');
+    const trigger = wrap && wrap.querySelector('[data-preview-toggle]');
+    frame.classList.remove('is-fullscreen-preview');
+    frame.hidden = true;
+    if (trigger) trigger.textContent = '⛶ Abrir página';
   }
 
   function submitProgramChoice(value) {
@@ -3046,7 +3085,8 @@
       const val = escapeHtml(String(o.value || o.label || ''));
       const answer = escapeHtml(normalizeProgramText(String(o.label || o.value || ''), 180) || String(o.value || ''));
       const rec = (i === 0) || o.recommended === true;
-      html += '<button type="button" class="pg-opt" data-val="' + val + '" data-answer="' + answer + '"><span class="pg-opt-label">' + escapeHtml(String(o.label || o.value || '')) + '</span>' + (rec ? '<span class="pg-rec">Recomendada</span>' : '') + '</button>';
+      const desc = String(o.description || '').trim();
+      html += '<button type="button" class="pg-opt" data-val="' + val + '" data-answer="' + answer + '"><span class="pg-opt-copy"><span class="pg-opt-label">' + escapeHtml(String(o.label || o.value || '')) + '</span>' + (desc ? '<span class="pg-opt-desc">' + escapeHtml(desc) + '</span>' : '') + '</span>' + (rec ? '<span class="pg-rec">Recomendada</span>' : '') + '</button>';
     });
     html += '</div><div class="pg-custom"><input id="pgCustom" type="text" placeholder="o escribe lo tuyo…" autocomplete="off"></div><div class="pg-actions"><button id="pgNext" type="button" class="pg-next" disabled>Siguiente</button></div></div>';
     el.programBody.innerHTML = html;
@@ -3079,7 +3119,7 @@
 
   function renderProgramPlan(planMd) {
     if (!el.programBody) return;
-    el.programBody.innerHTML = '<div class="pg-plan"><div class="pg-plan-title">📋 Tu plan está listo</div><div class="pg-plan-body">' + renderMarkdown(planMd) + '</div><div class="pg-actions"><button id="pgAdjust" type="button" class="pg-ghost">Ajustar</button><button id="pgStart" type="button" class="pg-next">Comenzar ⏎</button></div></div>';
+    el.programBody.innerHTML = '<div class="pg-plan"><div class="pg-plan-title">✨ Prompt maestro listo</div><div class="pg-plan-body">' + renderMarkdown(planMd) + '</div><div class="pg-actions"><button id="pgAdjust" type="button" class="pg-ghost">Ajustar</button><button id="pgStart" type="button" class="pg-next">Crear página ⏎</button></div></div>';
     const start = el.programBody.querySelector('#pgStart');
     const adjust = el.programBody.querySelector('#pgAdjust');
     if (start) { start.addEventListener('click', confirmProgramPlan); start.focus(); }
@@ -3134,17 +3174,22 @@
     return '';
   }
 
-  // En un chat dedicado a Programar, cada mensaje del usuario es una edicion (o charla) sobre
-  // la pagina; NO se manda al chat normal (evita arrastrar el HTML gigante a un modelo barato).
+  function looksLikeNewProgramProject(text) {
+    const value = normalizeForSearch(text);
+    return /\b(nuevo|nueva|otro|otra|segundo|segunda)\s+(proyecto|sitio|pagina|web|aplicacion|app)\b/.test(value)
+      || /\b(empezar|comenzar|crear)\s+(otro|otra|de cero|desde cero)\b/.test(value);
+  }
+
+  // Un chat de Programar equivale a un unico proyecto. Todo mensaje posterior se procesa
+  // obligatoriamente como edicion de la revision mas reciente.
   async function programFollowup(convo, text) {
     const doc = lastProgramDoc(convo);
     if (!doc) {
-      setBusy(true); state.abort = new AbortController();
-      try { await openProgramWizard(text, convo); } catch (_) {} finally { setBusy(false); state.abort = null; }
+      await openProgramWizard(text, convo);
       return;
     }
-    if (looksTrivial(text)) {
-      const msg = 'Este chat es de **Programar** 🧩. Tu página ya está hecha — dime qué quieres **cambiar o agregar** (ej. "cambia los colores a oscuro", "agrega una sección de contacto") y lo aplico. También tienes **Vista previa**, **Editar** y **Descargar** en el mensaje de la página.';
+    if (looksLikeNewProgramProject(text)) {
+      const msg = 'Este chat ya contiene un proyecto de **Programar**. Para evitar mezclar o sobrescribir páginas, abre **Nuevo chat** para crear otro proyecto. Aquí solo puedo continuar editando la página actual.';
       convo.messages.push({ id: uid(), role: 'assistant', content: msg, ts: Date.now() });
       convo.updated = Date.now();
       saveConvos(); renderMessages(); renderConvoList(); syncPushOne(convo);
@@ -3155,15 +3200,23 @@
   }
 
   /* ─────────── Editar una pagina ya hecha (re-corre solo la parte que cambia) ─────────── */
-  const EDIT_ROUTER_PROMPT = [
-    'Eres el router de EDICIONES de paginas web. Recibes el cambio que pide el usuario sobre una pagina ya hecha (HTML+CSS+JS).',
-    'Decide que partes hay que regenerar. Devuelve SOLO JSON valido: { "html": false, "css": false, "js": false, "instruccion": "" }',
-    'html=true si cambia contenido, textos, secciones o estructura. css=true si cambia colores, estilos, tamaños, espaciados o layout visual. js=true si cambia comportamiento, interacciones, menus o animaciones por codigo.',
-    'Para AGREGAR una funcionalidad interactiva (modo oscuro/tema, menu, tabs, slider, modal, filtros, etc.): marca css=true (estilos) y js=true (el JS crea el control con document.createElement y lo conecta). NO marques html para eso — asi la edicion es rapida y no se reescribe toda la pagina.',
-    'Marca html=true SOLO si el cambio agrega o edita CONTENIDO estructural real (nuevas secciones con texto, nuevos campos, cambiar textos/titulos existentes).',
-    'Marca lo MINIMO necesario. "instruccion" = el cambio reformulado claro y conciso.'
-  ].join('\n');
-
+  function applyProgramPatch(doc, response) {
+    const current = String(doc || '');
+    const patch = typeof response === 'string' ? parseReasonJson(response) : (response || {});
+    const operations = Array.isArray(patch.operations) ? patch.operations : [];
+    if (operations.length > 24) throw new Error('La IA intento hacer demasiados cambios a la vez.');
+    let next = current;
+    operations.forEach((operation, index) => {
+      const search = String(operation && operation.search || '');
+      const replace = String(operation && operation.replace || '');
+      if (!search) throw new Error('El parche ' + (index + 1) + ' no tiene texto de referencia.');
+      const first = next.indexOf(search);
+      if (first < 0) throw new Error('El parche ' + (index + 1) + ' no coincide con la pagina actual.');
+      if (first !== next.lastIndexOf(search)) throw new Error('El parche ' + (index + 1) + ' es ambiguo y no se aplico.');
+      next = next.slice(0, first) + replace + next.slice(first + search.length);
+    });
+    return { doc: next, changed: next !== current, summary: String(patch.summary || '').trim(), operationCount: operations.length };
+  }
   function openProgramEdit(doc) {
     if (!canUsePremium()) { showProModal('reasoning'); return; }
     const d = String(doc || '').trim();
@@ -3198,60 +3251,50 @@
     const ed = state.programEdit;
     if (!ed || !ed.doc || state.busy) return;
     const convo = ed.convo || activeConvo() || ensureActiveConvo(change);
-    const parts = splitProgramDocParts(ed.doc);
+    const currentDoc = String(ed.doc);
     closeProgramModal();
     state.programEdit = null;
-    const built = bubbleEl('ai', '<span class="gen-img-loading">Analizando el cambio<span class="dots"><i>.</i><i>.</i><i>.</i></span></span>');
+    const built = bubbleEl('ai', '<span class="gen-img-loading">Aplicando solo tu cambio<span class="dots"><i>.</i><i>.</i><i>.</i></span></span>');
     const bub = built.bub;
     el.messages.appendChild(built.wrap); scrollDown();
     setBusy(true); state.abort = new AbortController();
     const signal = state.abort.signal;
     try {
-      let route = {};
-      try {
-        const raw = await reasonChat({ model: 'google/gemini-2.5-flash-lite', system: EDIT_ROUTER_PROMPT, messages: [{ role: 'user', content: 'CAMBIO PEDIDO:\n' + change }], maxTokens: 400, temperature: 0, reasonStage: false }, signal);
-        route = parseReasonJson(raw);
-      } catch (_) { route = {}; }
-      const instruccion = String(route.instruccion || change).trim();
-      let touchHtml = route.html === true, touchCss = route.css === true, touchJs = route.js === true;
-      if (!touchHtml && !touchCss && !touchJs) { touchHtml = true; touchCss = true; }
-
+      bub.innerHTML = reasonStageHtml('codigo');
       const codeModel = reasonModel('spec_codigo', 'deepseek/deepseek-v4-pro');
-      let html = parts.html, css = parts.css, js = parts.js;
-
-      if (touchHtml) {
-        bub.innerHTML = reasonStageHtml('code_structure');
-        const r = await streamProgramAgent({ model: codeModel, system: 'Eres el editor de HTML. Recibes el HTML actual y un cambio. Devuelve el HTML COMPLETO actualizado en UN bloque ```html, aplicando el cambio y conservando intacto lo que no cambia. No incluyas CSS ni JS inline (van aparte). Si agregas un control de tema/modo oscuro, el boton debe tener id="theme-toggle".', messages: [{ role: 'user', content: 'CAMBIO:\n' + instruccion + '\n\nHTML ACTUAL:\n' + html }], maxTokens: 16000, temperature: 0.2, reasonStage: false, stageLabel: 'Editar · HTML' }, 'code_structure', bub, signal);
-        html = extractFencedCode(r, ['html', 'markup', 'xml']);
+      const programModel = reasonModel('program_coder', codeModel);
+      const raw = await reasonChat({
+        model: programModel,
+        system: composeSystemWithMemory(PROGRAM_PATCH_PROMPT, convo, change),
+        messages: [{ role: 'user', content: 'CAMBIO PEDIDO:\n' + change + '\n\nHTML ACTUAL (no lo reescribas; devuelve operaciones exactas):\n' + currentDoc }],
+        maxTokens: 8000,
+        temperature: 0.1,
+        reasoning: { enabled: true, effort: 'medium', exclude: true },
+        reasonStage: false
+      }, signal);
+      const result = applyProgramPatch(currentDoc, raw);
+      if (!result.changed) {
+        bub.innerHTML = renderMarkdown(result.summary || 'No fue necesario cambiar el HTML. Dime con mas detalle que elemento quieres modificar.');
+        return;
       }
-      if (touchCss) {
-        bub.innerHTML = reasonStageHtml('code_css');
-        const r = await streamProgramAgent({ model: codeModel, system: 'Eres el editor de CSS en modo PARCHE. Recibes el HTML y el CSS actual y un cambio. Devuelve SOLO las reglas CSS NUEVAS o de override necesarias para el cambio; se AGREGAN al final del CSS existente (asi que sobreescriben por cascada). NO repitas el CSS que no cambia ni devuelvas el archivo completo. Usa la misma o mayor especificidad para que el override gane. Tema oscuro: usa selectores [data-theme="dark"]. Devuelve SOLO ese CSS en UN bloque ```css.', messages: [{ role: 'user', content: 'CAMBIO:\n' + instruccion + '\n\nHTML (contexto):\n' + html + '\n\nCSS ACTUAL:\n' + css }], maxTokens: 6000, temperature: 0.2, reasonStage: false, stageLabel: 'Editar · CSS' }, 'code_css', bub, signal);
-        const add = extractFencedCode(r, ['css']);
-        if (add && add.trim()) css = (css.trim() + '\n\n/* — ' + instruccion.slice(0, 80) + ' — */\n' + add.trim());
-      }
-      if (touchJs) {
-        bub.innerHTML = reasonStageHtml('code_js');
-        const r = await streamProgramAgent({ model: codeModel, system: 'Eres el editor de JavaScript en modo PARCHE. Recibes el HTML, el CSS y el JS actual y un cambio. Devuelve SOLO el JavaScript NUEVO necesario para el cambio; se AGREGA al final del JS existente. NO repitas el JS que no cambia ni devuelvas todo. Si el cambio agrega un control (ej. boton de modo oscuro), CREALO con document.createElement y agregalo al DOM (asi no hace falta tocar el HTML). Usa ids/clases reales del HTML. Tema: alterna document.documentElement.dataset.theme entre "dark" y "" (coincide con [data-theme="dark"]). Engancha en DOMContentLoaded. Devuelve SOLO ese JS en UN bloque ```js.', messages: [{ role: 'user', content: 'CAMBIO:\n' + instruccion + '\n\nHTML (contexto):\n' + html + '\n\nCSS (contexto):\n' + css + '\n\nJS ACTUAL:\n' + (js || '// (sin JS aun)') }], maxTokens: 6000, temperature: 0.2, reasonStage: false, stageLabel: 'Editar · JS' }, 'code_js', bub, signal);
-        const add = extractFencedCode(r, ['js', 'javascript']);
-        if (add && add.trim()) js = (js.trim() + '\n\n// — ' + instruccion.slice(0, 80) + ' —\n' + add.trim());
-      }
-
-      bub.innerHTML = reasonStageHtml('code_assemble');
-      const doc = assembleProgramDoc(html, css, js);
-      pushProgramResult(convo, bub, doc, 'Cambio aplicado ✅: ' + instruccion + '. Usa **Vista previa**, **Editar** o **Descargar** abajo.', 'Edicion: ' + instruccion, 'Edicion de pagina (Programar)');
+      const summary = result.summary || String(change).trim();
+      pushProgramResult(convo, bub, result.doc, 'Cambio aplicado ✅: ' + summary + '. Se modificaron ' + result.operationCount + ' fragmento(s); el resto quedo intacto. Abre la pagina para revisarla.', 'Edicion: ' + change, 'Edicion incremental (Programar)');
     } catch (e) {
-      bub.innerHTML = renderMarkdown('No se pudo editar: ' + ((e && e.message) || 'error') + '.');
+      bub.innerHTML = renderMarkdown('No aplique ningun cambio porque el parche no era seguro: ' + ((e && e.message) || 'error') + '. Intenta describir el elemento con mas precision.');
     } finally {
       setBusy(false); state.abort = null;
     }
   }
-
   // El documento va ADJUNTO al mensaje (m.programDoc), no dentro del markdown: asi la Vista
   // previa siempre sale (sin parsear fences) y el doc grande no se trunca.
   function pushProgramResult(convo, bub, doc, note, request, label) {
     const safeDoc = String(doc || '').trim();
     bub.innerHTML = renderMarkdown(note) + buildPreviewBlockHtml(safeDoc);
+    // Solo la revision mas reciente conserva el HTML pesado y la vista previa. Los mensajes
+    // anteriores quedan como bitacora textual, evitando duplicar el proyecto en cada cambio.
+    (convo.messages || []).forEach((entry) => {
+      if (entry && entry.programDoc) delete entry.programDoc;
+    });
     const m = { id: uid(), role: 'assistant', content: note, programDoc: safeDoc, ts: Date.now() };
     markAssistantTurn(convo, note, label);
     convo.messages.push(m);
@@ -3261,6 +3304,24 @@
     return m;
   }
 
+  async function buildProgramPage(convo, request) {
+    if (!convo || !String(request || '').trim() || state.busy) return;
+    if (!canUsePremium()) { showProModal('reasoning'); return; }
+    convo.mode = 'program';
+    const { wrap, bub } = bubbleEl('ai', reasonStageHtml('codigo'));
+    el.messages.appendChild(wrap); scrollDown();
+    setBusy(true); state.abort = new AbortController();
+    try {
+      const doc = String(await buildCodePipeline(request, request, convo, [], bub, state.abort.signal, true) || '').trim();
+      if (!doc || !/<html[\s>]/i.test(doc)) throw new Error('La IA no devolvio un HTML completo.');
+      pushProgramResult(convo, bub, doc, 'Pagina lista ✅ — creada por una sola IA y guardada como un unico HTML. Abrela para verla a pantalla completa o pide un cambio puntual.', request, 'Pagina construida (Programar)');
+      void maybeUpdateConvoBrain(convo);
+    } catch (e) {
+      bub.innerHTML = renderMarkdown('No se pudo construir: ' + ((e && e.message) || 'error') + '.');
+    } finally {
+      setBusy(false); state.abort = null;
+    }
+  }
   async function confirmProgramPlan() {
     const p = state.program;
     if (!p || !p.active || state.busy) return;
@@ -3381,15 +3442,13 @@
     const category = String(orch.category || 'chat_simple').toLowerCase();
     const improved = String(orch.improved_prompt || text).trim();
 
-    // 2) Codigo NO se construye en razonamiento: se desvia a la herramienta Programar
-    //    (cobro por token) SIN consumir un uso de razonamiento.
+    // 2) Codigo se entrega a la unica IA de Programar, sin planificador ni etapas.
     if (category === 'codigo') {
-      const note = 'Esto es de **programacion**: te abro la herramienta **Programar** para armarlo paso a paso (no gasta usos de razonamiento).';
-      bub.innerHTML = renderMarkdown(note);
-      markAssistantTurn(convo, note, 'Desvio a Programar');
-      convo.messages.push({ id: uid(), role: 'assistant', content: note, ts: Date.now() });
-      convo.updated = Date.now(); saveConvos(); renderMessages(); renderConvoList();
-      await openProgramWizard(text, convo, improved);
+      convo.mode = 'program';
+      saveConvos(); syncComposerMode();
+      const doc = String(await buildCodePipeline(text, improved, convo, [], bub, signal, true) || '').trim();
+      if (!doc || !/<html[\s>]/i.test(doc)) throw new Error('La IA no devolvio un HTML completo.');
+      pushProgramResult(convo, bub, doc, 'Pagina lista ✅ — creada por una sola IA y guardada como un unico HTML. Abrela para verla a pantalla completa o pide un cambio puntual.', text, 'Pagina construida (Programar)');
       return;
     }
 
@@ -3467,6 +3526,7 @@
       reasonStage: opts.reasonStage !== false
     };
     if (opts.plugins && opts.plugins.length) payload.plugins = opts.plugins;
+    if (opts.reasoning) payload.reasoning = opts.reasoning;
     const res = await callEdge(payload, signal);
     const data = await res.json().catch(() => ({}));
     if (!res.ok || data.success === false) {
@@ -3675,7 +3735,7 @@
       if (state.programMode) {
         if (state.reasoning) { state.reasoning = false; persistReason(); renderReasonBtn(); }
         if (state.createMode) { state.createMode = false; renderCreateBtn(); }
-        setComposerHint('Modo Programar: escribe que pagina o app quieres y te guio paso a paso.');
+        setComposerHint('Modo Programar: describe tu idea; te hare hasta 3 preguntas utiles antes de crear el HTML.');
       }
     });
     if (el.programClose) el.programClose.addEventListener('click', closeProgramModal);
@@ -4090,32 +4150,24 @@
     if (el.messages && !el.messages._previewBound) {
       el.messages._previewBound = true;
       el.messages.addEventListener('click', (e) => {
-        const fsBtn = e.target.closest && e.target.closest('[data-preview-fullscreen]');
-        if (fsBtn) {
-          const frame = fsBtn.closest('.code-preview-frame');
-          if (!frame) return;
-          if (document.fullscreenElement) {
-            if (document.exitFullscreen) document.exitFullscreen();
-          } else if (frame.requestFullscreen) {
-            frame.requestFullscreen().catch(() => {});
-          } else if (frame.webkitRequestFullscreen) {
-            frame.webkitRequestFullscreen();
-          }
+        const closeBtn = e.target.closest && e.target.closest('[data-preview-close]');
+        if (closeBtn) {
+          const frame = closeBtn.closest('.code-preview-frame');
+          closePreviewFrame(frame);
           return;
         }
         const dlBtn = e.target.closest && e.target.closest('[data-preview-download]');
         if (dlBtn) {
           const dlWrap = dlBtn.closest('.code-preview');
           const iframe = dlWrap && dlWrap.querySelector('.code-preview-iframe');
-          const doc = iframe ? iframe.getAttribute('srcdoc') : '';
+          const doc = lastProgramDoc(activeConvo()) || (iframe ? iframe.getAttribute('srcdoc') : '');
           downloadPreviewDoc(doc, dlBtn.getAttribute('data-preview-download'));
           return;
         }
         const editBtn = e.target.closest && e.target.closest('[data-preview-edit]');
         if (editBtn) {
-          const eWrap = editBtn.closest('.code-preview');
-          const eIframe = eWrap && eWrap.querySelector('.code-preview-iframe');
-          openProgramEdit(eIframe ? eIframe.getAttribute('srcdoc') : '');
+          closePreviewFrame(editBtn.closest('.code-preview-frame'));
+          openProgramEdit(lastProgramDoc(activeConvo()));
           return;
         }
         const btn = e.target.closest && e.target.closest('[data-preview-toggle]');
@@ -4125,8 +4177,8 @@
         if (!frame) return;
         const show = frame.hidden;
         frame.hidden = !show;
-        btn.textContent = show ? '▾ Ocultar vista previa' : '▶ Vista previa';
-        if (show) scrollDown();
+        frame.classList.toggle('is-fullscreen-preview', show);
+        btn.textContent = show ? 'Página abierta' : '⛶ Abrir página';
       });
     }
     el.composer = $('#composer'); el.input = $('#input'); el.sendBtn = $('#sendBtn'); el.reasonBtn = $('#reasonBtn'); el.createBtn = $('#createBtn');

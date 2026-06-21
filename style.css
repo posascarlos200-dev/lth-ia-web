@@ -555,13 +555,15 @@ body.light .bg-scan { display: none; }
 .code-preview-btn:hover{background:rgba(77,163,255,.22);border-color:rgba(77,163,255,.6)}
 .code-preview-frame{margin-top:8px;border:1px solid rgba(120,180,255,.28);border-radius:12px;overflow:hidden;background:#fff}
 .code-preview-frame[hidden]{display:none}
+.code-preview-frame.is-fullscreen-preview{position:fixed;inset:0;z-index:10000;margin:0;border:0;border-radius:0;display:grid;grid-template-rows:auto minmax(0,1fr);width:100vw;height:100dvh;max-width:none;background:#fff;overscroll-behavior:none}
 .code-preview-iframe{width:100%;height:380px;border:0;display:block;background:#fff}
-.code-preview-bar{display:flex;justify-content:flex-end;padding:5px 6px;background:rgba(10,20,35,.9);border-bottom:1px solid rgba(120,180,255,.18)}
-.code-preview-fs{font-size:11px;font-weight:600;color:#cfe6ff;background:rgba(77,163,255,.14);border:1px solid rgba(77,163,255,.4);border-radius:8px;padding:4px 10px;cursor:pointer;transition:.15s}
+.code-preview-frame.is-fullscreen-preview .code-preview-iframe{height:100%;min-height:0}
+.code-preview-bar{position:relative;z-index:2;display:flex;align-items:center;justify-content:flex-end;gap:6px;flex-wrap:nowrap;padding:max(8px,env(safe-area-inset-top)) max(8px,env(safe-area-inset-right)) 8px max(8px,env(safe-area-inset-left));background:rgba(10,20,35,.98);border-bottom:1px solid rgba(120,180,255,.18)}
+.code-preview-title{margin-right:auto;padding-left:4px;font-size:12px;font-weight:700;color:#eaf4ff}
+.code-preview-fs{font-size:11px;font-weight:600;color:#cfe6ff;background:rgba(77,163,255,.14);border:1px solid rgba(77,163,255,.4);border-radius:8px;padding:7px 10px;cursor:pointer;transition:.15s}
 .code-preview-fs:hover{background:rgba(77,163,255,.26);border-color:rgba(77,163,255,.6)}
-.code-preview-frame:fullscreen{background:#fff;border:0;border-radius:0}
-.code-preview-frame:fullscreen .code-preview-iframe{height:100vh}
-.code-preview-frame:fullscreen .code-preview-bar{position:fixed;top:8px;right:8px;padding:0;background:transparent;border:0;z-index:5}
+.code-preview-close{color:#fff;border-color:rgba(255,110,110,.5);background:rgba(255,80,80,.18)}
+@media(max-width:520px){.code-preview-title{display:none}.code-preview-bar{justify-content:stretch;gap:5px;padding-top:max(10px,env(safe-area-inset-top));padding-bottom:max(8px,env(safe-area-inset-bottom))}.code-preview-fs{display:inline-flex;align-items:center;justify-content:center;flex:1 1 0;min-width:0;min-height:42px;padding:8px 4px;white-space:nowrap}}
 .mode-chip-create.on{background:rgba(77,163,255,.22);border-color:rgba(77,163,255,.65);color:#eaf4ff}
 
 /* Chip "Programar" (premium) */
@@ -583,6 +585,9 @@ body.light .bg-scan { display: none; }
 .pg-opt:hover { border-color: rgba(52,230,176,.5); background: rgba(52,230,176,.1); }
 .pg-opt.sel { border-color: transparent; background: linear-gradient(120deg, rgba(52,230,176,.92), rgba(24,185,255,.92)); color: #00231b; font-weight: 700; }
 .pg-opt-label { flex: 1; min-width: 0; }
+.pg-opt-copy { display: flex; flex: 1; min-width: 0; flex-direction: column; gap: 3px; }
+.pg-opt-desc { color: var(--text-dim); font-size: 11.5px; font-weight: 400; line-height: 1.35; }
+.pg-opt.sel .pg-opt-desc { color: rgba(0,35,27,.72); }
 .pg-rec { flex: none; font-size: 10px; font-weight: 700; letter-spacing: .3px; padding: 2px 8px; border-radius: 999px; background: rgba(52,230,176,.22); color: #34e6b0; }
 .pg-opt.sel .pg-rec { background: rgba(0,35,27,.25); color: #00231b; }
 .pg-custom { margin-bottom: 14px; }

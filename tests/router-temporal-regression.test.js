@@ -1,4 +1,4 @@
-﻿// Regresion del router de actualidad/contexto (Capas 1-5).
+// Regresion del router de actualidad/contexto (Capas 1-5).
 // Cubre el ruteo determinista derivado de los casos P1..P5 de
 // "Fallos de Mady Pro-(auto)". No usa red: solo valida validateDecision/chooseModel
 // y el estado de conversacion (entidad activa, estudio biblico, modo creador).
@@ -154,9 +154,12 @@ assert.match(api.reasonStageHtml('code_polish'), /[Pp]uliendo/);
 
 // Herramienta Programar: el asistente pide opciones (max 3, 1a recomendada) o plan.
 assert.equal(typeof api.PROGRAM_WIZARD_PROMPT, 'string');
-assert.match(api.PROGRAM_WIZARD_PROMPT, /recomendada/i);
+assert.match(api.PROGRAM_WIZARD_PROMPT, /recomendaci/i);
 assert.match(api.PROGRAM_WIZARD_PROMPT, /"phase": "ask"/);
 assert.match(api.PROGRAM_WIZARD_PROMPT, /"phase": "plan"/);
+assert.match(api.PROGRAM_WIZARD_PROMPT, /maximo 3 preguntas/i);
+assert.match(api.PROGRAM_WIZARD_PROMPT, /PROMPT MAESTRO/);
+assert.match(api.PROGRAM_WIZARD_PROMPT, /description/);
 
 const programStep = {
   phase: 'ask',
@@ -180,7 +183,9 @@ const fallbackPlan = api.buildProgramFallbackPlan({
 }, programStep);
 assert.match(fallbackPlan, /Creame una pagina de futbol/i);
 assert.match(fallbackPlan, /Landing page/);
-assert.match(fallbackPlan, /Ya hay suficiente contexto para construir la primera version/i);
+assert.match(fallbackPlan, /PROMPT MAESTRO PARA GENERAR EL HTML/i);
+assert.match(fallbackPlan, /un unico documento HTML autocontenido/i);
+assert.match(fallbackPlan, /experiencia movil excelente/i);
 
 // Charla trivial: salta clasificador/memoria. Conservador y SIN romper correcciones.
 assert.equal(typeof api.looksTrivial, 'function');
@@ -226,5 +231,39 @@ assert.equal(api.extractFencedCode('```html\n<div>x</div>\n```', ['html']), '<di
   assert.match(parts.html, /<main>Hola<\/main>/, 'conserva el contenido');
 }
 
+// Programar nuevo: una IA y parches exactos que preservan todo lo no solicitado.
+assert.match(api.PROGRAM_CODER_PROMPT, /UNICA IA programadora/);
+assert.match(api.PROGRAM_CODER_PROMPT, /un solo archivo HTML/);
+assert.match(api.PROGRAM_CODER_PROMPT, /Nunca uses href="\/"/);
+assert.match(api.PROGRAM_PATCH_PROMPT, /Nunca devuelvas el HTML completo/);
+assert.match(api.PROGRAM_PATCH_PROMPT, /UN SOLO PROYECTO persistente/);
+assert.match(api.PROGRAM_PATCH_PROMPT, /razona internamente/i);
+assert.match(api.PROGRAM_PATCH_PROMPT, /logo de modo nocturno/i);
+assert.equal(typeof api.applyProgramPatch, 'function');
+assert.equal(typeof api.looksLikeNewProgramProject, 'function');
+assert.equal(api.looksLikeNewProgramProject('crea otro proyecto'), true);
+assert.equal(api.looksLikeNewProgramProject('quiero una nueva pagina'), true);
+assert.equal(api.looksLikeNewProgramProject('mejora el logo en modo nocturno'), false);
+assert.equal(api.looksLikeNewProgramProject('agrega otra sección de contacto'), false);
+assert.equal(typeof api.withPreviewShim, 'function');
+assert.equal(typeof api.closePreviewFrame, 'function');
+{
+  const guarded = api.withPreviewShim('<!doctype html><html><head></head><body><a href="/">Inicio</a></body></html>');
+  assert.match(guarded, /document\.addEventListener\("click"/, 'inyecta guardia de navegacion');
+  assert.match(guarded, /e\.preventDefault\(\)/, 'bloquea rutas internas del host');
+  assert.match(guarded, /scrollIntoView/, 'convierte rutas internas en navegacion local');
+  assert.match(guarded, /target="_blank"/, 'los enlaces externos abren fuera del visor');
+}
+{
+  const original = '<!doctype html><html><head><style>.hero{color:red}.card{padding:8px}</style></head><body><h1>Hola</h1><p>Intacto</p></body></html>';
+  const patched = api.applyProgramPatch(original, {
+    summary: 'titulo actualizado',
+    operations: [{ search: '<h1>Hola</h1>', replace: '<h1>Bienvenido</h1>' }]
+  });
+  assert.equal(patched.doc, original.replace('<h1>Hola</h1>', '<h1>Bienvenido</h1>'));
+  assert.match(patched.doc, /<p>Intacto<\/p>/, 'conserva contenido no pedido');
+  assert.match(patched.doc, /\.card\{padding:8px\}/, 'conserva CSS no pedido');
+  assert.equal(patched.operationCount, 1);
+  assert.throws(() => api.applyProgramPatch(original, { operations: [{ search: '<div>no existe</div>', replace: '' }] }), /no coincide/);
+}
 console.log('router-temporal-regression: OK');
-
