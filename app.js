@@ -96,12 +96,28 @@
     'Devuelve el documento final en UN bloque ```html y, debajo, 2-3 lineas en espanol de lo que incluiste y como usarlo. No transcribas el proceso ni menciones los agentes.'
   ].join('\n');
 
+  // Asistente de la herramienta "Programar": guia al usuario UNA decision a la vez con
+  // tarjetas presionables (max 3, la 1a recomendada) o texto propio, hasta tener un plan.
+  const PROGRAM_WIZARD_PROMPT = [
+    'Eres el ASISTENTE DE PLANEACION de la herramienta "Programar" de Mady. Ayudas al usuario a definir EXACTAMENTE que pagina/proyecto web quiere, UNA decision a la vez.',
+    'Recibes un JSON con { request: pedido inicial, answers: [respuestas que el usuario ya eligio] }.',
+    'Tu trabajo en cada paso:',
+    '- Si aun falta definir algo clave (tipo de pagina, secciones, estilo/paleta, contenido, interacciones, framework si aplica), devuelve UNA sola pregunta breve con 2-3 OPCIONES concretas; la PRIMERA es la mas recomendada. Permite siempre que el usuario escriba la suya.',
+    '- Pregunta lo MAS importante primero; no repitas lo ya respondido en answers. Pueden ser varias rondas hasta tener todo claro.',
+    '- Cuando ya tengas suficiente para construir, devuelve el PLAN final completo (no mas preguntas).',
+    'Devuelve SOLO JSON valido, sin texto fuera del JSON. Dos formatos:',
+    'Para preguntar: { "phase": "ask", "question": "texto breve", "options": [{"label":"Opcion (recomendada)","value":"valor corto","recommended":true},{"label":"...","value":"..."}], "allow_custom": true }',
+    'Para el plan: { "phase": "plan", "plan": "Markdown con: tipo de pagina, secciones concretas en orden, estilo/paleta, contenido de ejemplo, e interacciones. Claro y accionable para construir." }',
+    'Maximo 3 opciones por pregunta. Las opciones deben ser distintas y concretas (no "si/no" vagos).'
+  ].join('\n');
+
   // Motor LTH OS (PC): se enruta por la cola remote_commands (accion ia-ask),
   // igual que LTH Remote. El Mady completo del PC responde.
   const REMOTE_CMD_URL = SB_URL + '/rest/v1/remote_commands';
   const ENGINE_KEY = 'lth_ia_web_engine_v1';
   const OSDEV_KEY = 'lth_ia_web_osdevice_v1';
   const REASON_KEY = 'lth_ia_web_reason_v1';
+  const PROGRAM_KEY = 'lth_ia_web_program_v1';
   const THEME_KEY = 'lth_ia_web_theme_v1';
   const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
@@ -126,6 +142,8 @@
     reasonUses: null,     // estado de usos semanales de razonamiento {enabled,limit,used,remaining,resets_at}
     reasonModels: null,   // config de modelos del razonamiento por etapa (editable en admin)
     createMode: false,    // "Crear algo": fuerza generar HTML/CSS/JS visualizable
+    programMode: false,   // herramienta "Programar": el siguiente envio abre el asistente
+    program: null,        // sesion activa del asistente { active, convo, request, answers, plan, busy }
     manualModel: 'auto'   // 'auto' = ruteo automatico; o un id de MANUAL_MODELS
   };
 
@@ -1459,7 +1477,7 @@
     ]).catch(() => {});
   }
 
-  window.LTH_IA_TEST_API = { normalizeBrain, extractBrainFromUserMessage, buildBrainContextBlock, detectCrisisIntent, detectFreeSkillIntent, buildFreeSkillSystem, buildFreeSkillClarification, normalizeResearchQuery, detectFreeResearchIntent, buildFreeResearchContextBlock, buildDeviceMemoryRecallBlock, mergeConvoCollections, serializeConvoForCache, extractEntities, detectBrainConflicts, mergeBrain, parseDuckDuckGoResults, detectLiveWebIntent, buildPreviewDoc, applyConversationState, buildCategoryGuidance, buildTemporalSystemBlock, composeSystemWithMemory, ensureConvoBrain, reasonStageHtml, CODE_STRUCTURE_PROMPT, CODE_CSS_PROMPT, CODE_POLISH_PROMPT, ORCHESTRATOR_PROMPT };
+  window.LTH_IA_TEST_API = { normalizeBrain, extractBrainFromUserMessage, buildBrainContextBlock, detectCrisisIntent, detectFreeSkillIntent, buildFreeSkillSystem, buildFreeSkillClarification, normalizeResearchQuery, detectFreeResearchIntent, buildFreeResearchContextBlock, buildDeviceMemoryRecallBlock, mergeConvoCollections, serializeConvoForCache, extractEntities, detectBrainConflicts, mergeBrain, parseDuckDuckGoResults, detectLiveWebIntent, buildPreviewDoc, applyConversationState, buildCategoryGuidance, buildTemporalSystemBlock, composeSystemWithMemory, ensureConvoBrain, reasonStageHtml, CODE_STRUCTURE_PROMPT, CODE_CSS_PROMPT, CODE_POLISH_PROMPT, ORCHESTRATOR_PROMPT, PROGRAM_WIZARD_PROMPT };
 
   async function loadConvos() {
     state.convos = loadCachedConvos();
@@ -1766,6 +1784,15 @@
       convo.messages.push({ id: uid(), role: 'assistant', content: replyText, ts: Date.now() });
       convo.updated = Date.now();
       saveConvos(); renderMessages(); renderConvoList(); syncPushOne(convo);
+      return;
+    }
+
+    // Herramienta "Programar": el envio abre el asistente interactivo (no chat normal).
+    if (state.programMode) {
+      setBusy(true); state.abort = new AbortController();
+      try { await openProgramWizard(text, convo); }
+      catch (_) {}
+      finally { setBusy(false); state.abort = null; }
       return;
     }
 
@@ -2619,22 +2646,167 @@
     try { const m = String(raw || '').match(/\{[\s\S]*\}/); return m ? JSON.parse(m[0]) : {}; } catch (_) { return {}; }
   }
 
-  // Build de codigo en 3 agentes (estructura -> css -> pulido). Son 3 llamadas internas;
-  // con el orquestador suman 4 = el presupuesto gratis por uso (no hay juez aparte aqui).
-  // Tokens altos para escritura de codigo extensa (el tope real lo fija ai_plan_models).
-  async function buildCodePipeline(text, improved, convo, history, bub, signal) {
+  // Build de codigo en 3 agentes (estructura -> css -> pulido). Usado por la herramienta
+  // Programar con billed=true (cobro por token; NO reasonStage). Tokens altos para escritura
+  // extensa (x3); el tope real lo fija ai_plan_models (deepseek 30000).
+  async function buildCodePipeline(text, improved, convo, history, bub, signal, billed) {
     const codeModel = reasonModel('spec_codigo', 'deepseek/deepseek-v4-pro');
     const brief = '\n\nBRIEF DEL PROYECTO (siguelo al pie de la letra):\n' + improved;
+    const stage = billed ? false : undefined; // billed => reasonStage:false (cobro por token)
 
     bub.innerHTML = reasonStageHtml('code_structure');
-    const html = await reasonChat({ model: codeModel, system: composeSystemWithMemory(CODE_STRUCTURE_PROMPT + brief, convo, improved), messages: history, maxTokens: 26000, temperature: 0.2 }, signal);
+    const html = await reasonChat({ model: codeModel, system: composeSystemWithMemory(CODE_STRUCTURE_PROMPT + brief, convo, improved), messages: history, maxTokens: 26000, temperature: 0.2, reasonStage: stage }, signal);
 
     bub.innerHTML = reasonStageHtml('code_css');
-    const css = await reasonChat({ model: codeModel, system: composeSystemWithMemory(CODE_CSS_PROMPT, convo, improved), messages: [{ role: 'user', content: 'HTML DE ESTRUCTURA:\n' + html + brief }], maxTokens: 26000, temperature: 0.2 }, signal);
+    const css = await reasonChat({ model: codeModel, system: composeSystemWithMemory(CODE_CSS_PROMPT, convo, improved), messages: [{ role: 'user', content: 'HTML DE ESTRUCTURA:\n' + html + brief }], maxTokens: 26000, temperature: 0.2, reasonStage: stage }, signal);
 
     bub.innerHTML = reasonStageHtml('code_polish');
-    const finalText = await reasonChat({ model: codeModel, system: composeSystemWithMemory(CODE_POLISH_PROMPT, convo, improved), messages: [{ role: 'user', content: 'PETICION ORIGINAL:\n' + text + brief + '\n\nHTML DE ESTRUCTURA:\n' + html + '\n\nCSS:\n' + css }], maxTokens: 28000, temperature: 0.15 }, signal);
+    const finalText = await reasonChat({ model: codeModel, system: composeSystemWithMemory(CODE_POLISH_PROMPT, convo, improved), messages: [{ role: 'user', content: 'PETICION ORIGINAL:\n' + text + brief + '\n\nHTML DE ESTRUCTURA:\n' + html + '\n\nCSS:\n' + css }], maxTokens: 28000, temperature: 0.15, reasonStage: stage }, signal);
     return finalText;
+  }
+
+  /* ─────────── Herramienta "Programar": asistente interactivo + build ─────────── */
+  function openProgramModal() { if (el.programModal) el.programModal.hidden = false; }
+  function closeProgramModal() { if (el.programModal) el.programModal.hidden = true; }
+
+  function setProgramBusy() {
+    if (el.programBody) el.programBody.innerHTML = '<div class="pg-busy"><span class="reason-orb"></span> Pensando opciones…</div>';
+  }
+  function renderProgramError(msg) {
+    if (!el.programBody) return;
+    el.programBody.innerHTML = '<div class="pg-busy">No se pudo continuar' + (msg ? ': ' + escapeHtml(msg) : '') + '. <button id="pgRetry" type="button" class="pg-next">Reintentar</button></div>';
+    const r = el.programBody.querySelector('#pgRetry'); if (r) r.addEventListener('click', programNextStep);
+  }
+
+  async function openProgramWizard(request, convo, seed) {
+    if (!canUsePremium()) { showProModal('reasoning'); return; }
+    state.program = { active: true, convo: convo, request: String(request || '').trim(), answers: [], plan: '', busy: false };
+    // Desvio desde Razonar: el brief mejorado entra como contexto inicial.
+    const s = String(seed || '').trim();
+    if (s && s !== state.program.request) state.program.answers.push('Contexto: ' + s.slice(0, 400));
+    openProgramModal();
+    await programNextStep();
+  }
+
+  async function programOrchestrate() {
+    const p = state.program;
+    const raw = await reasonChat({
+      model: 'google/gemini-2.5-flash',
+      system: composeSystemWithMemory(PROGRAM_WIZARD_PROMPT, p.convo, p.request),
+      messages: [{ role: 'user', content: JSON.stringify({ request: p.request, answers: p.answers }, null, 2) }],
+      maxTokens: 1200, temperature: 0.3, reasonStage: false
+    }, null);
+    return parseReasonJson(raw);
+  }
+
+  async function programNextStep() {
+    if (!state.program || !state.program.active) return;
+    setProgramBusy();
+    let step;
+    try { step = await programOrchestrate(); }
+    catch (e) { renderProgramError(e && e.message); return; }
+    if (!step || !step.phase) { renderProgramError(); return; }
+    if (step.phase === 'plan' && String(step.plan || '').trim()) {
+      state.program.plan = String(step.plan).trim();
+      renderProgramPlan(state.program.plan);
+    } else {
+      renderProgramStep(step);
+    }
+  }
+
+  function submitProgramChoice(value) {
+    value = String(value || '').trim();
+    if (!value || !state.program || !state.program.active) return;
+    state.program.answers.push(value);
+    programNextStep();
+  }
+
+  function renderProgramStep(step) {
+    if (!el.programBody) return;
+    const opts = Array.isArray(step.options) ? step.options.slice(0, 3) : [];
+    let html = '<div class="pg-step"><div class="pg-q">' + escapeHtml(String(step.question || '¿Que quieres construir?')) + '</div><div class="pg-opts">';
+    opts.forEach((o, i) => {
+      const val = escapeHtml(String(o.value || o.label || ''));
+      const rec = (i === 0) || o.recommended === true;
+      html += '<button type="button" class="pg-opt" data-val="' + val + '"><span class="pg-opt-label">' + escapeHtml(String(o.label || o.value || '')) + '</span>' + (rec ? '<span class="pg-rec">Recomendada</span>' : '') + '</button>';
+    });
+    html += '</div><div class="pg-custom"><input id="pgCustom" type="text" placeholder="o escribe lo tuyo…" autocomplete="off"></div><div class="pg-actions"><button id="pgNext" type="button" class="pg-next" disabled>Siguiente</button></div></div>';
+    el.programBody.innerHTML = html;
+    wireProgramStep();
+  }
+
+  function wireProgramStep() {
+    const body = el.programBody; if (!body) return;
+    let selected = '';
+    const next = body.querySelector('#pgNext');
+    const custom = body.querySelector('#pgCustom');
+    const refresh = () => { if (next) next.disabled = !((custom && custom.value.trim()) || selected); };
+    body.querySelectorAll('.pg-opt').forEach((b) => {
+      b.addEventListener('click', () => {
+        body.querySelectorAll('.pg-opt').forEach((x) => x.classList.remove('sel'));
+        b.classList.add('sel'); selected = b.getAttribute('data-val') || ''; if (custom) custom.value = ''; refresh();
+      });
+    });
+    if (custom) {
+      custom.addEventListener('input', () => { if (custom.value.trim()) { body.querySelectorAll('.pg-opt').forEach((x) => x.classList.remove('sel')); selected = ''; } refresh(); });
+      custom.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); if (custom.value.trim()) submitProgramChoice(custom.value); } });
+    }
+    if (next) next.addEventListener('click', () => { const v = (custom && custom.value.trim()) || selected; if (v) submitProgramChoice(v); });
+  }
+
+  function renderProgramPlan(planMd) {
+    if (!el.programBody) return;
+    el.programBody.innerHTML = '<div class="pg-plan"><div class="pg-plan-title">📋 Tu plan está listo</div><div class="pg-plan-body">' + renderMarkdown(planMd) + '</div><div class="pg-actions"><button id="pgAdjust" type="button" class="pg-ghost">Ajustar</button><button id="pgStart" type="button" class="pg-next">Comenzar ⏎</button></div></div>';
+    const start = el.programBody.querySelector('#pgStart');
+    const adjust = el.programBody.querySelector('#pgAdjust');
+    if (start) { start.addEventListener('click', confirmProgramPlan); start.focus(); }
+    if (adjust) adjust.addEventListener('click', renderProgramAdjust);
+  }
+
+  function renderProgramAdjust() {
+    if (!el.programBody) return;
+    el.programBody.innerHTML = '<div class="pg-step"><div class="pg-q">¿Qué quieres cambiar del plan?</div><div class="pg-custom"><input id="pgCustom" type="text" placeholder="Escribe el ajuste…" autocomplete="off"></div><div class="pg-actions"><button id="pgNext" type="button" class="pg-next">Aplicar</button></div></div>';
+    const custom = el.programBody.querySelector('#pgCustom');
+    const next = el.programBody.querySelector('#pgNext');
+    const apply = () => { if (custom && custom.value.trim()) submitProgramChoice('Ajuste pedido: ' + custom.value); };
+    if (custom) custom.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); apply(); } });
+    if (next) next.addEventListener('click', apply);
+    if (custom) custom.focus();
+  }
+
+  async function confirmProgramPlan() {
+    const p = state.program;
+    if (!p || !p.active || state.busy) return;
+    const convo = p.convo;
+    const brief = (p.plan || p.request) + (p.answers.length ? '\n\nDecisiones del usuario:\n- ' + p.answers.join('\n- ') : '');
+    closeProgramModal();
+    state.program.active = false;
+    const { wrap, bub } = bubbleEl('ai', reasonStageHtml('code_structure'));
+    el.messages.appendChild(wrap); scrollDown();
+    setBusy(true); state.abort = new AbortController();
+    try {
+      const history = buildCloudMessages(convo, 'reasoning');
+      const built = await buildCodePipeline(p.request, brief, convo, history, bub, state.abort.signal, true);
+      const finalCode = String(built || '').trim() || '_(sin respuesta)_';
+      bub.innerHTML = renderMarkdown(finalCode, { preview: true });
+      const m = { id: uid(), role: 'assistant', content: finalCode, ts: Date.now() };
+      markAssistantTurn(convo, finalCode, 'Pagina construida (Programar)');
+      convo.messages.push(m);
+      convo.updated = Date.now();
+      saveConvos(); renderMessages(); renderConvoList(); syncPushOne(convo); fetchStatus();
+      void maybeUpdateConvoBrain(convo);
+    } catch (e) {
+      bub.innerHTML = renderMarkdown('No se pudo construir: ' + ((e && e.message) || 'error') + '.');
+    } finally {
+      setBusy(false); state.abort = null;
+    }
+  }
+
+  function persistProgram() { try { localStorage.setItem(PROGRAM_KEY, state.programMode ? '1' : '0'); } catch (_) {} }
+  function renderProgramBtn() {
+    if (!el.programBtn) return;
+    el.programBtn.classList.toggle('on', !!state.programMode);
+    el.programBtn.setAttribute('aria-pressed', state.programMode ? 'true' : 'false');
   }
 
   function categorySpecialist(category, improved) {
@@ -2696,25 +2868,15 @@
   // Pipeline premium: IA principal (clasifica + mejora prompt) -> especialista -> juez Opus 4.8.
   async function reasoningAnswer(text, convo, bub) {
     const signal = state.abort && state.abort.signal;
+    const history = buildCloudMessages(convo, 'reasoning');
 
-    // Razonamiento se cobra por USOS (7/semana), no por creditos ni ventana. Consume 1 uso
-    // ANTES de correr; eso otorga el presupuesto de llamadas internas gratis en el servidor.
-    let useData = null;
+    // 1) Clasificar BARATO (no reasonStage): aun NO consume uso. Asi la aclaracion y el
+    //    desvio a Programar (codigo) no gastan usos de razonamiento.
+    bub.innerHTML = reasonStageHtml('orchestrate');
+    let orch;
     try {
-      const useRes = await callEdge({ action: 'reason-use' }, signal);
-      const useJson = await useRes.json().catch(() => ({}));
-      useData = useJson && useJson.reasoning ? useJson.reasoning : null;
-      applyReasonUses(useData);
-      if (!useRes.ok || useJson.success !== true) {
-        const msg = useData && useData.reason === 'weekly_exhausted'
-          ? 'Te quedaste sin usos de **razonamiento** esta semana (' + (useData.used || useData.limit || 7) + '/' + (useData.limit || 7) + '). Se reinician ' + reasonResetText(useData.resets_at) + '.'
-          : ((useData && useData.error) || 'El modo razonamiento no esta disponible en tu plan.');
-        bub.innerHTML = renderMarkdown(msg);
-        markAssistantTurn(convo, msg, 'Sin usos de razonamiento');
-        convo.messages.push({ id: uid(), role: 'assistant', content: msg, ts: Date.now() });
-        convo.updated = Date.now(); saveConvos(); renderConvoList(); syncPushOne(convo);
-        return;
-      }
+      const orchRaw = await reasonChat({ model: reasonModel('orchestrator', 'google/gemini-2.5-flash'), system: composeSystemWithMemory(ORCHESTRATOR_PROMPT, convo, text), messages: history, maxTokens: 1400, temperature: 0.2, reasonStage: false }, signal);
+      orch = parseReasonJson(orchRaw);
     } catch (_) {
       const msg = 'No se pudo iniciar el modo razonamiento. Intenta de nuevo.';
       bub.innerHTML = renderMarkdown(msg);
@@ -2723,11 +2885,6 @@
       return;
     }
 
-    const history = buildCloudMessages(convo, 'reasoning');
-
-    bub.innerHTML = reasonStageHtml('orchestrate');
-    const orchRaw = await reasonChat({ model: reasonModel('orchestrator', 'google/gemini-2.5-flash'), system: composeSystemWithMemory(ORCHESTRATOR_PROMPT, convo, text), messages: history, maxTokens: 1400, temperature: 0.2 }, signal);
-    const orch = parseReasonJson(orchRaw);
     if (orch.need_clarification && String(orch.questions || '').trim()) {
       const q = String(orch.questions).trim();
       bub.innerHTML = renderMarkdown(q);
@@ -2741,22 +2898,23 @@
     const category = String(orch.category || 'chat_simple').toLowerCase();
     const improved = String(orch.improved_prompt || text).trim();
 
-    if (category === 'imagen') {
-      await generateImage(improved, convo, null, bub, true);
+    // 2) Codigo NO se construye en razonamiento: se desvia a la herramienta Programar
+    //    (cobro por token) SIN consumir un uso de razonamiento.
+    if (category === 'codigo') {
+      const note = 'Esto es de **programacion**: te abro la herramienta **Programar** para armarlo paso a paso (no gasta usos de razonamiento).';
+      bub.innerHTML = renderMarkdown(note);
+      markAssistantTurn(convo, note, 'Desvio a Programar');
+      convo.messages.push({ id: uid(), role: 'assistant', content: note, ts: Date.now() });
+      convo.updated = Date.now(); saveConvos(); renderMessages(); renderConvoList();
+      await openProgramWizard(text, convo, improved);
       return;
     }
 
-    // Programacion: flujo especializado de 3 agentes (estructura -> css -> pulido),
-    // el pulido presenta directo (sin juez aparte). Encaja en el presupuesto de 4 llamadas.
-    if (category === 'codigo') {
-      const built = await buildCodePipeline(text, improved, convo, history, bub, signal);
-      const finalCode = String(built || '').trim() || '_(sin respuesta)_';
-      const mc = { id: uid(), role: 'assistant', content: finalCode, ts: Date.now() };
-      markAssistantTurn(convo, finalCode, 'Codigo razonado (estructura+css+pulido)');
-      convo.messages.push(mc);
-      convo.updated = Date.now();
-      saveConvos(); renderMessages(); renderConvoList(); syncPushOne(convo); fetchStatus();
-      void maybeUpdateConvoBrain(convo);
+    // 3) No-codigo: AHORA si consume 1 uso (otorga el presupuesto de llamadas internas gratis).
+    if (!await consumeReasonUse(convo, bub)) return;
+
+    if (category === 'imagen') {
+      await generateImage(improved, convo, null, bub, true);
       return;
     }
 
@@ -2785,6 +2943,34 @@
     void maybeUpdateConvoBrain(convo);
   }
 
+  // Consume 1 uso de razonamiento (7/semana). Devuelve true si se otorgo; si no, muestra
+  // el mensaje y devuelve false. Solo se llama para razonamiento NO-codigo (el codigo va a Programar).
+  async function consumeReasonUse(convo, bub) {
+    try {
+      const useRes = await callEdge({ action: 'reason-use' }, state.abort && state.abort.signal);
+      const useJson = await useRes.json().catch(() => ({}));
+      const useData = useJson && useJson.reasoning ? useJson.reasoning : null;
+      applyReasonUses(useData);
+      if (!useRes.ok || useJson.success !== true) {
+        const msg = useData && useData.reason === 'weekly_exhausted'
+          ? 'Te quedaste sin usos de **razonamiento** esta semana (' + (useData.used || useData.limit || 7) + '/' + (useData.limit || 7) + '). Se reinician ' + reasonResetText(useData.resets_at) + '.'
+          : ((useData && useData.error) || 'El modo razonamiento no esta disponible en tu plan.');
+        bub.innerHTML = renderMarkdown(msg);
+        markAssistantTurn(convo, msg, 'Sin usos de razonamiento');
+        convo.messages.push({ id: uid(), role: 'assistant', content: msg, ts: Date.now() });
+        convo.updated = Date.now(); saveConvos(); renderConvoList(); syncPushOne(convo);
+        return false;
+      }
+      return true;
+    } catch (_) {
+      const msg = 'No se pudo iniciar el modo razonamiento. Intenta de nuevo.';
+      bub.innerHTML = renderMarkdown(msg);
+      convo.messages.push({ id: uid(), role: 'assistant', content: msg, ts: Date.now() });
+      convo.updated = Date.now(); saveConvos(); renderConvoList();
+      return false;
+    }
+  }
+
   async function reasonChat(opts, signal) {
     const payload = {
       action: 'chat',
@@ -2793,7 +2979,9 @@
       messages: opts.messages,
       maxTokens: opts.maxTokens || 4000,
       temperature: opts.temperature != null ? opts.temperature : 0.3,
-      reasonStage: true
+      // reasonStage=true => llamada interna gratis (bajo un uso de razonamiento ya consumido).
+      // Programar y el clasificador barato pasan reasonStage:false => se cobra por token.
+      reasonStage: opts.reasonStage !== false
     };
     if (opts.plugins && opts.plugins.length) payload.plugins = opts.plugins;
     const res = await callEdge(payload, signal);
@@ -2902,7 +3090,18 @@
     el.reasonBtn.addEventListener('click', () => {
       if (!canUsePremium()) { showProModal('reasoning'); return; }
       state.reasoning = !state.reasoning; persistReason(); renderReasonBtn();
+      if (state.reasoning && state.programMode) { state.programMode = false; persistProgram(); renderProgramBtn(); }
     });
+    if (el.programBtn) el.programBtn.addEventListener('click', () => {
+      if (!canUsePremium()) { showProModal('reasoning'); return; }
+      state.programMode = !state.programMode; persistProgram(); renderProgramBtn();
+      if (state.programMode) {
+        if (state.reasoning) { state.reasoning = false; persistReason(); renderReasonBtn(); }
+        setComposerHint('Modo Programar: escribe que pagina o app quieres y te guio paso a paso.');
+      }
+    });
+    if (el.programClose) el.programClose.addEventListener('click', closeProgramModal);
+    if (el.programModal) el.programModal.addEventListener('click', (e) => { if (e.target === el.programModal) closeProgramModal(); });
     if (el.createBtn) el.createBtn.addEventListener('click', () => {
       state.createMode = !state.createMode; renderCreateBtn();
       if (state.createMode) setComposerHint('Modo crear: describe la pagina o mini-app y la IA la genera en HTML (con Vista previa).');
@@ -3238,6 +3437,10 @@
     // restaura de localStorage para que nunca se dispare solo el pipeline premium.
     state.reasoning = false;
     renderReasonBtn();
+    // Programar tambien arranca apagado en cada carga (igual que Razonar).
+    state.programMode = false;
+    state.program = null;
+    renderProgramBtn();
     state.createMode = false;
     renderCreateBtn();
     state.manualModel = 'auto';
@@ -3329,6 +3532,7 @@
       });
     }
     el.composer = $('#composer'); el.input = $('#input'); el.sendBtn = $('#sendBtn'); el.reasonBtn = $('#reasonBtn'); el.createBtn = $('#createBtn');
+    el.programBtn = $('#programBtn'); el.programModal = $('#programModal'); el.programClose = $('#programClose'); el.programBody = $('#programBody');
     el.modelPickerBtn = $('#modelPickerBtn'); el.modelPickerLabel = $('#modelPickerLabel'); el.modelMenu = $('#modelMenu'); el.composerHint = $('#composerHint');
     el.proModal = $('#proModal'); el.proClose = $('#proClose'); el.proBuyBtn = $('#proBuyBtn'); el.proSub = $('#proSub');
     el.themeSeg = $('#themeSeg');

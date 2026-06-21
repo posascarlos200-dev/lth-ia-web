@@ -152,4 +152,10 @@ assert.match(api.reasonStageHtml('code_structure'), /estructura/i);
 assert.match(api.reasonStageHtml('code_css'), /CSS/i);
 assert.match(api.reasonStageHtml('code_polish'), /[Pp]uliendo/);
 
+// Herramienta Programar: el asistente pide opciones (max 3, 1a recomendada) o plan.
+assert.equal(typeof api.PROGRAM_WIZARD_PROMPT, 'string');
+assert.match(api.PROGRAM_WIZARD_PROMPT, /recomendada/i);
+assert.match(api.PROGRAM_WIZARD_PROMPT, /"phase": "ask"/);
+assert.match(api.PROGRAM_WIZARD_PROMPT, /"phase": "plan"/);
+
 console.log('router-temporal-regression: OK');

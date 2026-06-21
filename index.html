@@ -231,6 +231,7 @@
           </div>
         </div>
         <button id="reasonBtn" class="mode-chip mode-chip-reason" type="button" aria-pressed="false" title="Modo razonamiento (Pro): la IA principal clasifica y mejora tu pedido, el modelo experto responde y un juez lo verifica y pule"><span class="reason-spark"></span>Razonar</button>
+        <button id="programBtn" class="mode-chip mode-chip-program" type="button" aria-pressed="false" title="Programar (Pro): un asistente te guía paso a paso para definir tu página y la construye (estructura + CSS + pulido). Cobro por tokens.">🧩 Programar</button>
         <button id="createBtn" class="mode-chip mode-chip-create" type="button" aria-pressed="false" title="Crear algo: la IA genera una página o mini-app en HTML que puedes ver con Vista previa (combina HTML, CSS y JS)">✨ Crear algo</button>
       </div>
       <div class="composer-inner">
@@ -241,6 +242,17 @@
         </button>
       </div>
     </form>
+
+    <!-- Programar: asistente interactivo -->
+    <div id="programModal" class="program-modal" hidden>
+      <div class="program-card">
+        <div class="program-head">
+          <strong>🧩 Programar</strong>
+          <button id="programClose" class="us-more" type="button" aria-label="Cerrar">✕</button>
+        </div>
+        <div id="programBody" class="program-body"></div>
+      </div>
+    </div>
 
     <!-- Configuración -->
     <div id="settingsModal" class="settings-modal" hidden>
