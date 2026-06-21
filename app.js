@@ -154,6 +154,15 @@
     'Devuelve SOLO un bloque ```html con el documento completo. Nada de explicaciones fuera del bloque.'
   ].join('\n');
 
+  // Orquestador de EDICION (modelo rapido, p.ej. Gemini Flash). Mejora el pedido del usuario
+  // y lo convierte en una instruccion precisa para el agente editor — SIN ampliar el alcance.
+  const EDIT_ORCHESTRATOR_PROMPT = [
+    'Eres el ORQUESTADOR de edicion de Mady (modelo rapido). Recibes el pedido de cambio del usuario sobre una pagina web YA existente, y el HTML actual como contexto.',
+    'Tu trabajo: entender que quiere y convertirlo en UNA instruccion de edicion clara y especifica para el agente editor, para que entienda mejor y acierte. NO amplies el alcance: solo lo que el usuario pidio, bien precisado (que elemento o seccion exacta, que cambia y como debe quedar). Apoyate en el HTML real (nombres de clases, ids, secciones que existen).',
+    'Puedes agregar UNA recomendacion breve de mejora coherente con el pedido (opcional). Nunca propongas rehacer la pagina ni cambios no pedidos.',
+    'Responde SOLO JSON valido: {"recomendacion":"1 frase breve para el usuario, o vacio","instruccion":"instruccion precisa para el editor, en imperativo, mencionando el elemento/seccion exacto y el resultado esperado"}.'
+  ].join('\n');
+
   // Motor LTH OS (PC): se enruta por la cola remote_commands (accion ia-ask),
   // igual que LTH Remote. El Mady completo del PC responde.
   const REMOTE_CMD_URL = SB_URL + '/rest/v1/remote_commands';
@@ -810,6 +819,18 @@
     if (!convo || !convo.id) return null;
     convo.title = clipText(convo.title || 'Chat', 160) || 'Chat';
     convo.messages = (Array.isArray(convo.messages) ? convo.messages : []).map(normalizeStoredMessage).filter(Boolean);
+    // Invariante: SOLO la revision mas reciente conserva el HTML pesado (programDoc). Si un
+    // merge/sync resucito el doc en mensajes viejos, lo quitamos (evita previews viejas y que
+    // "ya hice el cambio pero no lo veo" muestre una version anterior).
+    let lastDocIdx = -1;
+    for (let i = convo.messages.length - 1; i >= 0; i -= 1) {
+      if (convo.messages[i] && convo.messages[i].programDoc) { lastDocIdx = i; break; }
+    }
+    if (lastDocIdx >= 0) {
+      for (let i = 0; i < convo.messages.length; i += 1) {
+        if (i !== lastDocIdx && convo.messages[i] && convo.messages[i].programDoc) delete convo.messages[i].programDoc;
+      }
+    }
     convo.created = convo.created || new Date().toISOString();
     convo.updated = Number(convo.updated || Date.now()) || Date.now();
     convo.brain = normalizeBrain(convo.brain, convo.memory && convo.memory.summary);
@@ -1932,11 +1953,19 @@
     const c = activeConvo();
     el.messages.innerHTML = '';
     if (!c || !c.messages.length) { el.messages.appendChild(el.welcome); el.welcome.hidden = false; return; }
-    for (const m of c.messages) {
+    // La Vista previa SOLO va en la revision mas reciente con programDoc. Si una version vieja
+    // resucitara por sync/merge, NO debe pintar una preview vieja encima de la nueva.
+    let lastDocIdx = -1;
+    for (let i = c.messages.length - 1; i >= 0; i -= 1) {
+      const mm = c.messages[i];
+      if (mm && mm.role === 'assistant' && mm.programDoc && String(mm.programDoc).trim()) { lastDocIdx = i; break; }
+    }
+    for (let i = 0; i < c.messages.length; i += 1) {
+      const m = c.messages[i];
       const html = m.role === 'user' ? escapeHtml(m.content).replace(/\n/g, '<br>') : renderMarkdown(m.content, { preview: true });
       const node = bubbleEl(m.role, html);
       // Pagina de Programar: la Vista previa se arma del doc adjunto (no del markdown).
-      if (m.role === 'assistant' && m.programDoc) node.bub.innerHTML += buildPreviewBlockHtml(m.programDoc);
+      if (m.role === 'assistant' && m.programDoc && i === lastDocIdx) node.bub.innerHTML += buildPreviewBlockHtml(m.programDoc);
       if (Array.isArray(m.media) && m.media.length) appendMedia(node.bub, m.media);
       if (m.role === 'assistant' && m.verdict) appendVerdict(node.bub, m.verdict);
       if (m.role === 'assistant' && String(m.content || '').trim()) appendFeedback(node.bub, m, c);
@@ -3403,15 +3432,20 @@
     const signal = state.abort.signal;
     const codeModel = reasonModel('spec_codigo', 'deepseek/deepseek-v4-pro');
     const programModel = reasonModel('program_coder', codeModel);
-    // La IA EDITA sobre el codigo: lee el HTML completo como contexto pero solo emite el DELTA
-    // (operaciones buscar/reemplazar), nunca reconstruye el documento.
+    const orchModel = reasonModel('edit_orchestrator', 'google/gemini-2.5-flash');
+    // El orquestador de edicion (Gemini Flash) mejora el pedido ANTES de editar; el editor
+    // recibe una instruccion precisa (editBrief). La IA EDITA sobre el codigo: lee el HTML
+    // completo como contexto pero solo emite el DELTA, nunca reconstruye el documento.
+    let editBrief = String(change || '').trim();
+    let editRecommendation = '';
     const patchOnce = async (extraNote) => {
-      const userMsg = 'CAMBIO PEDIDO:\n' + change
+      const userMsg = 'CAMBIO PEDIDO (del usuario): ' + change
+        + '\n\nINSTRUCCION PRECISA (del orquestador, prioriza esto): ' + editBrief
         + (extraNote ? '\n\n' + extraNote : '')
         + '\n\nHTML ACTUAL (NO lo reescribas; copia el "search" EXACTO de aqui, con sus mismos espacios y saltos de linea):\n' + currentDoc;
       const raw = await reasonChat({
         model: programModel,
-        system: composeSystemWithMemory(PROGRAM_PATCH_PROMPT, convo, change),
+        system: composeSystemWithMemory(PROGRAM_PATCH_PROMPT, convo, editBrief),
         messages: [{ role: 'user', content: userMsg }],
         maxTokens: 8000,
         temperature: 0.05,
@@ -3421,6 +3455,23 @@
       return applyProgramPatch(currentDoc, raw);
     };
     try {
+      // 0) Orquestador de edicion (Gemini Flash): mejora la idea y arma una instruccion precisa
+      //    para el editor (entiende mejor y acierta). Si falla, editamos con el pedido literal.
+      bub.innerHTML = reasonStageHtml('orchestrate');
+      try {
+        const orchRaw = await reasonChat({
+          model: orchModel,
+          system: composeSystemWithMemory(EDIT_ORCHESTRATOR_PROMPT, convo, change),
+          messages: [{ role: 'user', content: 'PEDIDO DEL USUARIO:\n' + change + '\n\nHTML ACTUAL (contexto):\n' + currentDoc }],
+          maxTokens: 700,
+          temperature: 0.3,
+          reasonStage: false
+        }, signal);
+        const o = parseReasonJson(orchRaw) || {};
+        if (o.instruccion && String(o.instruccion).trim()) editBrief = String(o.instruccion).trim();
+        if (o.recomendacion && String(o.recomendacion).trim()) editRecommendation = String(o.recomendacion).trim();
+      } catch (_) { /* sin orquestador: seguimos con el pedido literal */ }
+      if (signal.aborted) return;
       // 1) Parche quirurgico: solo el cambio pedido, el resto intacto.
       bub.innerHTML = reasonStageHtml('codigo');
       let patched = null, lastErr = null;
@@ -3432,9 +3483,10 @@
           patched = await patchOnce('Tu intento anterior NO se pudo aplicar (' + ((lastErr && lastErr.message) || 'el texto de referencia no coincidio') + '). Copia el "search" EXACTAMENTE del HTML de abajo, con la misma indentacion, saltos de linea y comillas. Usa el fragmento UNICO mas corto posible.');
         } catch (e2) { lastErr = e2; }
       }
+      const recPrefix = editRecommendation ? ('💡 _' + editRecommendation + '_\n\n') : '';
       if (patched && patched.changed) {
         const summary = patched.summary || String(change).trim();
-        await finishProgramDoc(convo, bub, patched.doc, 'Cambio aplicado ✅: ' + summary + '. Solo se tocaron ' + patched.operationCount + ' fragmento(s); el resto quedo intacto. Abre la pagina para revisarla.', 'Edicion: ' + change, 'Edicion incremental (Programar)');
+        await finishProgramDoc(convo, bub, patched.doc, recPrefix + 'Cambio aplicado ✅: ' + summary + '. Solo se tocaron ' + patched.operationCount + ' fragmento(s); el resto quedo intacto. Abre la pagina para revisarla.', 'Edicion: ' + change, 'Edicion incremental (Programar)');
         return;
       }
       // 3) Ultimo recurso (raro): solo si lo quirurgico NO logro aplicar nada — p.ej. un
@@ -3443,8 +3495,8 @@
       bub.innerHTML = reasonStageHtml('codigo');
       const rewriteRaw = await reasonChat({
         model: programModel,
-        system: composeSystemWithMemory(PROGRAM_REWRITE_PROMPT, convo, change),
-        messages: [{ role: 'user', content: 'CAMBIO PEDIDO:\n' + change + '\n\nHTML ACTUAL:\n' + currentDoc }],
+        system: composeSystemWithMemory(PROGRAM_REWRITE_PROMPT, convo, editBrief),
+        messages: [{ role: 'user', content: 'CAMBIO PEDIDO:\n' + editBrief + '\n\nHTML ACTUAL:\n' + currentDoc }],
         maxTokens: 16000,
         temperature: 0.2,
         reasoning: { enabled: true, effort: 'medium', exclude: true },
@@ -3452,7 +3504,7 @@
       }, signal);
       const newDoc = String(extractFencedCode(rewriteRaw, ['html', 'htm']) || '').trim();
       if (!newDoc || !/<html[\s>]/i.test(newDoc)) throw new Error('La IA no devolvio un HTML completo.');
-      await finishProgramDoc(convo, bub, newDoc, 'Cambio aplicado ✅: ' + String(change).trim() + '. (No se pudo como edicion puntual, así que reescribí la página; si cambió algo de más, usa "↩ Versión anterior".)', 'Edicion: ' + change, 'Edicion completa (Programar)');
+      await finishProgramDoc(convo, bub, newDoc, recPrefix + 'Cambio aplicado ✅: ' + String(change).trim() + '. (No se pudo como edicion puntual, así que reescribí la página; si cambió algo de más, usa "↩ Versión anterior".)', 'Edicion: ' + change, 'Edicion completa (Programar)');
     } catch (e) {
       bub.innerHTML = renderMarkdown('No se pudo aplicar el cambio: ' + ((e && e.message) || 'error') + '. Intenta describirlo con otras palabras.');
     } finally {
