@@ -144,6 +144,16 @@
     'No uses markdown ni bloques de codigo. Nunca devuelvas el HTML completo. Si el pedido no requiere cambios, devuelve operations vacio.'
   ].join('\n');
 
+  // Reescritura COMPLETA: para cambios grandes que el parche quirurgico no puede hacer
+  // (rediseno, reestructura, varias secciones). Devuelve el HTML entero actualizado.
+  const PROGRAM_REWRITE_PROMPT = [
+    'Eres la UNICA IA editora del modo Programar de Mady. Recibes una pagina web (un solo HTML autocontenido) y un CAMBIO pedido por el usuario.',
+    'Aplica el cambio pedido, por grande que sea (rediseno, reestructura, nuevas secciones). Conserva lo que el usuario NO pidio cambiar: el contenido, estilo y funcionalidad que ya existian y siguen teniendo sentido.',
+    'Devuelve el DOCUMENTO HTML COMPLETO y actualizado: empieza con <!DOCTYPE html>, con TODO el CSS dentro de <style> y TODO el JavaScript dentro de <script>. Un solo archivo, sin dependencias externas que requieran clave.',
+    'NAVEGACION SEGURA (obligatoria): el menu apunta con href="#seccion" a secciones que existen y llevan su id; los botones son <button type="button"> con scroll interno; NUNCA uses href="/", "/login", "/home", location.href ni window.location para navegar.',
+    'Devuelve SOLO un bloque ```html con el documento completo. Nada de explicaciones fuera del bloque.'
+  ].join('\n');
+
   // Motor LTH OS (PC): se enruta por la cola remote_commands (accion ia-ask),
   // igual que LTH Remote. El Mady completo del PC responde.
   const REMOTE_CMD_URL = SB_URL + '/rest/v1/remote_commands';
@@ -3250,14 +3260,18 @@
 
   function renderProgramEditForm() {
     if (!el.programBody) return;
+    const convo = (state.programEdit && state.programEdit.convo) || activeConvo();
+    const canRevert = !!(convo && (programHistory.get(convo.id) || []).length);
     const examples = ['Cambia los colores a un tema oscuro', 'Agrega una sección de contacto', 'Hazlo más moderno', 'Que el menú funcione en móvil'];
+    const revertBtn = canRevert ? '<button id="pgEditRevert" type="button" class="pg-ghost">↩ Versión anterior</button>' : '';
     el.programBody.innerHTML = '<div class="pg-step"><div class="pg-q">✎ ¿Qué quieres cambiar o agregar?</div><div class="pg-opts">'
       + examples.map((ex) => '<button type="button" class="pg-opt" data-edit-ex="' + escapeHtml(ex) + '"><span class="pg-opt-label">' + escapeHtml(ex) + '</span></button>').join('')
       + '</div><div class="pg-custom"><input id="pgEdit" type="text" placeholder="Escribe el cambio…" autocomplete="off"></div>'
-      + '<div class="pg-actions"><button id="pgEditCancel" type="button" class="pg-ghost">Cancelar</button><button id="pgEditApply" type="button" class="pg-next" disabled>Aplicar cambio</button></div></div>';
+      + '<div class="pg-actions">' + revertBtn + '<button id="pgEditCancel" type="button" class="pg-ghost">Cancelar</button><button id="pgEditApply" type="button" class="pg-next" disabled>Aplicar cambio</button></div></div>';
     const input = el.programBody.querySelector('#pgEdit');
     const apply = el.programBody.querySelector('#pgEditApply');
     const cancel = el.programBody.querySelector('#pgEditCancel');
+    const revert = el.programBody.querySelector('#pgEditRevert');
     const refresh = () => { if (apply) apply.disabled = !(input && input.value.trim()); };
     el.programBody.querySelectorAll('[data-edit-ex]').forEach((b) => b.addEventListener('click', () => { if (input) { input.value = b.getAttribute('data-edit-ex') || ''; refresh(); input.focus(); } }));
     if (input) {
@@ -3266,7 +3280,25 @@
       input.focus();
     }
     if (apply) apply.addEventListener('click', () => { if (input && input.value.trim()) runProgramEdit(input.value.trim()); });
+    if (revert) revert.addEventListener('click', revertProgramVersion);
     if (cancel) cancel.addEventListener('click', closeProgramModal);
+  }
+
+  // Restaura la version anterior guardada en el historial (en memoria). No re-apila la version
+  // deshecha (skipHistory), asi se puede revertir varias veces hacia atras.
+  function revertProgramVersion() {
+    const convo = (state.programEdit && state.programEdit.convo) || activeConvo();
+    const list = convo && programHistory.get(convo.id);
+    if (!convo || !list || !list.length) return;
+    const prev = String(list.pop() || '').trim();
+    programHistory.set(convo.id, list);
+    closeProgramModal();
+    state.programEdit = null;
+    if (!prev) return;
+    const built = bubbleEl('ai', '');
+    el.messages.appendChild(built.wrap);
+    pushProgramResult(convo, built.bub, prev, 'Restauré la versión anterior ✅. Volví la página al estado previo a tu último cambio.', 'Revertir a versión anterior', 'Revertir (Programar)', { skipHistory: true });
+    scrollDown();
   }
 
   async function runProgramEdit(change) {
@@ -3276,42 +3308,81 @@
     const currentDoc = String(ed.doc);
     closeProgramModal();
     state.programEdit = null;
-    const built = bubbleEl('ai', '<span class="gen-img-loading">Aplicando solo tu cambio<span class="dots"><i>.</i><i>.</i><i>.</i></span></span>');
+    const built = bubbleEl('ai', '<span class="gen-img-loading">Aplicando tu cambio<span class="dots"><i>.</i><i>.</i><i>.</i></span></span>');
     const bub = built.bub;
     el.messages.appendChild(built.wrap); scrollDown();
     setBusy(true); state.abort = new AbortController();
     const signal = state.abort.signal;
+    const codeModel = reasonModel('spec_codigo', 'deepseek/deepseek-v4-pro');
+    const programModel = reasonModel('program_coder', codeModel);
     try {
+      // 1) Parche quirurgico (rapido, preserva bytes). Ideal para cambios chicos.
       bub.innerHTML = reasonStageHtml('codigo');
-      const codeModel = reasonModel('spec_codigo', 'deepseek/deepseek-v4-pro');
-      const programModel = reasonModel('program_coder', codeModel);
-      const raw = await reasonChat({
+      let patched = null;
+      try {
+        const raw = await reasonChat({
+          model: programModel,
+          system: composeSystemWithMemory(PROGRAM_PATCH_PROMPT, convo, change),
+          messages: [{ role: 'user', content: 'CAMBIO PEDIDO:\n' + change + '\n\nHTML ACTUAL (no lo reescribas; devuelve operaciones exactas):\n' + currentDoc }],
+          maxTokens: 8000,
+          temperature: 0.1,
+          reasoning: { enabled: true, effort: 'medium', exclude: true },
+          reasonStage: false
+        }, signal);
+        patched = applyProgramPatch(currentDoc, raw);
+      } catch (patchErr) {
+        patched = null; // el parche no era aplicable -> caemos a reescritura completa
+      }
+      if (patched && patched.changed) {
+        const summary = patched.summary || String(change).trim();
+        pushProgramResult(convo, bub, patched.doc, 'Cambio aplicado ✅: ' + summary + '. Se modificaron ' + patched.operationCount + ' fragmento(s); el resto quedo intacto. Abre la pagina para revisarla.', 'Edicion: ' + change, 'Edicion incremental (Programar)');
+        return;
+      }
+      // 2) Reescritura COMPLETA: para cambios grandes que el parche no puede hacer. Ya no se
+      //    bloquea por "seguridad": si algo no gusta, el usuario usa "↩ Version anterior".
+      if (signal.aborted) return;
+      bub.innerHTML = reasonStageHtml('codigo');
+      const rewriteRaw = await reasonChat({
         model: programModel,
-        system: composeSystemWithMemory(PROGRAM_PATCH_PROMPT, convo, change),
-        messages: [{ role: 'user', content: 'CAMBIO PEDIDO:\n' + change + '\n\nHTML ACTUAL (no lo reescribas; devuelve operaciones exactas):\n' + currentDoc }],
-        maxTokens: 8000,
-        temperature: 0.1,
+        system: composeSystemWithMemory(PROGRAM_REWRITE_PROMPT, convo, change),
+        messages: [{ role: 'user', content: 'CAMBIO PEDIDO:\n' + change + '\n\nHTML ACTUAL:\n' + currentDoc }],
+        maxTokens: 16000,
+        temperature: 0.2,
         reasoning: { enabled: true, effort: 'medium', exclude: true },
         reasonStage: false
       }, signal);
-      const result = applyProgramPatch(currentDoc, raw);
-      if (!result.changed) {
-        bub.innerHTML = renderMarkdown(result.summary || 'No fue necesario cambiar el HTML. Dime con mas detalle que elemento quieres modificar.');
-        return;
-      }
-      const summary = result.summary || String(change).trim();
-      pushProgramResult(convo, bub, result.doc, 'Cambio aplicado ✅: ' + summary + '. Se modificaron ' + result.operationCount + ' fragmento(s); el resto quedo intacto. Abre la pagina para revisarla.', 'Edicion: ' + change, 'Edicion incremental (Programar)');
+      const newDoc = String(extractFencedCode(rewriteRaw, ['html', 'htm']) || '').trim();
+      if (!newDoc || !/<html[\s>]/i.test(newDoc)) throw new Error('La IA no devolvio un HTML completo.');
+      pushProgramResult(convo, bub, newDoc, 'Cambio aplicado ✅ (reescritura completa): ' + String(change).trim() + '. Si algo no te gusta, abre Editar y usa "↩ Versión anterior" para volver atras.', 'Edicion: ' + change, 'Edicion completa (Programar)');
     } catch (e) {
-      bub.innerHTML = renderMarkdown('No aplique ningun cambio porque el parche no era seguro: ' + ((e && e.message) || 'error') + '. Intenta describir el elemento con mas precision.');
+      bub.innerHTML = renderMarkdown('No se pudo aplicar el cambio: ' + ((e && e.message) || 'error') + '. Intenta de nuevo o describe el cambio con otras palabras.');
     } finally {
       setBusy(false); state.abort = null;
     }
   }
   // El documento va ADJUNTO al mensaje (m.programDoc), no dentro del markdown: asi la Vista
   // previa siempre sale (sin parsear fences) y el doc grande no se trunca.
-  function pushProgramResult(convo, bub, doc, note, request, label) {
+  // Historial de versiones de Programar EN MEMORIA (no se persiste ni se sincroniza, para no
+  // bloatear localStorage/Supabase con varios HTML pesados). Permite revertir en la sesion.
+  const programHistory = new Map(); // convoId -> [docs anteriores, mas reciente al final]
+  function pushProgramHistory(convoId, doc) {
+    if (!convoId || !doc) return;
+    const list = programHistory.get(convoId) || [];
+    if (list[list.length - 1] === doc) return;
+    list.push(doc);
+    while (list.length > 6) list.shift();
+    programHistory.set(convoId, list);
+  }
+
+  function pushProgramResult(convo, bub, doc, note, request, label, opts) {
     const safeDoc = String(doc || '').trim();
     bub.innerHTML = renderMarkdown(note) + buildPreviewBlockHtml(safeDoc);
+    // Guarda la version que estamos reemplazando para poder revertir (salvo si esto YA es un
+    // revert, que no debe re-apilar la version deshecha).
+    if (!(opts && opts.skipHistory)) {
+      const prev = (convo.messages || []).filter((e) => e && e.programDoc).map((e) => e.programDoc).pop();
+      if (prev && prev !== safeDoc) pushProgramHistory(convo.id, prev);
+    }
     // Solo la revision mas reciente conserva el HTML pesado y la vista previa. Los mensajes
     // anteriores quedan como bitacora textual, evitando duplicar el proyecto en cada cambio.
     (convo.messages || []).forEach((entry) => {
