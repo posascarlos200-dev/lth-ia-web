@@ -713,6 +713,9 @@
     convo.created = convo.created || new Date().toISOString();
     convo.updated = Number(convo.updated || Date.now()) || Date.now();
     convo.brain = normalizeBrain(convo.brain, convo.memory && convo.memory.summary);
+    // Modo del chat: una vez que se usa Programar/Razonar/Crear, el chat queda dedicado a
+    // ese modo (no se mezcla). 'auto' = chat normal.
+    convo.mode = ['program', 'reason', 'create'].includes(convo.mode) ? convo.mode : 'auto';
     return convo;
   }
 
@@ -1612,7 +1615,7 @@
 
   function newConvo() {
     state.activeId = null;
-    renderMessages(); renderConvoList(); closeDrawer();
+    renderMessages(); renderConvoList(); syncComposerMode(); closeDrawer();
     el.input && el.input.focus();
   }
 
@@ -1832,7 +1835,7 @@
         '<div class="ci-sub"><span>' + escapeHtml(sub) + '</span><span class="ci-del" data-del="1">borrar</span></div>';
       item.addEventListener('click', (e) => {
         if (e.target && e.target.getAttribute('data-del')) { e.stopPropagation(); deleteConvo(c.id); return; }
-        state.activeId = c.id; renderConvoList(); renderMessages(); closeDrawer();
+        state.activeId = c.id; renderConvoList(); renderMessages(); syncComposerMode(); closeDrawer();
       });
       el.convoList.appendChild(item);
     }
@@ -1900,6 +1903,13 @@
       return;
     }
 
+    // Chat DEDICADO a Programar: cada mensaje edita/charla sobre la pagina (no chat normal),
+    // asi no se manda el HTML gigante a un modelo barato ni se mezclan modos.
+    if (convo.mode === 'program') {
+      await programFollowup(convo, text);
+      return;
+    }
+
     // Herramienta "Programar": el envio abre el asistente interactivo (no chat normal).
     if (state.programMode) {
       setBusy(true); state.abort = new AbortController();
@@ -1946,16 +1956,18 @@
         if (ok) return;
         bub.innerHTML = '<span class="typing"><i></i><i></i><i></i></span>';
       }
-      if (state.reasoning && canUsePremium()) {
+      if ((state.reasoning || convo.mode === 'reason') && canUsePremium()) {
+        if (convo.mode !== 'reason') { convo.mode = 'reason'; saveConvos(); syncComposerMode(); }
         await reasoningAnswer(text, convo, bub);
         return;
       }
 
       const manual = (state.manualModel !== 'auto' && state.manualModel !== 'free') ? MANUAL_MODELS[state.manualModel] : null;
       const manualAllowed = manual && (!manual.premium || canUsePremium());
+      const createOn = state.createMode || convo.mode === 'create';
       // Charla trivial (saludo/agradecimiento): se salta el clasificador y la memoria para
       // no gastar llamadas extra en algo como "hola". No aplica a manual ni a "Crear algo".
-      const trivial = !state.createMode && looksTrivial(text);
+      const trivial = !createOn && looksTrivial(text);
       const trivialAuto = trivial && !manualAllowed && canUsePremium();
       let routeOpts = null;
       let freeSkill = null;
@@ -2021,9 +2033,10 @@
       }
 
       // Modo "Crear algo": fuerza salida HTML autocontenida (visualizable) en cualquier ruta.
-      if (state.createMode) {
+      if (createOn) {
         routeOpts = routeOpts || {};
         routeOpts.system = ((routeOpts && routeOpts.system) || SYSTEM_PROMPT) + '\n\n' + CREATE_SYSTEM;
+        if (convo.mode !== 'create') { convo.mode = 'create'; syncComposerMode(); }
       }
 
       let started = false;
@@ -2764,6 +2777,24 @@
     el.createBtn.setAttribute('aria-pressed', state.createMode ? 'true' : 'false');
   }
 
+  // Cada chat queda dedicado a un modo (program/reason/create) una vez usado. Esto bloquea
+  // los otros chips para no mezclar modos en el mismo chat.
+  function syncComposerMode() {
+    const convo = activeConvo();
+    const mode = (convo && convo.mode) || 'auto';
+    const lock = mode !== 'auto';
+    const apply = (btn, isActive, globalOn) => {
+      if (!btn) return;
+      btn.disabled = lock && !isActive;            // los OTROS chips quedan deshabilitados
+      btn.classList.toggle('mode-locked-on', lock && isActive); // el del modo: activo, no clickeable
+      btn.classList.toggle('on', lock ? isActive : !!globalOn);
+    };
+    apply(el.reasonBtn, mode === 'reason', state.reasoning);
+    apply(el.programBtn, mode === 'program', state.programMode);
+    apply(el.createBtn, mode === 'create', state.createMode);
+    if (el.modelPickerBtn) { el.modelPickerBtn.disabled = lock; el.modelPickerBtn.classList.toggle('locked', lock); }
+  }
+
   // Instrucciones inyectadas cuando "Crear algo" esta activo: forzar HTML autocontenido.
   const CREATE_SYSTEM = 'El usuario activo el modo CREAR. Genera lo que pide como una pagina o mini-app web COMPLETA y AUTOCONTENIDA: entrega UN solo bloque ```html con el documento entero (incluye el CSS dentro de <style> y el JS dentro de <script> en el mismo archivo). Debe verse bien y funcionar al renderizarse en un iframe. No uses recursos externos que requieran clave. Da una frase breve antes del codigo y nada de explicaciones largas.';
 
@@ -2897,6 +2928,7 @@
 
   async function openProgramWizard(request, convo, seed) {
     if (!canUsePremium()) { showProModal('reasoning'); return; }
+    if (convo && convo.mode !== 'program') { convo.mode = 'program'; try { saveConvos(); } catch (_) {} syncComposerMode(); }
     state.program = { active: true, convo: convo, request: String(request || '').trim(), answers: [], plan: '', busy: false, lastStep: null, lastAskSig: '' };
     // Desvio desde Razonar: el brief mejorado entra como contexto inicial.
     const s = String(seed || '').trim();
@@ -3073,6 +3105,39 @@
         })
       });
     } catch (_) {}
+  }
+
+  // Encuentra el ultimo documento HTML de pagina en el chat (para editarlo).
+  function lastProgramDoc(convo) {
+    const msgs = (convo && convo.messages) || [];
+    for (let i = msgs.length - 1; i >= 0; i -= 1) {
+      const m = msgs[i];
+      if (m && m.role === 'assistant' && /```html/i.test(String(m.content || ''))) {
+        const d = extractFencedCode(String(m.content), ['html']);
+        if (d && d.trim()) return d;
+      }
+    }
+    return '';
+  }
+
+  // En un chat dedicado a Programar, cada mensaje del usuario es una edicion (o charla) sobre
+  // la pagina; NO se manda al chat normal (evita arrastrar el HTML gigante a un modelo barato).
+  async function programFollowup(convo, text) {
+    const doc = lastProgramDoc(convo);
+    if (!doc) {
+      setBusy(true); state.abort = new AbortController();
+      try { await openProgramWizard(text, convo); } catch (_) {} finally { setBusy(false); state.abort = null; }
+      return;
+    }
+    if (looksTrivial(text)) {
+      const msg = 'Este chat es de **Programar** 🧩. Tu página ya está hecha — dime qué quieres **cambiar o agregar** (ej. "cambia los colores a oscuro", "agrega una sección de contacto") y lo aplico. También tienes **Vista previa**, **Editar** y **Descargar** en el mensaje de la página.';
+      convo.messages.push({ id: uid(), role: 'assistant', content: msg, ts: Date.now() });
+      convo.updated = Date.now();
+      saveConvos(); renderMessages(); renderConvoList(); syncPushOne(convo);
+      return;
+    }
+    state.programEdit = { doc: doc, convo: convo };
+    await runProgramEdit(text);
   }
 
   /* ─────────── Editar una pagina ya hecha (re-corre solo la parte que cambia) ─────────── */
@@ -3936,7 +4001,7 @@
     if (state.engine === 'os') startEnginePresence();
     await loadConvos();
     state.activeId = state.convos[0] ? state.convos[0].id : null;
-    renderConvoList(); renderMessages();
+    renderConvoList(); renderMessages(); syncComposerMode();
     el.input.focus();
 
     await fetchStatus();
