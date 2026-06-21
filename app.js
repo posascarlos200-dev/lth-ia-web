@@ -70,11 +70,12 @@
     'Eres el JUEZ FINAL del modo razonamiento de Mady. Recibes la PETICION ORIGINAL del usuario, el PROMPT MEJORADO que se le dio al especialista y el BORRADOR que produjo (con sus fuentes si las hay).',
     'Tu trabajo:',
     '1) Juzga si el borrador cumple EXACTAMENTE el prompt mejorado y responde bien la peticion original.',
-    '2) Si falta optimizar algo o algo no cumple, APLICA TU MISMO las correcciones DIRECTAMENTE sobre el borrador, de forma INCREMENTAL: corrige solo lo que falla (codigo, datos, estructura, fuentes); NO reconstruyas todo desde cero ni borres lo que ya esta bien.',
-    '3) Entrega la RESPUESTA FINAL para el usuario, ordenada, clara y entendible (Markdown). Es la version corregida y pulida, lista para mostrar; NO menciones el borrador, el juez ni el proceso.',
+    '2) Si esta correcto, APRUEBALO SIN REESCRIBIRLO y devuelve correcciones=[].',
+    '3) Si algo concreto falla, devuelve SOLO correcciones incrementales. Cada correccion debe contener un fragmento literal y unico del borrador en "buscar" y su sustitucion minima en "reemplazar". Conserva intacto todo lo demas.',
+    'PROHIBIDO devolver una respuesta final completa, resumir, cambiar el tono, reorganizar por gusto o reescribir partes correctas. Si no puedes corregirlo con reemplazos puntuales, marca RECHAZADO y explica el motivo en advertencia.',
     'Devuelve SOLO JSON valido:',
-    '{ "veredicto": "APROBADO", "confianza": 90, "fuentes": [], "advertencia": "", "respuesta_final": "" }',
-    'veredicto in {APROBADO, APROBADO_CON_CORRECCIONES, RECHAZADO}. confianza 0-100. fuentes = URLs reales usadas (si aplica). advertencia = que no se pudo verificar (si aplica). respuesta_final = la respuesta final en Markdown para el usuario.'
+    '{ "veredicto": "APROBADO", "confianza": 90, "fuentes": [], "advertencia": "", "correcciones": [] }',
+    'veredicto in {APROBADO, APROBADO_CON_CORRECCIONES, RECHAZADO}. confianza 0-100. fuentes = URLs reales usadas (si aplica). advertencia = que no se pudo verificar o por que se rechaza. correcciones = maximo 8 objetos {"buscar":"texto literal unico","reemplazar":"cambio minimo"}.'
   ].join('\n');
 
   // Razonamiento -> categoria "codigo": build especializado en 3 agentes (estructura -> css -> pulido).
@@ -812,6 +813,19 @@
     if (message.verdict) next.verdict = message.verdict;
     if (message._feedback) next._feedback = message._feedback;
     if (message.programDoc && String(message.programDoc).trim()) next.programDoc = String(message.programDoc);
+    if (message.reasoningReview && typeof message.reasoningReview === 'object') {
+      const review = message.reasoningReview;
+      next.reasoningReview = {
+        status: ['pending', 'reviewing', 'complete'].includes(review.status) ? review.status : 'pending',
+        original: String(review.original || '').slice(0, 30000),
+        improved: String(review.improved || '').slice(0, 30000),
+        draft: String(review.draft || '').slice(0, 120000),
+        specialistModel: String(review.specialistModel || '').slice(0, 200),
+        attempts: Math.max(0, Number(review.attempts || 0) || 0),
+        createdAt: Number(review.createdAt || Date.now()) || Date.now(),
+        completedAt: Number(review.completedAt || 0) || 0
+      };
+    }
     return next;
   }
 
@@ -1510,13 +1524,22 @@
   function mergeMessageLists(baseMessages, incomingMessages) {
     const out = [];
     const seen = new Set();
+    const byId = new Map();
     const pushOne = (msg) => {
       const m = normalizeStoredMessage(msg);
       if (!m) return;
+      const same = m.id ? byId.get(m.id) : null;
+      if (same) {
+        const currentStatus = same.reasoningReview && same.reasoningReview.status;
+        const nextStatus = m.reasoningReview && m.reasoningReview.status;
+        if (nextStatus === 'complete' && currentStatus !== 'complete') Object.assign(same, m);
+        return;
+      }
       const key = m.role + '|' + (Number(m.ts) || 0) + '|' + String(m.content || '').slice(0, 120);
       if (seen.has(key)) return;
       seen.add(key);
       out.push(m);
+      if (m.id) byId.set(m.id, m);
     };
     (Array.isArray(baseMessages) ? baseMessages : []).forEach(pushOne);
     (Array.isArray(incomingMessages) ? incomingMessages : []).forEach(pushOne);
@@ -1795,10 +1818,22 @@
         }
         c = normalizeConvo(c);
         const known = new Set(c.messages.map((m) => m.role + '|' + (Number(m.ts) || 0) + '|' + String(m.content || '').slice(0, 60)));
+        const byId = new Map(c.messages.filter((m) => m && m.id).map((m) => [m.id, m]));
         for (const m of remoteMsgs) {
+          const same = m.id ? byId.get(m.id) : null;
+          if (same) {
+            const localStatus = same.reasoningReview && same.reasoningReview.status;
+            const remoteStatus = m.reasoningReview && m.reasoningReview.status;
+            if (remoteStatus === 'complete' && localStatus !== 'complete') {
+              Object.assign(same, m);
+              changed = true;
+            }
+            continue;
+          }
           const key = m.role + '|' + (Number(m.ts) || 0) + '|' + String(m.content || '').slice(0, 60);
           if (known.has(key)) continue;
           c.messages.push(m);
+          if (m.id) byId.set(m.id, m);
           known.add(key);
           changed = true;
         }
@@ -1824,6 +1859,7 @@
         const r = { id: m.id, role: m.role, content: String(m.content || '').slice(0, 20000), ts: m.ts };
         if (Array.isArray(m.media) && m.media.length) r.media = m.media;
         if (m.programDoc) r.programDoc = String(m.programDoc).slice(0, 200000);
+        if (m.reasoningReview && typeof m.reasoningReview === 'object') r.reasoningReview = m.reasoningReview;
         return r;
       }),
       brain: normalizeBrain(convo.brain),
@@ -1909,6 +1945,7 @@
       const data = await res.json().catch(() => ({}));
       if (data && data.reasoningModels && typeof data.reasoningModels === 'object') state.reasonModels = data.reasoningModels;
     } catch (_) {}
+    resumePendingReasonReviews();
   }
 
   // Modelo configurado para una etapa del razonamiento (editable en admin); fallback al default.
@@ -2929,6 +2966,133 @@
     try { const m = String(raw || '').match(/\{[\s\S]*\}/); return m ? JSON.parse(m[0]) : {}; } catch (_) { return {}; }
   }
 
+  // El juez no vuelve a redactar la respuesta: el cliente aplica unicamente cambios
+  // literales y no ambiguos sobre el borrador original.
+  function applyJudgeCorrections(draft, judge) {
+    let result = String(draft || '');
+    if (String(judge?.veredicto || '').toUpperCase() !== 'APROBADO_CON_CORRECCIONES') return result;
+    const corrections = Array.isArray(judge?.correcciones) ? judge.correcciones.slice(0, 8) : [];
+    const maxTouched = Math.max(240, Math.floor(result.length * 0.35));
+    let touched = 0;
+    for (const correction of corrections) {
+      const search = typeof correction?.buscar === 'string' ? correction.buscar : '';
+      const replacement = typeof correction?.reemplazar === 'string' ? correction.reemplazar : null;
+      if (!search || replacement == null) continue;
+      if (search === result || search.length > 1200 || touched + search.length > maxTouched) continue;
+      const first = result.indexOf(search);
+      if (first < 0 || result.indexOf(search, first + search.length) >= 0) continue;
+      result = result.slice(0, first) + replacement + result.slice(first + search.length);
+      touched += search.length;
+    }
+    return result;
+  }
+
+  function isJudgeTimeoutError(error) {
+    const status = Number(error?.status || error?.statusCode || 0);
+    const message = String(error?.message || error || '');
+    return error?.name === 'AbortError' || status === 408 || status === 504 || status === 546
+      || /timeout|tiempo de espera|tardo demasiado|l[ií]mite.*tiempo|resource limit/i.test(message);
+  }
+
+  async function runJudgeReview(model, text, improved, draft, convo, signal, timeoutMs) {
+    const controller = typeof AbortController === 'function' ? new AbortController() : null;
+    const reviewSignal = controller ? controller.signal : signal;
+    const abortReview = () => { try { controller?.abort(); } catch (_) {} };
+    if (signal) {
+      if (signal.aborted) abortReview();
+      else signal.addEventListener('abort', abortReview, { once: true });
+    }
+    const timer = controller ? setTimeout(abortReview, timeoutMs || 100000) : null;
+    try {
+      const result = await streamReasonChat({
+        model,
+        system: composeSystemWithMemory(JUDGE_PROMPT, convo, text),
+        messages: [{ role: 'user', content: 'PETICION ORIGINAL:\n' + text + '\n\nPROMPT MEJORADO:\n' + improved + '\n\nBORRADOR DEL ESPECIALISTA:\n' + draft }],
+        maxTokens: 1200,
+        temperature: 0.1,
+        reasonStage: false
+      }, reviewSignal);
+      return parseReasonJson(result?.text || '');
+    } finally {
+      if (timer) clearTimeout(timer);
+      if (signal) signal.removeEventListener('abort', abortReview);
+    }
+  }
+
+  const activeReasonReviews = new Set();
+
+  async function finalizeReasoningReview(convoId, messageId) {
+    const jobKey = String(convoId || '') + ':' + String(messageId || '');
+    if (!convoId || !messageId || activeReasonReviews.has(jobKey)) return;
+    const convo = state.convos.find((entry) => entry && entry.id === convoId);
+    const message = convo && (convo.messages || []).find((entry) => entry && entry.id === messageId);
+    const review = message && message.reasoningReview;
+    if (!convo || !message || !review || review.status === 'complete' || !String(review.draft || '').trim()) return;
+
+    activeReasonReviews.add(jobKey);
+    review.status = 'reviewing';
+    review.attempts = Math.max(0, Number(review.attempts || 0)) + 1;
+    message.content = '_Verificando y puliendo la respuesta…_';
+    convo.updated = Date.now();
+    saveConvos();
+    if (state.activeId === convo.id) renderMessages();
+    void syncPushOne(convo);
+
+    const original = String(review.original || '');
+    const improved = String(review.improved || original);
+    const draft = String(review.draft || '');
+    let judge = null;
+    try {
+      try {
+        judge = await runJudgeReview(reasonModel('judge', 'anthropic/claude-opus-4.8'), original, improved, draft, convo, null, 100000);
+      } catch (_) {
+        judge = await runJudgeReview(reasonModel('orchestrator', 'google/gemini-2.5-flash'), original, improved, draft, convo, null, 45000);
+      }
+    } catch (_) {
+      judge = {
+        veredicto: 'RECHAZADO',
+        confianza: null,
+        fuentes: [],
+        advertencia: 'La verificacion final agoto el tiempo disponible; se conserva intacta la respuesta del especialista.',
+        correcciones: []
+      };
+    }
+
+    try {
+      const finalText = applyJudgeCorrections(draft, judge).trim() || draft.trim() || '_(sin respuesta)_';
+      message.content = finalText;
+      const verdict = extractVerdict(judge || {});
+      if (verdict) message.verdict = verdict;
+      message.reasoningReview = {
+        status: 'complete',
+        attempts: review.attempts,
+        createdAt: review.createdAt,
+        completedAt: Date.now()
+      };
+      markAssistantTurn(convo, finalText, 'Respuesta razonada');
+      convo.updated = Date.now();
+      saveConvos();
+      if (state.activeId === convo.id) renderMessages();
+      renderConvoList();
+      await syncPushOne(convo).catch(() => {});
+      fetchStatus();
+      void maybeUpdateConvoBrain(convo);
+    } finally {
+      activeReasonReviews.delete(jobKey);
+    }
+  }
+
+  function resumePendingReasonReviews() {
+    for (const convo of state.convos || []) {
+      for (const message of convo?.messages || []) {
+        const status = message?.reasoningReview?.status;
+        if ((status === 'pending' || status === 'reviewing') && String(message.reasoningReview?.draft || '').trim()) {
+          void finalizeReasoningReview(convo.id, message.id);
+        }
+      }
+    }
+  }
+
   // Extrae el codigo de un bloque ``` (por lenguaje preferido; si no, el primer bloque).
   function extractFencedCode(text, langs) {
     const t = String(text || '');
@@ -3708,26 +3872,29 @@
     bub.innerHTML = reasonStageHtml(spec.stage);
     const draft = await reasonChat({ model: spec.model, system: composeSystemWithMemory(spec.system, convo, improved), messages: history, maxTokens: 9000, temperature: spec.temperature, plugins: spec.plugins, reasonStage: false }, signal);
 
-    bub.innerHTML = reasonStageHtml('judge');
-    const judgeRaw = await reasonChat({
-      model: reasonModel('judge', 'anthropic/claude-opus-4.8'),
-      system: composeSystemWithMemory(JUDGE_PROMPT, convo, text),
-      messages: [{ role: 'user', content: 'PETICION ORIGINAL:\n' + text + '\n\nPROMPT MEJORADO:\n' + improved + '\n\nBORRADOR DEL ESPECIALISTA:\n' + draft }],
-      maxTokens: 9000,
-      temperature: 0.1,
-      reasonStage: false
-    }, signal);
-    const j = parseReasonJson(judgeRaw);
-    const finalText = String(j.respuesta_final || draft).trim() || '_(sin respuesta)_';
-    const verdict = extractVerdict(j);
-
-    const m = { id: uid(), role: 'assistant', content: finalText, ts: Date.now() };
-    if (verdict) m.verdict = verdict;
-    markAssistantTurn(convo, finalText, 'Respuesta razonada');
+    // Checkpoint durable: el especialista termina y su borrador se guarda ANTES de
+    // arrancar al juez. La revision corre desacoplada y puede reanudarse tras recargar.
+    const m = {
+      id: uid(),
+      role: 'assistant',
+      content: '_Verificando y puliendo la respuesta…_',
+      ts: Date.now(),
+      reasoningReview: {
+        status: 'pending',
+        original: text,
+        improved,
+        draft,
+        specialistModel: spec.model,
+        attempts: 0,
+        createdAt: Date.now(),
+        completedAt: 0
+      }
+    };
     convo.messages.push(m);
     convo.updated = Date.now();
-    saveConvos(); renderMessages(); renderConvoList(); syncPushOne(convo); fetchStatus();
-    void maybeUpdateConvoBrain(convo);
+    saveConvos(); renderMessages(); renderConvoList();
+    await syncPushOne(convo).catch(() => {});
+    void finalizeReasoningReview(convo.id, m.id);
   }
 
   async function reasonChat(opts, signal) {
