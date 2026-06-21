@@ -413,7 +413,7 @@
       }
     }
     if (errored) throw ApiError(errored, 500, credits);
-    return { text: full, credits };
+    return { text: full, credits, finishReason, truncated, events, sawReasoning };
   }
 
   /* ─────────────────── Conversaciones ─────────────────── */
@@ -2712,22 +2712,34 @@
     bub.innerHTML = reasonStageHtml('code_css');
     const css = await reasonChat({ model: cssModel, system: composeSystemWithMemory(CODE_CSS_PROMPT, convo, improved), messages: [{ role: 'user', content: 'HTML DE ESTRUCTURA:\n' + html + brief }], maxTokens: 26000, temperature: 0.2, reasonStage: stage, stageLabel: 'Programar · CSS' }, signal);
 
-    bub.innerHTML = renderProgramPolishLive({ text: '', events: 0, sawReasoning: false });
-    const finalResult = await streamReasonChat({
-      model: polishModel,
-      system: composeSystemWithMemory(CODE_POLISH_PROMPT, convo, improved),
-      messages: [{ role: 'user', content: 'BRIEF FINAL DEL PROYECTO:\n' + improved + '\n\nHTML DE ESTRUCTURA:\n' + html + '\n\nCSS:\n' + css }],
-      maxTokens: 20000,
-      temperature: 0.15,
-      reasonStage: stage,
-      stageLabel: 'Programar · pulido'
-    }, signal, {
-      onProgress: (progress) => {
-        bub.innerHTML = renderProgramPolishLive(progress);
-        scrollDown();
-      }
-    });
-    return String(finalResult && finalResult.text || '').trim();
+    let combinedPolish = '';
+    let finalResult = null;
+    for (let pass = 0; pass < 2; pass += 1) {
+      const isContinuation = pass > 0;
+      const prompt = isContinuation
+        ? 'CONTINUA EXACTAMENTE desde donde te quedaste en el mismo documento HTML. NO reinicies desde cero, NO repitas bloques completos y cierra lo que falte. Si ya habias abierto ```html, sigue dentro del mismo bloque hasta terminarlo y luego agrega las 2-3 lineas finales en espanol.\n\nULTIMA SALIDA ENTREGADA:\n' + combinedPolish.slice(-12000)
+        : 'BRIEF FINAL DEL PROYECTO:\n' + improved + '\n\nHTML DE ESTRUCTURA:\n' + html + '\n\nCSS:\n' + css;
+      if (!isContinuation) bub.innerHTML = renderProgramPolishLive({ text: '', events: 0, sawReasoning: false });
+      finalResult = await streamReasonChat({
+        model: polishModel,
+        system: composeSystemWithMemory(CODE_POLISH_PROMPT, convo, improved),
+        messages: [{ role: 'user', content: prompt }],
+        maxTokens: isContinuation ? 12000 : 20000,
+        temperature: 0.15,
+        reasonStage: stage,
+        stageLabel: isContinuation ? 'Programar · pulido (continuacion)' : 'Programar · pulido'
+      }, signal, {
+        onProgress: (progress) => {
+          const liveText = combinedPolish + String(progress && progress.text || '');
+          bub.innerHTML = renderProgramPolishLive({ text: liveText, events: progress && progress.events, sawReasoning: progress && progress.sawReasoning });
+          scrollDown();
+        }
+      });
+      combinedPolish += String(finalResult && finalResult.text || '');
+      if (!(finalResult && finalResult.truncated)) break;
+      combinedPolish += '\n';
+    }
+    return String(combinedPolish || '').trim();
   }
 
   /* ─────────── Herramienta "Programar": asistente interactivo + build ─────────── */
@@ -3148,6 +3160,8 @@
     let errorStatus = 500;
     let events = 0;
     let sawReasoning = false;
+    let finishReason = null;
+    let truncated = false;
 
     const emit = () => {
       if (hooks && typeof hooks.onProgress === 'function') hooks.onProgress({ text: full, events, sawReasoning });
@@ -3169,6 +3183,8 @@
       if (evt.type === 'complete') {
         if (typeof evt.text === 'string' && evt.text.length >= full.length) full = evt.text;
         if (evt.credits) credits = evt.credits;
+        finishReason = evt.finishReason || finishReason;
+        truncated = evt.truncated === true || String(evt.finishReason || '').toLowerCase() === 'length';
         emit();
         return;
       }
@@ -3201,7 +3217,7 @@
       }
     }
     if (errored) throw ApiError(stageErrorMessage(opts, { error: errored, status: errorStatus }, null), errorStatus, credits);
-    return { text: full, credits };
+    return { text: full, credits, finishReason, truncated, events, sawReasoning };
   }
 
   function mergeCredits(base, extra) {
@@ -3802,6 +3818,7 @@
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', init);
   else init();
 })();
+
 
 
 
