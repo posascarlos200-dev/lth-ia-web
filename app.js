@@ -216,6 +216,18 @@
     return '<!DOCTYPE html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><style>' + css + '</style></head><body>' + htmlBlock + '<script>' + js + '</script></body></html>';
   }
 
+  // Bloque de Vista previa (iframe + barra de acciones) a partir de un documento HTML.
+  function buildPreviewBlockHtml(doc) {
+    if (!doc || !String(doc).trim()) return '';
+    return '<div class="code-preview"><button class="code-preview-btn" type="button" data-preview-toggle="1">▶ Vista previa</button>'
+      + '<div class="code-preview-frame" hidden>'
+      + '<div class="code-preview-bar"><button class="code-preview-fs" type="button" data-preview-fullscreen="1" title="Pantalla completa">⛶ Pantalla completa</button>'
+      + '<button class="code-preview-fs" type="button" data-preview-download="single" title="Descargar como un solo archivo HTML">⬇ HTML</button>'
+      + '<button class="code-preview-fs" type="button" data-preview-download="zip" title="Descargar HTML, CSS y JS separados (.zip)">⬇ .zip (3 archivos)</button>'
+      + '<button class="code-preview-fs" type="button" data-preview-edit="1" title="Editar esta página (cambia colores, agrega secciones, etc.)">✎ Editar</button></div>'
+      + '<iframe class="code-preview-iframe" sandbox="allow-scripts allow-modals allow-popups" loading="lazy" srcdoc="' + previewAttr(doc) + '"></iframe></div></div>';
+  }
+
   function previewAttr(s) {
     return String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/"/g, '&quot;');
   }
@@ -259,15 +271,7 @@
     let out = html || '<p></p>';
     if (opts && opts.preview) {
       const doc = buildPreviewDoc(src);
-      if (doc) {
-        out += '<div class="code-preview"><button class="code-preview-btn" type="button" data-preview-toggle="1">▶ Vista previa</button>'
-          + '<div class="code-preview-frame" hidden>'
-          + '<div class="code-preview-bar"><button class="code-preview-fs" type="button" data-preview-fullscreen="1" title="Pantalla completa">⛶ Pantalla completa</button>'
-          + '<button class="code-preview-fs" type="button" data-preview-download="single" title="Descargar como un solo archivo HTML">⬇ HTML</button>'
-          + '<button class="code-preview-fs" type="button" data-preview-download="zip" title="Descargar HTML, CSS y JS separados (.zip)">⬇ .zip (3 archivos)</button>'
-          + '<button class="code-preview-fs" type="button" data-preview-edit="1" title="Editar esta página (cambia colores, agrega secciones, etc.)">✎ Editar</button></div>'
-          + '<iframe class="code-preview-iframe" sandbox="allow-scripts allow-modals allow-popups" loading="lazy" srcdoc="' + previewAttr(doc) + '"></iframe></div></div>';
-      }
+      if (doc) out += buildPreviewBlockHtml(doc);
     }
     return out;
   }
@@ -703,6 +707,7 @@
     if (Array.isArray(message.media) && message.media.length) next.media = message.media;
     if (message.verdict) next.verdict = message.verdict;
     if (message._feedback) next._feedback = message._feedback;
+    if (message.programDoc && String(message.programDoc).trim()) next.programDoc = String(message.programDoc);
     return next;
   }
 
@@ -1416,7 +1421,10 @@
       created: newer.created || older.created || new Date().toISOString(),
       updated: Math.max(Number(a.updated || 0), Number(b.updated || 0), 0),
       messages: mergeMessageLists(older.messages, newer.messages),
-      brain: mergeBrain(older.brain, newer.brain)
+      brain: mergeBrain(older.brain, newer.brain),
+      // El modo del chat es pegajoso: el servidor no lo guarda, asi que conservamos el
+      // modo no-auto de cualquiera de las dos versiones (si no, al sincronizar se perdia).
+      mode: [newer.mode, older.mode].find((mm) => mm && mm !== 'auto') || 'auto'
     });
   }
 
@@ -1699,6 +1707,7 @@
       messages: convo.messages.slice(-120).map((m) => {
         const r = { id: m.id, role: m.role, content: String(m.content || '').slice(0, 20000), ts: m.ts };
         if (Array.isArray(m.media) && m.media.length) r.media = m.media;
+        if (m.programDoc) r.programDoc = String(m.programDoc).slice(0, 200000);
         return r;
       }),
       brain: normalizeBrain(convo.brain),
@@ -1858,6 +1867,8 @@
     for (const m of c.messages) {
       const html = m.role === 'user' ? escapeHtml(m.content).replace(/\n/g, '<br>') : renderMarkdown(m.content, { preview: true });
       const node = bubbleEl(m.role, html);
+      // Pagina de Programar: la Vista previa se arma del doc adjunto (no del markdown).
+      if (m.role === 'assistant' && m.programDoc) node.bub.innerHTML += buildPreviewBlockHtml(m.programDoc);
       if (Array.isArray(m.media) && m.media.length) appendMedia(node.bub, m.media);
       if (m.role === 'assistant' && m.verdict) appendVerdict(node.bub, m.verdict);
       if (m.role === 'assistant' && String(m.content || '').trim()) appendFeedback(node.bub, m, c);
@@ -2904,13 +2915,12 @@
 
     // 3) JS (solo interacciones).
     bub.innerHTML = reasonStageHtml('code_js');
-    const jsRaw = await streamProgramAgent({ model: jsModel, system: composeSystemWithMemory(CODE_JS_PROMPT, convo, improved), messages: [{ role: 'user', content: 'HTML:\n' + html + '\n\nCSS (resumen):\n' + css.slice(0, 1800) + brief }], maxTokens: 8000, temperature: 0.2, reasonStage: stage, stageLabel: 'Programar · interacciones' }, 'code_js', bub, signal);
+    const jsRaw = await streamProgramAgent({ model: jsModel, system: composeSystemWithMemory(CODE_JS_PROMPT, convo, improved), messages: [{ role: 'user', content: 'HTML:\n' + html + brief }], maxTokens: 14000, temperature: 0.2, reasonStage: stage, stageLabel: 'Programar · interacciones' }, 'code_js', bub, signal);
     const js = extractFencedCode(jsRaw, ['js', 'javascript']);
 
     // 4) Ensamblado en CODIGO: un solo documento completo (nunca se corta).
     bub.innerHTML = reasonStageHtml('code_assemble');
-    const doc = assembleProgramDoc(html, css, js);
-    return '```html\n' + doc + '\n```\n\nPagina lista: estructura, estilos e interacciones integrados en un solo archivo. Abrela con **Vista previa**.';
+    return assembleProgramDoc(html, css, js);
   }
 
   /* ─────────── Herramienta "Programar": asistente interactivo + build ─────────── */
@@ -3087,10 +3097,10 @@
 
   // Guarda el artefacto (html/css/js/doc) por 48h para la futura funcion de editar.
   // user_id lo pone la BD por defecto (auth.uid()); RLS asegura que sea del propio usuario.
-  async function saveProgramArtifact(convo, messageId, request, finalCode) {
+  async function saveProgramArtifact(convo, messageId, request, doc) {
     try {
-      const doc = extractFencedCode(String(finalCode || ''), ['html']);
-      if (!doc || !doc.trim()) return;
+      doc = String(doc || '').trim();
+      if (!doc) return;
       const parts = splitProgramDocParts(doc);
       const token = await ensureToken();
       if (!token) return;
@@ -3112,7 +3122,9 @@
     const msgs = (convo && convo.messages) || [];
     for (let i = msgs.length - 1; i >= 0; i -= 1) {
       const m = msgs[i];
-      if (m && m.role === 'assistant' && /```html/i.test(String(m.content || ''))) {
+      if (!m || m.role !== 'assistant') continue;
+      if (m.programDoc && String(m.programDoc).trim()) return String(m.programDoc);
+      if (/```html/i.test(String(m.content || ''))) {
         const d = extractFencedCode(String(m.content), ['html']);
         if (d && d.trim()) return d;
       }
@@ -3221,19 +3233,26 @@
 
       bub.innerHTML = reasonStageHtml('code_assemble');
       const doc = assembleProgramDoc(html, css, js);
-      const finalCode = '```html\n' + doc + '\n```\n\nCambio aplicado: ' + instruccion + '. Ábrela con **Vista previa** o descárgala.';
-      bub.innerHTML = renderMarkdown(finalCode, { preview: true });
-      const m = { id: uid(), role: 'assistant', content: finalCode, ts: Date.now() };
-      markAssistantTurn(convo, finalCode, 'Edicion de pagina (Programar)');
-      convo.messages.push(m);
-      convo.updated = Date.now();
-      saveConvos(); renderMessages(); renderConvoList(); syncPushOne(convo); fetchStatus();
-      void saveProgramArtifact(convo, m.id, 'Edicion: ' + instruccion, finalCode);
+      pushProgramResult(convo, bub, doc, 'Cambio aplicado ✅: ' + instruccion + '. Usa **Vista previa**, **Editar** o **Descargar** abajo.', 'Edicion: ' + instruccion, 'Edicion de pagina (Programar)');
     } catch (e) {
       bub.innerHTML = renderMarkdown('No se pudo editar: ' + ((e && e.message) || 'error') + '.');
     } finally {
       setBusy(false); state.abort = null;
     }
+  }
+
+  // El documento va ADJUNTO al mensaje (m.programDoc), no dentro del markdown: asi la Vista
+  // previa siempre sale (sin parsear fences) y el doc grande no se trunca.
+  function pushProgramResult(convo, bub, doc, note, request, label) {
+    const safeDoc = String(doc || '').trim();
+    bub.innerHTML = renderMarkdown(note) + buildPreviewBlockHtml(safeDoc);
+    const m = { id: uid(), role: 'assistant', content: note, programDoc: safeDoc, ts: Date.now() };
+    markAssistantTurn(convo, note, label);
+    convo.messages.push(m);
+    convo.updated = Date.now();
+    saveConvos(); renderMessages(); renderConvoList(); syncPushOne(convo); fetchStatus();
+    void saveProgramArtifact(convo, m.id, request, safeDoc);
+    return m;
   }
 
   async function confirmProgramPlan() {
@@ -3249,14 +3268,9 @@
     try {
       const history = buildCloudMessages(convo, 'reasoning');
       const built = await buildCodePipeline(p.request, brief, convo, history, bub, state.abort.signal, true);
-      const finalCode = String(built || '').trim() || '_(sin respuesta)_';
-      bub.innerHTML = renderMarkdown(finalCode, { preview: true });
-      const m = { id: uid(), role: 'assistant', content: finalCode, ts: Date.now() };
-      markAssistantTurn(convo, finalCode, 'Pagina construida (Programar)');
-      convo.messages.push(m);
-      convo.updated = Date.now();
-      saveConvos(); renderMessages(); renderConvoList(); syncPushOne(convo); fetchStatus();
-      void saveProgramArtifact(convo, m.id, p.request, finalCode);
+      const doc = String(built || '').trim();
+      if (!doc) { bub.innerHTML = renderMarkdown('No se pudo construir la página. Intenta de nuevo.'); return; }
+      pushProgramResult(convo, bub, doc, 'Página lista ✅ — estructura, estilos e interacciones en un solo archivo. Usa **Vista previa**, **Editar** o **Descargar** abajo.', p.request, 'Pagina construida (Programar)');
       void maybeUpdateConvoBrain(convo);
     } catch (e) {
       bub.innerHTML = renderMarkdown('No se pudo construir: ' + ((e && e.message) || 'error') + '.');
@@ -3639,23 +3653,35 @@
       send(el.input.value);
     });
     el.reasonBtn.addEventListener('click', () => {
+      if (el.reasonBtn.disabled) return;
       if (!canUsePremium()) { showProModal('reasoning'); return; }
       state.reasoning = !state.reasoning; persistReason(); renderReasonBtn();
-      if (state.reasoning && state.programMode) { state.programMode = false; persistProgram(); renderProgramBtn(); }
+      // Solo un modo a la vez.
+      if (state.reasoning) {
+        if (state.programMode) { state.programMode = false; persistProgram(); renderProgramBtn(); }
+        if (state.createMode) { state.createMode = false; renderCreateBtn(); }
+      }
     });
     if (el.programBtn) el.programBtn.addEventListener('click', () => {
+      if (el.programBtn.disabled) return;
       if (!canUsePremium()) { showProModal('reasoning'); return; }
       state.programMode = !state.programMode; persistProgram(); renderProgramBtn();
       if (state.programMode) {
         if (state.reasoning) { state.reasoning = false; persistReason(); renderReasonBtn(); }
+        if (state.createMode) { state.createMode = false; renderCreateBtn(); }
         setComposerHint('Modo Programar: escribe que pagina o app quieres y te guio paso a paso.');
       }
     });
     if (el.programClose) el.programClose.addEventListener('click', closeProgramModal);
     if (el.programModal) el.programModal.addEventListener('click', (e) => { if (e.target === el.programModal) closeProgramModal(); });
     if (el.createBtn) el.createBtn.addEventListener('click', () => {
+      if (el.createBtn.disabled) return;
       state.createMode = !state.createMode; renderCreateBtn();
-      if (state.createMode) setComposerHint('Modo crear: describe la pagina o mini-app y la IA la genera en HTML (con Vista previa).');
+      if (state.createMode) {
+        if (state.reasoning) { state.reasoning = false; persistReason(); renderReasonBtn(); }
+        if (state.programMode) { state.programMode = false; persistProgram(); renderProgramBtn(); }
+        setComposerHint('Modo crear: describe la pagina o mini-app y la IA la genera en HTML (con Vista previa).');
+      }
     });
     if (el.themeSeg) el.themeSeg.addEventListener('click', (e) => {
       const b = e.target.closest('[data-theme]');
