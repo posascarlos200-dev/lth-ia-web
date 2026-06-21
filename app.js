@@ -83,12 +83,13 @@
     'Eres el AGENTE DE ESTRUCTURA del build de codigo de Mady (modo razonamiento).',
     'Recibes un BRIEF claro del proyecto. Entrega SOLO la ESTRUCTURA HTML semantica y COMPLETA del proyecto: todas las secciones reales pedidas, con contenido de ejemplo realista (nada de "lorem" vacio ni placeholders sin sentido).',
     'No escribas CSS (ni estilos inline) ni JS, salvo lo imprescindible para el esqueleto. Usa clases con nombres claros y consistentes que el agente de CSS pueda estilar.',
-    'Piensa la jerarquia completa (header, nav, hero, secciones de contenido, footer, etc. segun el proyecto). Devuelve el HTML en UN bloque ```html y nada de texto fuera del codigo.'
+    'Piensa la jerarquia completa (header, nav, hero, secciones de contenido, footer, etc. segun el proyecto). Si el proyecto necesita un control de tema/modo oscuro, incluye un boton con id="theme-toggle". Devuelve el HTML en UN bloque ```html y nada de texto fuera del codigo.'
   ].join('\n');
   const CODE_CSS_PROMPT = [
     'Eres el AGENTE DE CSS del build de codigo de Mady.',
     'Recibes el HTML de estructura. Escribe el CSS COMPLETO, moderno y responsive para ESE HTML: mobile-first, variables de color, buena tipografia, espaciados consistentes, grid/flex, estados hover/focus y animaciones sutiles. Cubre TODAS las clases y secciones del HTML; no dejes nada sin estilar.',
-    'No modifiques el HTML; estila por las clases existentes. Devuelve SOLO el CSS en UN bloque ```css, sin explicaciones.'
+    'No modifiques el HTML; estila por las clases existentes. Devuelve SOLO el CSS en UN bloque ```css, sin explicaciones.',
+    'TEMA/MODO OSCURO: define los estilos del tema oscuro con selectores [data-theme="dark"] sobre <html> (ej. [data-theme="dark"] body { ... }, [data-theme="dark"] .card { ... }). NO inventes clases nuevas para el tema; usa siempre [data-theme="dark"] para que coincida con el JS.'
   ].join('\n');
   const CODE_POLISH_PROMPT = [
     'Eres el AGENTE DE PULIDO Y QA del build de codigo de Mady (ultimo paso; presentas al usuario).',
@@ -102,6 +103,7 @@
     'Eres el AGENTE DE INTERACTIVIDAD (JavaScript) del build de Mady.',
     'Recibes el HTML de estructura (y un extracto del CSS ya aplicado). Escribe SOLO el JavaScript que la pagina necesita para funcionar: menus, navegacion, tabs, sliders, modales, formularios, scroll suave, lo que pida el proyecto. Usa los id/clases que YA existen en el HTML.',
     'NO reescribas el HTML ni el CSS. NO devuelvas un documento completo. Si la pagina es estatica y no necesita JS, devuelve un bloque con un comentario breve.',
+    'TEMA/MODO OSCURO: el boton de tema (id="theme-toggle" u otro id que veas en el HTML) debe alternar SIEMPRE el atributo en <html>: document.documentElement.dataset.theme = (document.documentElement.dataset.theme === "dark" ? "" : "dark"). Asi coincide con el CSS [data-theme="dark"]. Engancha el listener al cargar (DOMContentLoaded). Cada control interactivo debe quedar realmente funcional.',
     'Devuelve SOLO el JavaScript en UN bloque ```js, sin explicaciones ni HTML.'
   ].join('\n');
 
@@ -3157,7 +3159,8 @@
     'Eres el router de EDICIONES de paginas web. Recibes el cambio que pide el usuario sobre una pagina ya hecha (HTML+CSS+JS).',
     'Decide que partes hay que regenerar. Devuelve SOLO JSON valido: { "html": false, "css": false, "js": false, "instruccion": "" }',
     'html=true si cambia contenido, textos, secciones o estructura. css=true si cambia colores, estilos, tamaños, espaciados o layout visual. js=true si cambia comportamiento, interacciones, menus o animaciones por codigo.',
-    'Marca SOLO lo necesario (una o varias). "instruccion" = el cambio reformulado claro y conciso.'
+    'IMPORTANTE: si el cambio AGREGA una funcionalidad interactiva (modo oscuro/tema, menu, tabs, slider, modal, carrusel, formulario con validacion, filtros, etc.) marca html=true, css=true Y js=true las TRES, porque necesita estructura (boton/control) + estilos + comportamiento para funcionar de verdad.',
+    'Marca lo necesario (una o varias). "instruccion" = el cambio reformulado claro y conciso.'
   ].join('\n');
 
   function openProgramEdit(doc) {
@@ -3217,17 +3220,17 @@
 
       if (touchHtml) {
         bub.innerHTML = reasonStageHtml('code_structure');
-        const r = await streamProgramAgent({ model: codeModel, system: 'Eres el editor de HTML. Recibes el HTML actual y un cambio. Devuelve el HTML COMPLETO actualizado en UN bloque ```html, aplicando el cambio y conservando intacto lo que no cambia. No incluyas CSS ni JS inline (van aparte).', messages: [{ role: 'user', content: 'CAMBIO:\n' + instruccion + '\n\nHTML ACTUAL:\n' + html }], maxTokens: 16000, temperature: 0.2, reasonStage: false, stageLabel: 'Editar · HTML' }, 'code_structure', bub, signal);
+        const r = await streamProgramAgent({ model: codeModel, system: 'Eres el editor de HTML. Recibes el HTML actual y un cambio. Devuelve el HTML COMPLETO actualizado en UN bloque ```html, aplicando el cambio y conservando intacto lo que no cambia. No incluyas CSS ni JS inline (van aparte). Si agregas un control de tema/modo oscuro, el boton debe tener id="theme-toggle".', messages: [{ role: 'user', content: 'CAMBIO:\n' + instruccion + '\n\nHTML ACTUAL:\n' + html }], maxTokens: 16000, temperature: 0.2, reasonStage: false, stageLabel: 'Editar · HTML' }, 'code_structure', bub, signal);
         html = extractFencedCode(r, ['html', 'markup', 'xml']);
       }
       if (touchCss) {
         bub.innerHTML = reasonStageHtml('code_css');
-        const r = await streamProgramAgent({ model: codeModel, system: 'Eres el editor de CSS. Recibes el HTML (contexto) y el CSS actual y un cambio. Devuelve el CSS COMPLETO actualizado en UN bloque ```css, aplicando el cambio y conservando lo que sirve. No reescribas el HTML.', messages: [{ role: 'user', content: 'CAMBIO:\n' + instruccion + '\n\nHTML (contexto):\n' + html + '\n\nCSS ACTUAL:\n' + css }], maxTokens: 16000, temperature: 0.2, reasonStage: false, stageLabel: 'Editar · CSS' }, 'code_css', bub, signal);
+        const r = await streamProgramAgent({ model: codeModel, system: 'Eres el editor de CSS. Recibes el HTML (contexto) y el CSS actual y un cambio. Devuelve el CSS COMPLETO actualizado en UN bloque ```css, aplicando el cambio y conservando lo que sirve. No reescribas el HTML. TEMA/MODO OSCURO: define el tema oscuro con selectores [data-theme="dark"] sobre <html> (ej. [data-theme="dark"] body { ... }); no inventes clases nuevas para el tema.', messages: [{ role: 'user', content: 'CAMBIO:\n' + instruccion + '\n\nHTML (contexto):\n' + html + '\n\nCSS ACTUAL:\n' + css }], maxTokens: 16000, temperature: 0.2, reasonStage: false, stageLabel: 'Editar · CSS' }, 'code_css', bub, signal);
         css = extractFencedCode(r, ['css']);
       }
       if (touchJs) {
         bub.innerHTML = reasonStageHtml('code_js');
-        const r = await streamProgramAgent({ model: codeModel, system: 'Eres el editor de JavaScript. Recibes el HTML (contexto) y el JS actual y un cambio. Devuelve el JS COMPLETO actualizado en UN bloque ```js. No reescribas el HTML ni el CSS.', messages: [{ role: 'user', content: 'CAMBIO:\n' + instruccion + '\n\nHTML (contexto):\n' + html + '\n\nJS ACTUAL:\n' + (js || '// (sin JS aun)') }], maxTokens: 8000, temperature: 0.2, reasonStage: false, stageLabel: 'Editar · JS' }, 'code_js', bub, signal);
+        const r = await streamProgramAgent({ model: codeModel, system: 'Eres el editor de JavaScript. Recibes el HTML y el CSS (contexto) y el JS actual y un cambio. Devuelve el JS COMPLETO actualizado en UN bloque ```js. No reescribas el HTML ni el CSS. Usa los id/clases que YA existen en el HTML y los selectores del CSS. TEMA/MODO OSCURO: el boton (id="theme-toggle" si existe) alterna document.documentElement.dataset.theme entre "dark" y "" (para coincidir con el CSS [data-theme="dark"]); engancha el listener en DOMContentLoaded. Cada control que agregues debe quedar realmente funcional.', messages: [{ role: 'user', content: 'CAMBIO:\n' + instruccion + '\n\nHTML (contexto):\n' + html + '\n\nCSS (contexto):\n' + css + '\n\nJS ACTUAL:\n' + (js || '// (sin JS aun)') }], maxTokens: 10000, temperature: 0.2, reasonStage: false, stageLabel: 'Editar · JS' }, 'code_js', bub, signal);
         js = extractFencedCode(r, ['js', 'javascript']);
       }
 
