@@ -258,12 +258,51 @@
   // Bloque de Vista previa (iframe + barra de acciones) a partir de un documento HTML.
   function buildPreviewBlockHtml(doc) {
     if (!doc || !String(doc).trim()) return '';
-    return '<div class="code-preview"><button class="code-preview-btn" type="button" data-preview-toggle="1">⛶ Abrir página</button>'
+    const code = escapeHtml(String(doc));
+    return '<div class="code-preview">'
+      + '<div class="code-preview-launch">'
+      + '<button class="code-preview-btn" type="button" data-preview-toggle="1">'
+      +   '<span class="cpl-ic">⛶</span>'
+      +   '<span class="cpl-tx"><span class="cpl-label">Abrir página</span><span class="cpl-sub">Vista previa interactiva</span></span>'
+      +   '<span class="cpl-go">↗</span>'
+      + '</button>'
+      + '<button class="code-preview-codebtn" type="button" data-preview-code="1" title="Ver y copiar el código"><span class="cpc-ic">&lt;/&gt;</span> Código</button>'
+      + '</div>'
       + '<div class="code-preview-frame" hidden>'
       + '<div class="code-preview-bar"><span class="code-preview-title">Vista de la página</span>'
       + '<button class="code-preview-fs" type="button" data-preview-download="single" title="Descargar como un solo archivo HTML">⬇ HTML</button>'
       + '<button class="code-preview-fs" type="button" data-preview-edit="1" title="Editar esta página">✎ Editar</button><button class="code-preview-fs code-preview-close" type="button" data-preview-close="1" title="Volver al chat">← Volver</button></div>'
-      + '<iframe class="code-preview-iframe" sandbox="allow-scripts allow-modals allow-popups" loading="lazy" data-doc="' + previewAttr(doc) + '" src="' + previewDataUrl(withPreviewShim(doc)) + '"></iframe></div></div>';
+      + '<iframe class="code-preview-iframe" sandbox="allow-scripts allow-modals allow-popups" loading="lazy" data-doc="' + previewAttr(doc) + '" src="' + previewDataUrl(withPreviewShim(doc)) + '"></iframe></div>'
+      + '<div class="code-preview-code" hidden>'
+      + '<div class="code-preview-bar"><span class="code-preview-title">Código HTML</span>'
+      + '<button class="code-preview-fs" type="button" data-preview-copy="1" title="Copiar el código">⧉ Copiar</button>'
+      + '<button class="code-preview-fs code-preview-close" type="button" data-preview-codeclose="1" title="Cerrar el código">← Volver</button></div>'
+      + '<pre class="code-preview-pre"><code>' + code + '</code></pre></div>'
+      + '</div>';
+  }
+
+  // Copia texto al portapapeles con feedback en el boton; cae a execCommand si hace falta.
+  function copyTextToClipboard(text, btn) {
+    const value = String(text == null ? '' : text);
+    const done = () => {
+      if (!btn) return;
+      const original = btn.innerHTML;
+      btn.innerHTML = '✓ Copiado';
+      setTimeout(() => { btn.innerHTML = original; }, 1400);
+    };
+    const fallback = () => {
+      try {
+        const ta = document.createElement('textarea');
+        ta.value = value; ta.style.position = 'fixed'; ta.style.opacity = '0';
+        document.body.appendChild(ta); ta.select(); document.execCommand('copy');
+        document.body.removeChild(ta); done();
+      } catch (_) {}
+    };
+    try {
+      if (navigator.clipboard && navigator.clipboard.writeText) {
+        navigator.clipboard.writeText(value).then(done).catch(fallback);
+      } else { fallback(); }
+    } catch (_) { fallback(); }
   }
 
   function previewAttr(s) {
@@ -1856,8 +1895,10 @@
       const last = c.messages[c.messages.length - 1];
       const sub = last ? String(last.content).replace(/\s+/g, ' ').slice(0, 30) : 'vacio';
       const item = document.createElement('div');
-      item.className = 'convo-item' + (c.id === state.activeId ? ' on' : '');
-      item.innerHTML = '<div class="ci-title">' + escapeHtml(c.title || 'Chat') + '</div>' +
+      const isProgram = c.mode === 'program';
+      item.className = 'convo-item' + (isProgram ? ' is-program' : '') + (c.id === state.activeId ? ' on' : '');
+      const badge = isProgram ? '<span class="ci-badge">⌨ Programación</span>' : '';
+      item.innerHTML = '<div class="ci-title"><span class="ci-name">' + escapeHtml(c.title || 'Chat') + '</span>' + badge + '</div>' +
         '<div class="ci-sub"><span>' + escapeHtml(sub) + '</span><span class="ci-del" data-del="1">borrar</span></div>';
       item.addEventListener('click', (e) => {
         if (e.target && e.target.getAttribute('data-del')) { e.stopPropagation(); deleteConvo(c.id); return; }
@@ -3046,7 +3087,8 @@
     const trigger = wrap && wrap.querySelector('[data-preview-toggle]');
     frame.classList.remove('is-fullscreen-preview');
     frame.hidden = true;
-    if (trigger) trigger.textContent = '⛶ Abrir página';
+    const label = trigger && trigger.querySelector('.cpl-label');
+    if (label) label.textContent = 'Abrir página';
   }
 
   function submitProgramChoice(value) {
@@ -4123,15 +4165,40 @@
           openProgramEdit(lastProgramDoc(activeConvo()));
           return;
         }
+        const codeBtn = e.target.closest && e.target.closest('[data-preview-code]');
+        if (codeBtn) {
+          const wrap = codeBtn.closest('.code-preview');
+          const panel = wrap && wrap.querySelector('.code-preview-code');
+          const frame = wrap && wrap.querySelector('.code-preview-frame');
+          if (frame) closePreviewFrame(frame);
+          if (panel) panel.hidden = !panel.hidden;
+          return;
+        }
+        const codeClose = e.target.closest && e.target.closest('[data-preview-codeclose]');
+        if (codeClose) {
+          const panel = codeClose.closest('.code-preview-code');
+          if (panel) panel.hidden = true;
+          return;
+        }
+        const copyBtn = e.target.closest && e.target.closest('[data-preview-copy]');
+        if (copyBtn) {
+          const wrap = copyBtn.closest('.code-preview');
+          const codeEl = wrap && wrap.querySelector('.code-preview-pre code');
+          copyTextToClipboard(codeEl ? codeEl.textContent : '', copyBtn);
+          return;
+        }
         const btn = e.target.closest && e.target.closest('[data-preview-toggle]');
         if (!btn) return;
         const wrap = btn.closest('.code-preview');
         const frame = wrap && wrap.querySelector('.code-preview-frame');
         if (!frame) return;
+        const panel = wrap && wrap.querySelector('.code-preview-code');
+        if (panel) panel.hidden = true;
         const show = frame.hidden;
         frame.hidden = !show;
         frame.classList.toggle('is-fullscreen-preview', show);
-        btn.textContent = show ? 'Página abierta' : '⛶ Abrir página';
+        const label = btn.querySelector('.cpl-label');
+        if (label) label.textContent = show ? 'Página abierta' : 'Abrir página';
       });
     }
     el.composer = $('#composer'); el.input = $('#input'); el.sendBtn = $('#sendBtn'); el.reasonBtn = $('#reasonBtn'); el.createBtn = $('#createBtn');
