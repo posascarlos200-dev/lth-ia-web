@@ -214,5 +214,17 @@ assert.equal(api.extractFencedCode('```html\n<div>x</div>\n```', ['html']), '<di
   assert.match(full, /<script>[\s\S]*var z=1[\s\S]*<\/body>/, 'JS antes de cerrar body');
 }
 
+// Descarga: separar el doc autocontenido en index.html + style.css + script.js.
+{
+  const doc = api.assembleProgramDoc('<main>Hola</main>', '.x{color:red}', 'console.log(1)');
+  const parts = api.splitProgramDocParts(doc);
+  assert.match(parts.css, /\.x\{color:red\}/, 'extrae el CSS');
+  assert.match(parts.js, /console\.log\(1\)/, 'extrae el JS');
+  assert.match(parts.html, /<link rel="stylesheet" href="style\.css">/, 'enlaza style.css');
+  assert.match(parts.html, /<script src="script\.js"><\/script>/, 'enlaza script.js');
+  assert.doesNotMatch(parts.html, /<style>/i, 'el html ya no tiene <style> inline');
+  assert.match(parts.html, /<main>Hola<\/main>/, 'conserva el contenido');
+}
+
 console.log('router-temporal-regression: OK');
 

@@ -43,6 +43,7 @@
 
   // Motor de imagen: el MISMO modelo/ruta que usa LTH IA en el OS (edge compartido).
   const MEDIA_REST_URL = SB_URL + '/rest/v1/ia_media';
+  const PROGRAM_REST_URL = SB_URL + '/rest/v1/program_artifacts';
   const FEEDBACK_REST_URL = SB_URL + '/rest/v1/ai_response_feedback';
   const IMAGE_MODEL = 'google/gemini-3.1-flash-image-preview';
   const IMAGE_SYSTEM_PROMPT = 'Eres Mady, la asistente de LTH OS. Genera directamente la imagen que describe el usuario y acompanala con una frase breve en espanol. La imagen debe tratar EXACTAMENTE lo pedido; no agregues marcas, textos ni elementos no solicitados (nunca generes productos LTH si no se piden). Si el usuario pide texto dentro de la imagen, respetalo exactamente.';
@@ -260,11 +261,92 @@
       if (doc) {
         out += '<div class="code-preview"><button class="code-preview-btn" type="button" data-preview-toggle="1">▶ Vista previa</button>'
           + '<div class="code-preview-frame" hidden>'
-          + '<div class="code-preview-bar"><button class="code-preview-fs" type="button" data-preview-fullscreen="1" title="Pantalla completa">⛶ Pantalla completa</button></div>'
+          + '<div class="code-preview-bar"><button class="code-preview-fs" type="button" data-preview-fullscreen="1" title="Pantalla completa">⛶ Pantalla completa</button>'
+          + '<button class="code-preview-fs" type="button" data-preview-download="single" title="Descargar como un solo archivo HTML">⬇ HTML</button>'
+          + '<button class="code-preview-fs" type="button" data-preview-download="zip" title="Descargar HTML, CSS y JS separados (.zip)">⬇ .zip (3 archivos)</button></div>'
           + '<iframe class="code-preview-iframe" sandbox="allow-scripts allow-modals allow-popups" loading="lazy" srcdoc="' + previewAttr(doc) + '"></iframe></div></div>';
       }
     }
     return out;
+  }
+
+  /* ─────────── Descarga del resultado (1 archivo o .zip de 3) ─────────── */
+  function downloadBlob(blob, filename) {
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url; a.download = filename;
+    document.body.appendChild(a); a.click(); a.remove();
+    setTimeout(() => { try { URL.revokeObjectURL(url); } catch (_) {} }, 4000);
+  }
+  function downloadTextFile(text, filename, mime) {
+    downloadBlob(new Blob([String(text || '')], { type: mime || 'text/plain;charset=utf-8' }), filename);
+  }
+
+  // Separa un documento autocontenido en index.html + style.css + script.js (con enlaces).
+  function splitProgramDocParts(doc) {
+    const src = String(doc || '');
+    let css = ''; let js = ''; let m;
+    const styleRx = /<style[^>]*>([\s\S]*?)<\/style>/gi;
+    while ((m = styleRx.exec(src))) css += (m[1] || '').trim() + '\n';
+    const scriptRx = /<script(?![^>]*\bsrc=)[^>]*>([\s\S]*?)<\/script>/gi;
+    while ((m = scriptRx.exec(src))) js += (m[1] || '').trim() + '\n';
+    let html = src.replace(/<style[^>]*>[\s\S]*?<\/style>/gi, '').replace(/<script(?![^>]*\bsrc=)[^>]*>[\s\S]*?<\/script>/gi, '');
+    if (css.trim()) {
+      const link = '<link rel="stylesheet" href="style.css">';
+      html = /<\/head>/i.test(html) ? html.replace(/<\/head>/i, '  ' + link + '\n</head>') : (link + '\n' + html);
+    }
+    if (js.trim()) {
+      const ref = '<script src="script.js"></script>';
+      html = /<\/body>/i.test(html) ? html.replace(/<\/body>/i, '  ' + ref + '\n</body>') : (html + '\n' + ref);
+    }
+    return { html: html.replace(/\n{3,}/g, '\n\n').trim(), css: css.trim(), js: js.trim() };
+  }
+
+  // ZIP minimo (metodo store, sin compresion) — dependency-free.
+  function crc32(bytes) {
+    let table = crc32._t;
+    if (!table) {
+      table = crc32._t = new Uint32Array(256);
+      for (let n = 0; n < 256; n += 1) {
+        let c = n;
+        for (let k = 0; k < 8; k += 1) c = (c & 1) ? (0xEDB88320 ^ (c >>> 1)) : (c >>> 1);
+        table[n] = c >>> 0;
+      }
+    }
+    let crc = 0xFFFFFFFF;
+    for (let i = 0; i < bytes.length; i += 1) crc = (crc >>> 8) ^ table[(crc ^ bytes[i]) & 0xFF];
+    return (crc ^ 0xFFFFFFFF) >>> 0;
+  }
+  function makeZipBlob(files) {
+    const enc = new TextEncoder();
+    const u16 = (n) => [n & 0xFF, (n >>> 8) & 0xFF];
+    const u32 = (n) => [n & 0xFF, (n >>> 8) & 0xFF, (n >>> 16) & 0xFF, (n >>> 24) & 0xFF];
+    const parts = []; const central = []; let offset = 0;
+    for (const f of files) {
+      const nameBytes = enc.encode(f.name);
+      const data = enc.encode(String(f.content || ''));
+      const crc = crc32(data);
+      const local = [].concat(u32(0x04034b50), u16(20), u16(0), u16(0), u16(0), u16(0), u32(crc), u32(data.length), u32(data.length), u16(nameBytes.length), u16(0));
+      parts.push(new Uint8Array(local), nameBytes, data);
+      const cen = [].concat(u32(0x02014b50), u16(20), u16(20), u16(0), u16(0), u16(0), u16(0), u32(crc), u32(data.length), u32(data.length), u16(nameBytes.length), u16(0), u16(0), u16(0), u16(0), u32(0), u32(offset));
+      central.push(new Uint8Array(cen), nameBytes);
+      offset += local.length + nameBytes.length + data.length;
+    }
+    let centralSize = 0;
+    for (const c of central) centralSize += c.length;
+    const end = [].concat(u32(0x06054b50), u16(0), u16(0), u16(files.length), u16(files.length), u32(centralSize), u32(offset), u16(0));
+    return new Blob(parts.concat(central, [new Uint8Array(end)]), { type: 'application/zip' });
+  }
+
+  function downloadPreviewDoc(doc, mode) {
+    const d = String(doc || '');
+    if (!d.trim()) return;
+    if (mode === 'single') { downloadTextFile(d, 'pagina.html', 'text/html;charset=utf-8'); return; }
+    const parts = splitProgramDocParts(d);
+    const files = [{ name: 'index.html', content: parts.html }];
+    if (parts.css) files.push({ name: 'style.css', content: parts.css });
+    if (parts.js) files.push({ name: 'script.js', content: parts.js });
+    downloadBlob(makeZipBlob(files), 'pagina.zip');
   }
 
   /* ───────────────────────── Sesion ───────────────────────── */
@@ -1506,7 +1588,7 @@
     ]).catch(() => {});
   }
 
-  window.LTH_IA_TEST_API = { normalizeBrain, extractBrainFromUserMessage, buildBrainContextBlock, detectCrisisIntent, detectFreeSkillIntent, buildFreeSkillSystem, buildFreeSkillClarification, normalizeResearchQuery, detectFreeResearchIntent, buildFreeResearchContextBlock, buildDeviceMemoryRecallBlock, mergeConvoCollections, serializeConvoForCache, extractEntities, detectBrainConflicts, mergeBrain, parseDuckDuckGoResults, detectLiveWebIntent, buildPreviewDoc, applyConversationState, buildCategoryGuidance, buildTemporalSystemBlock, composeSystemWithMemory, ensureConvoBrain, reasonStageHtml, CODE_STRUCTURE_PROMPT, CODE_CSS_PROMPT, CODE_POLISH_PROMPT, ORCHESTRATOR_PROMPT, PROGRAM_WIZARD_PROMPT, programStepSignature, formatProgramChoice, buildProgramFallbackPlan, looksTrivial, extractFencedCode, assembleProgramDoc };
+  window.LTH_IA_TEST_API = { normalizeBrain, extractBrainFromUserMessage, buildBrainContextBlock, detectCrisisIntent, detectFreeSkillIntent, buildFreeSkillSystem, buildFreeSkillClarification, normalizeResearchQuery, detectFreeResearchIntent, buildFreeResearchContextBlock, buildDeviceMemoryRecallBlock, mergeConvoCollections, serializeConvoForCache, extractEntities, detectBrainConflicts, mergeBrain, parseDuckDuckGoResults, detectLiveWebIntent, buildPreviewDoc, applyConversationState, buildCategoryGuidance, buildTemporalSystemBlock, composeSystemWithMemory, ensureConvoBrain, reasonStageHtml, CODE_STRUCTURE_PROMPT, CODE_CSS_PROMPT, CODE_POLISH_PROMPT, ORCHESTRATOR_PROMPT, PROGRAM_WIZARD_PROMPT, programStepSignature, formatProgramChoice, buildProgramFallbackPlan, looksTrivial, extractFencedCode, assembleProgramDoc, splitProgramDocParts };
 
   async function loadConvos() {
     state.convos = loadCachedConvos();
@@ -2969,6 +3051,28 @@
     if (custom) custom.focus();
   }
 
+  // Guarda el artefacto (html/css/js/doc) por 48h para la futura funcion de editar.
+  // user_id lo pone la BD por defecto (auth.uid()); RLS asegura que sea del propio usuario.
+  async function saveProgramArtifact(convo, messageId, request, finalCode) {
+    try {
+      const doc = extractFencedCode(String(finalCode || ''), ['html']);
+      if (!doc || !doc.trim()) return;
+      const parts = splitProgramDocParts(doc);
+      const token = await ensureToken();
+      if (!token) return;
+      await fetch(PROGRAM_REST_URL, {
+        method: 'POST',
+        headers: { apikey: SB_KEY, Authorization: 'Bearer ' + token, 'Content-Type': 'application/json', Prefer: 'return=minimal' },
+        body: JSON.stringify({
+          conversation_id: convo && convo.id ? String(convo.id) : null,
+          message_id: messageId ? String(messageId) : null,
+          request: String(request || '').slice(0, 2000),
+          html: parts.html, css: parts.css, js: parts.js, doc: doc
+        })
+      });
+    } catch (_) {}
+  }
+
   async function confirmProgramPlan() {
     const p = state.program;
     if (!p || !p.active || state.busy) return;
@@ -2989,6 +3093,7 @@
       convo.messages.push(m);
       convo.updated = Date.now();
       saveConvos(); renderMessages(); renderConvoList(); syncPushOne(convo); fetchStatus();
+      void saveProgramArtifact(convo, m.id, p.request, finalCode);
       void maybeUpdateConvoBrain(convo);
     } catch (e) {
       bub.innerHTML = renderMarkdown('No se pudo construir: ' + ((e && e.message) || 'error') + '.');
@@ -3801,6 +3906,14 @@
           } else if (frame.webkitRequestFullscreen) {
             frame.webkitRequestFullscreen();
           }
+          return;
+        }
+        const dlBtn = e.target.closest && e.target.closest('[data-preview-download]');
+        if (dlBtn) {
+          const dlWrap = dlBtn.closest('.code-preview');
+          const iframe = dlWrap && dlWrap.querySelector('.code-preview-iframe');
+          const doc = iframe ? iframe.getAttribute('srcdoc') : '';
+          downloadPreviewDoc(doc, dlBtn.getAttribute('data-preview-download'));
           return;
         }
         const btn = e.target.closest && e.target.closest('[data-preview-toggle]');
