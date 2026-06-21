@@ -3159,8 +3159,9 @@
     'Eres el router de EDICIONES de paginas web. Recibes el cambio que pide el usuario sobre una pagina ya hecha (HTML+CSS+JS).',
     'Decide que partes hay que regenerar. Devuelve SOLO JSON valido: { "html": false, "css": false, "js": false, "instruccion": "" }',
     'html=true si cambia contenido, textos, secciones o estructura. css=true si cambia colores, estilos, tamaños, espaciados o layout visual. js=true si cambia comportamiento, interacciones, menus o animaciones por codigo.',
-    'IMPORTANTE: si el cambio AGREGA una funcionalidad interactiva (modo oscuro/tema, menu, tabs, slider, modal, carrusel, formulario con validacion, filtros, etc.) marca html=true, css=true Y js=true las TRES, porque necesita estructura (boton/control) + estilos + comportamiento para funcionar de verdad.',
-    'Marca lo necesario (una o varias). "instruccion" = el cambio reformulado claro y conciso.'
+    'Para AGREGAR una funcionalidad interactiva (modo oscuro/tema, menu, tabs, slider, modal, filtros, etc.): marca css=true (estilos) y js=true (el JS crea el control con document.createElement y lo conecta). NO marques html para eso — asi la edicion es rapida y no se reescribe toda la pagina.',
+    'Marca html=true SOLO si el cambio agrega o edita CONTENIDO estructural real (nuevas secciones con texto, nuevos campos, cambiar textos/titulos existentes).',
+    'Marca lo MINIMO necesario. "instruccion" = el cambio reformulado claro y conciso.'
   ].join('\n');
 
   function openProgramEdit(doc) {
@@ -3225,13 +3226,15 @@
       }
       if (touchCss) {
         bub.innerHTML = reasonStageHtml('code_css');
-        const r = await streamProgramAgent({ model: codeModel, system: 'Eres el editor de CSS. Recibes el HTML (contexto) y el CSS actual y un cambio. Devuelve el CSS COMPLETO actualizado en UN bloque ```css, aplicando el cambio y conservando lo que sirve. No reescribas el HTML. TEMA/MODO OSCURO: define el tema oscuro con selectores [data-theme="dark"] sobre <html> (ej. [data-theme="dark"] body { ... }); no inventes clases nuevas para el tema.', messages: [{ role: 'user', content: 'CAMBIO:\n' + instruccion + '\n\nHTML (contexto):\n' + html + '\n\nCSS ACTUAL:\n' + css }], maxTokens: 16000, temperature: 0.2, reasonStage: false, stageLabel: 'Editar · CSS' }, 'code_css', bub, signal);
-        css = extractFencedCode(r, ['css']);
+        const r = await streamProgramAgent({ model: codeModel, system: 'Eres el editor de CSS en modo PARCHE. Recibes el HTML y el CSS actual y un cambio. Devuelve SOLO las reglas CSS NUEVAS o de override necesarias para el cambio; se AGREGAN al final del CSS existente (asi que sobreescriben por cascada). NO repitas el CSS que no cambia ni devuelvas el archivo completo. Usa la misma o mayor especificidad para que el override gane. Tema oscuro: usa selectores [data-theme="dark"]. Devuelve SOLO ese CSS en UN bloque ```css.', messages: [{ role: 'user', content: 'CAMBIO:\n' + instruccion + '\n\nHTML (contexto):\n' + html + '\n\nCSS ACTUAL:\n' + css }], maxTokens: 6000, temperature: 0.2, reasonStage: false, stageLabel: 'Editar · CSS' }, 'code_css', bub, signal);
+        const add = extractFencedCode(r, ['css']);
+        if (add && add.trim()) css = (css.trim() + '\n\n/* — ' + instruccion.slice(0, 80) + ' — */\n' + add.trim());
       }
       if (touchJs) {
         bub.innerHTML = reasonStageHtml('code_js');
-        const r = await streamProgramAgent({ model: codeModel, system: 'Eres el editor de JavaScript. Recibes el HTML y el CSS (contexto) y el JS actual y un cambio. Devuelve el JS COMPLETO actualizado en UN bloque ```js. No reescribas el HTML ni el CSS. Usa los id/clases que YA existen en el HTML y los selectores del CSS. TEMA/MODO OSCURO: el boton (id="theme-toggle" si existe) alterna document.documentElement.dataset.theme entre "dark" y "" (para coincidir con el CSS [data-theme="dark"]); engancha el listener en DOMContentLoaded. Cada control que agregues debe quedar realmente funcional.', messages: [{ role: 'user', content: 'CAMBIO:\n' + instruccion + '\n\nHTML (contexto):\n' + html + '\n\nCSS (contexto):\n' + css + '\n\nJS ACTUAL:\n' + (js || '// (sin JS aun)') }], maxTokens: 10000, temperature: 0.2, reasonStage: false, stageLabel: 'Editar · JS' }, 'code_js', bub, signal);
-        js = extractFencedCode(r, ['js', 'javascript']);
+        const r = await streamProgramAgent({ model: codeModel, system: 'Eres el editor de JavaScript en modo PARCHE. Recibes el HTML, el CSS y el JS actual y un cambio. Devuelve SOLO el JavaScript NUEVO necesario para el cambio; se AGREGA al final del JS existente. NO repitas el JS que no cambia ni devuelvas todo. Si el cambio agrega un control (ej. boton de modo oscuro), CREALO con document.createElement y agregalo al DOM (asi no hace falta tocar el HTML). Usa ids/clases reales del HTML. Tema: alterna document.documentElement.dataset.theme entre "dark" y "" (coincide con [data-theme="dark"]). Engancha en DOMContentLoaded. Devuelve SOLO ese JS en UN bloque ```js.', messages: [{ role: 'user', content: 'CAMBIO:\n' + instruccion + '\n\nHTML (contexto):\n' + html + '\n\nCSS (contexto):\n' + css + '\n\nJS ACTUAL:\n' + (js || '// (sin JS aun)') }], maxTokens: 6000, temperature: 0.2, reasonStage: false, stageLabel: 'Editar · JS' }, 'code_js', bub, signal);
+        const add = extractFencedCode(r, ['js', 'javascript']);
+        if (add && add.trim()) js = (js.trim() + '\n\n// — ' + instruccion.slice(0, 80) + ' —\n' + add.trim());
       }
 
       bub.innerHTML = reasonStageHtml('code_assemble');
