@@ -163,6 +163,16 @@
     'Responde SOLO JSON valido: {"recomendacion":"1 frase breve para el usuario, o vacio","instruccion":"instruccion precisa para el editor, en imperativo, mencionando el elemento/seccion exacto y el resultado esperado"}.'
   ].join('\n');
 
+  // Arma la LISTA de fotos que llevara la pagina, ANTES de construir, para buscarlas y que el
+  // usuario las confirme. Gemini decide los items concretos (p.ej. los 10 jugadores por nombre).
+  const PROGRAM_IMAGE_LIST_PROMPT = [
+    'Eres el planificador de imagenes del modo Programar de Mady. A partir del pedido del usuario, devuelve la LISTA de fotos que la pagina necesitara, una por elemento concreto.',
+    'Si el pedido implica entidades especificas (p.ej. "los 10 mejores jugadores de futbol", "platillos mexicanos", "monumentos de Paris"), ENUMERALAS tu mismo con nombres reales y conocidos (Pele, Maradona, Messi...). Si son cosas genericas (un producto sin nombre, una seccion decorativa), describe el item igual.',
+    'Para cada item da: "name" (el nombre/etiqueta que aparecera en la pagina, p.ej. "Pele") y "query" (consulta de busqueda en INGLES o el nombre propio para encontrar su foto real, p.ej. "Pele footballer", "Eiffel Tower", "tacos al pastor").',
+    'Incluye solo los items que de verdad llevaran foto (max 16). No incluyas iconos ni fondos decorativos.',
+    'Devuelve SOLO JSON valido: {"items":[{"name":"Pele","query":"Pele footballer"},{"name":"Lionel Messi","query":"Lionel Messi"}, ...]}. Si la pagina no lleva fotos de cosas concretas, devuelve {"items":[]}.'
+  ].join('\n');
+
   // Asistente INTERACTIVO de edicion (Gemini Flash): antes de tocar la pagina, si el cambio
   // es ambiguo pregunta/recomienda con tarjetas (como el asistente de inicio); cuando la idea
   // queda clara, entrega una instruccion EXACTA para que la IA editora no falle ni pida "se mas
@@ -3626,17 +3636,155 @@
   }
 
   // Una sola IA produce el unico HTML. Una peticion = una llamada facturable.
-  async function buildCodePipeline(text, improved, convo, history, bub, signal, billed) {
+  // ── Confirmacion de imagenes ANTES de construir ──────────────────────────────────────
+  // Busca fotos REALES de un item (Commons + web sonar nativo) y devuelve solo las que CARGAN.
+  async function searchEntityPhotos(item, signal) {
+    const q = String((item && (item.query || item.name)) || '').trim();
+    if (!q) return [];
+    let cands = [];
+    try { const c = await searchCommonsProgramPhotos(q, signal); cands = (c || []).map((x) => x && x.url).filter(Boolean); } catch (_) {}
+    if (cands.length < 3 && !(signal && signal.aborted)) {
+      try {
+        // sonar busca de forma NATIVA (sin el plugin exa, que causaba el 403/rechazo).
+        const raw = await reasonChat({ model: reasonModel('program_asset_search', 'perplexity/sonar'), system: PROGRAM_ASSET_SEARCH_PROMPT, messages: [{ role: 'user', content: 'FOTOS PEDIDAS:\n' + q }], maxTokens: 1200, temperature: 0.1, reasonStage: false }, signal);
+        normalizeProgramAssets(raw).assets.forEach((a) => { if (a.url && cands.indexOf(a.url) < 0) cands.push(a.url); });
+      } catch (_) {}
+    }
+    const working = await validateImageUrls(cands.slice(0, 10), signal, 5000);
+    return cands.filter((u) => working.has(u));
+  }
+
+  // Gemini arma la lista de fotos (nombre + query) y buscamos cada una validada.
+  async function prepareProgramImageItems(request, improved, convo, signal, bub) {
+    if (bub) bub.innerHTML = '<span class="gen-img-loading">Buscando las fotos en internet<span class="dots"><i>.</i><i>.</i><i>.</i></span></span>';
+    await fetchReasonStatus();
+    let listed = [];
+    try {
+      const raw = await reasonChat({
+        model: reasonModel('edit_orchestrator', 'google/gemini-2.5-flash'),
+        system: composeSystemWithMemory(PROGRAM_IMAGE_LIST_PROMPT, convo, request),
+        messages: [{ role: 'user', content: 'PEDIDO:\n' + String(request || '') + (improved && improved !== request ? ('\n\nPLAN:\n' + improved) : '') }],
+        maxTokens: 900, temperature: 0.2, reasonStage: false
+      }, signal);
+      const parsed = parseReasonJson(raw) || {};
+      listed = Array.isArray(parsed.items) ? parsed.items.slice(0, 16) : [];
+    } catch (_) {}
+    const out = [];
+    for (let i = 0; i < listed.length; i += 1) {
+      if (signal && signal.aborted) break;
+      const it = listed[i] || {};
+      const name = String(it.name || '').trim();
+      if (!name) continue;
+      if (bub) bub.innerHTML = '<span class="gen-img-loading">Buscando fotos (' + (i + 1) + '/' + listed.length + ')<span class="dots"><i>.</i><i>.</i><i>.</i></span></span>';
+      const urls = await searchEntityPhotos({ name: name, query: it.query }, signal);
+      if (!urls.length) continue;
+      out.push({ name: name, query: String(it.query || name), url: urls[0], alts: urls.slice(1) });
+    }
+    return out;
+  }
+
+  async function openProgramImagePreview(convo, request, improved, history) {
+    openProgramModal();
+    setBusy(true); state.abort = new AbortController();
+    let items = [];
+    try { items = await prepareProgramImageItems(request, improved, convo, state.abort.signal, el.programBody); } catch (_) {}
+    setBusy(false); state.abort = null;
+    if (!items.length) {
+      // No hay fotos de entidades concretas (o no se encontraron): construir directo.
+      closeProgramModal();
+      return directProgramBuild(convo, request, improved, history);
+    }
+    state.programImages = { items: items, request: request, improved: improved, convo: convo, history: history };
+    renderProgramImagePreview(items);
+  }
+
+  function renderProgramImagePreview(items) {
+    if (!el.programBody) return;
+    const cells = items.map((it, i) => (
+      '<div class="pg-imgcell" data-img-idx="' + i + '">'
+      + '<div class="pg-imgwrap"><img src="' + escapeHtml(it.url) + '" alt="' + escapeHtml(it.name) + '" loading="lazy"></div>'
+      + '<div class="pg-imgname">' + escapeHtml(it.name) + '</div>'
+      + '<button type="button" class="pg-imgswap" data-img-swap="' + i + '">✕ Cambiar foto</button>'
+      + '</div>'
+    )).join('');
+    el.programBody.innerHTML = '<div class="pg-step"><div class="pg-q">Revisa las fotos antes de construir</div>'
+      + '<p class="cp-note">Estas fotos ya están verificadas (cargan). Si alguna no corresponde, pulsa "Cambiar foto".</p>'
+      + '<div class="pg-imggrid">' + cells + '</div>'
+      + '<div class="pg-actions"><button id="pgImgBuild" type="button" class="pg-next">Construir página ⏎</button></div></div>';
+    el.programBody.querySelectorAll('[data-img-swap]').forEach((b) => b.addEventListener('click', () => swapProgramImage(parseInt(b.getAttribute('data-img-swap'), 10), b)));
+    const build = el.programBody.querySelector('#pgImgBuild');
+    if (build) { build.addEventListener('click', confirmProgramImages); build.focus(); }
+  }
+
+  async function swapProgramImage(i, btn) {
+    const st = state.programImages;
+    if (!st || !st.items[i]) return;
+    const it = st.items[i];
+    const imgEl = el.programBody.querySelector('[data-img-idx="' + i + '"] img');
+    if (it.alts && it.alts.length) {
+      it.url = it.alts.shift();
+      if (imgEl) imgEl.src = it.url;
+      return;
+    }
+    // Sin alternativas: re-buscar por el nombre.
+    if (btn) { btn.disabled = true; btn.textContent = 'Buscando…'; }
+    const fresh = (await searchEntityPhotos({ name: it.name, query: it.query }, null)).filter((u) => u !== it.url);
+    if (fresh.length) { it.url = fresh[0]; it.alts = fresh.slice(1); if (imgEl) imgEl.src = it.url; }
+    if (btn) { btn.disabled = false; btn.textContent = '✕ Cambiar foto'; }
+  }
+
+  function confirmProgramImages() {
+    const st = state.programImages;
+    if (!st) return;
+    const map = st.items.filter((it) => it && it.url).map((it) => ({ name: it.name, url: it.url }));
+    state.programImages = null;
+    closeProgramModal();
+    directProgramBuild(st.convo, st.request, st.improved, st.history, map);
+  }
+
+  // Construccion + entrega compartida por ambos caminos (directo y tras el asistente).
+  async function directProgramBuild(convo, request, improved, history, confirmedImages) {
+    if (!convo || state.busy) return;
+    const built = bubbleEl('ai', reasonStageHtml('codigo'));
+    const bub = built.bub;
+    el.messages.appendChild(built.wrap); scrollDown();
+    setBusy(true); state.abort = new AbortController();
+    try {
+      const out = await buildCodePipeline(request, improved, convo, history || [], bub, state.abort.signal, true, confirmedImages || null);
+      const doc = String(out || '').trim();
+      if (!doc || !/<html[\s>]/i.test(doc)) throw new Error('La IA no devolvio un HTML completo.');
+      await finishProgramDoc(convo, bub, doc, 'Página lista ✅ — estructura, estilos e interacciones en un solo archivo. Usa **Vista previa**, **Editar** o **Descargar** abajo.', request, 'Pagina construida (Programar)', confirmedImages ? { confirmedImages: true } : undefined);
+      void maybeUpdateConvoBrain(convo);
+    } catch (e) {
+      bub.innerHTML = renderMarkdown('No se pudo construir: ' + ((e && e.message) || 'error') + '.');
+    } finally {
+      setBusy(false); state.abort = null;
+    }
+  }
+
+  async function buildCodePipeline(text, improved, convo, history, bub, signal, billed, confirmedImages) {
     await fetchReasonStatus();
     const codeModel = reasonModel('spec_codigo', 'deepseek/deepseek-v4-pro');
     const programModel = reasonModel('program_coder', codeModel);
     const requestText = String(text || '') + (improved && improved !== text ? ('\n' + improved) : '');
-    if (bub && detectProgramMediaIntent(requestText).active) {
-      bub.innerHTML = '<span class="gen-img-loading">Buscando fotografías reales<span class="dots"><i>.</i><i>.</i><i>.</i></span></span>';
+    let visualAssets = { intent: { active: false, explicitUrls: [] }, assets: [], context: '' };
+    let visualContext = '';
+    if (confirmedImages && confirmedImages.length) {
+      // Fotos ya confirmadas por el usuario: el constructor NO busca, solo coloca cada URL por
+      // nombre. Las protegemos para que la reparacion posterior no las toque.
+      visualContext = 'RECURSOS VISUALES OBLIGATORIOS POR NOMBRE (ya verificadas; NO busques ni inventes imagenes). Coloca la URL EXACTA de cada nombre en el elemento/tarjeta de ESE nombre, en <img src="..." alt="nombre">:\n'
+        + confirmedImages.map((c) => '- ' + c.name + ': ' + c.url).join('\n');
+      state.programVisualPool = confirmedImages.map((c) => c.url);
+      state.programProtectedUrls = new Set(confirmedImages.map((c) => c.url));
+    } else {
+      if (bub && detectProgramMediaIntent(requestText).active) {
+        bub.innerHTML = '<span class="gen-img-loading">Buscando fotografías reales<span class="dots"><i>.</i><i>.</i><i>.</i></span></span>';
+      }
+      visualAssets = await resolveProgramVisualAssets(requestText, convo, signal);
+      visualContext = visualAssets.context;
     }
-    const visualAssets = await resolveProgramVisualAssets(requestText, convo, signal);
     const brief = 'PEDIDO DEL USUARIO:\n' + text + (improved && improved !== text ? ('\n\nCONTEXTO ADICIONAL:\n' + improved) : '')
-      + (visualAssets.context ? ('\n\n' + visualAssets.context) : '');
+      + (visualContext ? ('\n\n' + visualContext) : '');
     const stage = billed ? false : undefined;
     bub.innerHTML = reasonStageHtml('codigo');
     const raw = await streamProgramAgent({
@@ -3652,13 +3800,14 @@
     }, 'codigo', bub, signal, (acc) => /<\/html\s*>/i.test(extractHtmlDoc(acc)));
     const doc = extractHtmlDoc(raw);
     const assembled = assembleProgramDoc(doc, '', '');
-    // Nunca descartamos una pagina ya generada (cuesta tokens reales). Si faltan las fotos
-    // obligatorias, las inyectamos por codigo y entregamos igual.
+    // Con fotos confirmadas el doc ya es confiable; si no, inyectamos las obligatorias que falten.
+    if (confirmedImages && confirmedImages.length) return assembled;
     return ensureProgramVisualAssets(assembled, visualAssets);
   }
   /* ─────────── Herramienta "Programar": asistente interactivo + build ─────────── */
   function openProgramModal() { if (el.programModal) el.programModal.hidden = false; }
   function closeProgramModal() { if (el.programModal) el.programModal.hidden = true; if (state.editFlow) state.editFlow.active = false; }
+  // Nota: state.programImages se limpia al confirmar/abandonar el preview de imagenes.
 
   function setProgramBusy() {
     if (el.programBody) el.programBody.innerHTML = '<div class="pg-busy"><span class="reason-orb"></span> Pensando opciones…</div>';
@@ -4108,7 +4257,11 @@
   async function finishProgramDoc(convo, bub, doc, note, request, label, opts) {
     let safeDoc = hardenProgramImages(String(doc || ''));
     const imgSignal = state.abort && state.abort.signal;
-    try { safeDoc = await correctEntityImages(safeDoc, imgSignal, bub); } catch (_) {}
+    // Con fotos confirmadas por el usuario NO corregimos (ya son las correctas); solo reparamos
+    // por si quedo alguna rota que no estaba en el set confirmado.
+    if (!(opts && opts.confirmedImages)) {
+      try { safeDoc = await correctEntityImages(safeDoc, imgSignal, bub); } catch (_) {}
+    }
     try {
       if (bub) bub.innerHTML = '<span class="gen-img-loading">Verificando imágenes<span class="dots"><i>.</i><i>.</i><i>.</i></span></span>';
       safeDoc = await repairProgramImages(safeDoc, imgSignal);
@@ -4407,42 +4560,22 @@
     if (!convo || !String(request || '').trim() || state.busy) return;
     if (!canUsePremium()) { showProModal('reasoning'); return; }
     convo.mode = 'program';
-    const { wrap, bub } = bubbleEl('ai', reasonStageHtml('codigo'));
-    el.messages.appendChild(wrap); scrollDown();
-    setBusy(true); state.abort = new AbortController();
-    try {
-      const doc = String(await buildCodePipeline(request, request, convo, [], bub, state.abort.signal, true) || '').trim();
-      if (!doc || !/<html[\s>]/i.test(doc)) throw new Error('La IA no devolvio un HTML completo.');
-      await finishProgramDoc(convo, bub, doc, 'Pagina lista ✅ — creada por una sola IA y guardada como un unico HTML. Abrela para verla a pantalla completa o pide un cambio puntual.', request, 'Pagina construida (Programar)');
-      void maybeUpdateConvoBrain(convo);
-    } catch (e) {
-      bub.innerHTML = renderMarkdown('No se pudo construir: ' + ((e && e.message) || 'error') + '.');
-    } finally {
-      setBusy(false); state.abort = null;
-    }
+    // Si la pagina llevara fotos, primero el preview para confirmarlas; si no, build directo.
+    if (detectProgramMediaIntent(request).active) return openProgramImagePreview(convo, request, request, []);
+    return directProgramBuild(convo, request, request, []);
   }
   async function confirmProgramPlan() {
     const p = state.program;
     if (!p || !p.active || state.busy) return;
     const convo = p.convo;
     const brief = (p.plan || p.request) + (p.answers.length ? '\n\nDecisiones del usuario:\n- ' + p.answers.join('\n- ') : '');
-    closeProgramModal();
     state.program.active = false;
-    const { wrap, bub } = bubbleEl('ai', reasonStageHtml('code_structure'));
-    el.messages.appendChild(wrap); scrollDown();
-    setBusy(true); state.abort = new AbortController();
-    try {
-      const history = buildCloudMessages(convo, 'reasoning');
-      const built = await buildCodePipeline(p.request, brief, convo, history, bub, state.abort.signal, true);
-      const doc = String(built || '').trim();
-      if (!doc) { bub.innerHTML = renderMarkdown('No se pudo construir la página. Intenta de nuevo.'); return; }
-      await finishProgramDoc(convo, bub, doc, 'Página lista ✅ — estructura, estilos e interacciones en un solo archivo. Usa **Vista previa**, **Editar** o **Descargar** abajo.', p.request, 'Pagina construida (Programar)');
-      void maybeUpdateConvoBrain(convo);
-    } catch (e) {
-      bub.innerHTML = renderMarkdown('No se pudo construir: ' + ((e && e.message) || 'error') + '.');
-    } finally {
-      setBusy(false); state.abort = null;
-    }
+    const history = buildCloudMessages(convo, 'reasoning');
+    // Si la pagina llevara fotos, primero el preview para confirmarlas (el modal sigue abierto);
+    // si no, build directo.
+    if (detectProgramMediaIntent(p.request + ' ' + brief).active) return openProgramImagePreview(convo, p.request, brief, history);
+    closeProgramModal();
+    return directProgramBuild(convo, p.request, brief, history);
   }
 
   function persistProgram() { try { localStorage.setItem(PROGRAM_KEY, state.programMode ? '1' : '0'); } catch (_) {} }
