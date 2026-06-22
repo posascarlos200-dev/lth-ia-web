@@ -436,6 +436,23 @@ input, textarea { font-family: inherit; }
 .reason-live .reason-dots i { width: 4px; height: 4px; border-radius: 50%; background: #8aa9ff; opacity: .4; animation: blink 1.2s infinite; }
 .reason-live .reason-dots i:nth-child(2) { animation-delay: .2s; }
 .reason-live .reason-dots i:nth-child(3) { animation-delay: .4s; }
+/* Ventana de espera del juez (modo razonamiento): borrador listo + verificacion en curso */
+.reason-review { margin: 1px 0; }
+.reason-review-bar { display: flex; align-items: center; gap: 11px; padding: 11px 13px; border-radius: 14px; border: 1px solid rgba(122,140,255,.3); background: linear-gradient(120deg, rgba(77,163,255,.13), rgba(122,92,255,.13)); box-shadow: 0 6px 20px -12px rgba(90,110,255,.6); }
+.reason-review-orb { width: 26px; height: 26px; flex: none; border-radius: 50%; background: radial-gradient(circle at 35% 32%, #eaf0ff, #7a5cff 55%, #3aa0ff); box-shadow: 0 0 16px rgba(120,110,255,.6); animation: reasonOrb 1.2s ease-in-out infinite; }
+.reason-review-tx { display: flex; flex-direction: column; gap: 2px; line-height: 1.25; min-width: 0; }
+.reason-review-tx strong { font-size: 13.5px; }
+.reason-review-tx span { font-size: 11.5px; color: var(--text-dim); }
+.reason-review-dots { display: inline-flex; gap: 4px; margin-left: auto; flex: none; align-self: center; }
+.reason-review-dots i { width: 5px; height: 5px; border-radius: 50%; background: #9ab0ff; opacity: .4; animation: blink 1.2s infinite; }
+.reason-review-dots i:nth-child(2) { animation-delay: .2s; }
+.reason-review-dots i:nth-child(3) { animation-delay: .4s; }
+.reason-review-draft { position: relative; margin-top: 9px; max-height: 230px; overflow: hidden; border-radius: 12px; border: 1px solid var(--line); background: var(--field); }
+.reason-review-peek { padding: 12px 14px; opacity: .5; font-size: 13.5px; }
+.reason-review-peek p:first-child { margin-top: 0; }
+.reason-review-fade { position: absolute; left: 0; right: 0; bottom: 0; height: 96px; background: linear-gradient(180deg, transparent, var(--panel-solid)); pointer-events: none; }
+.reason-review-draft::after { content: ''; position: absolute; left: 0; bottom: 0; height: 3px; width: 36%; border-radius: 3px; background: linear-gradient(90deg, transparent, #7a5cff, #3aa0ff, transparent); animation: reasonSweep 1.6s ease-in-out infinite; }
+@keyframes reasonSweep { 0% { transform: translateX(-70%); } 100% { transform: translateX(300%); } }
 /* Tarjeta de veredicto del juez */
 .verdict-card { margin-top: 11px; padding: 11px 13px; border-radius: 13px; border: 1px solid var(--line); background: rgba(74,163,255,.05); }
 .verdict-card.v-ok { border-color: rgba(74,214,160,.4); background: rgba(74,214,160,.07); }

@@ -2000,13 +2000,19 @@
     }
     for (let i = 0; i < c.messages.length; i += 1) {
       const m = c.messages[i];
-      const html = m.role === 'user' ? escapeHtml(m.content).replace(/\n/g, '<br>') : renderMarkdown(m.content, { preview: true });
+      // Modo razonamiento: mientras el juez verifica/pule, mostramos la ventana de espera
+      // (banner + adelanto del borrador), no el texto plano "_Verificando…_".
+      const rev = m.reasoningReview;
+      const reviewing = m.role === 'assistant' && rev && (rev.status === 'pending' || rev.status === 'reviewing') && String(rev.draft || '').trim();
+      const html = m.role === 'user'
+        ? escapeHtml(m.content).replace(/\n/g, '<br>')
+        : (reviewing ? reasoningReviewHtml(rev) : renderMarkdown(m.content, { preview: true }));
       const node = bubbleEl(m.role, html);
       // Pagina de Programar: la Vista previa se arma del doc adjunto (no del markdown).
       if (m.role === 'assistant' && m.programDoc && i === lastDocIdx) node.bub.innerHTML += buildPreviewBlockHtml(m.programDoc);
       if (Array.isArray(m.media) && m.media.length) appendMedia(node.bub, m.media);
       if (m.role === 'assistant' && m.verdict) appendVerdict(node.bub, m.verdict);
-      if (m.role === 'assistant' && String(m.content || '').trim()) appendFeedback(node.bub, m, c);
+      if (!reviewing && m.role === 'assistant' && String(m.content || '').trim()) appendFeedback(node.bub, m, c);
       el.messages.appendChild(node.wrap);
     }
     scrollDown();
@@ -2960,6 +2966,23 @@
       judge: 'Verificando y puliendo'
     };
     return '<span class="reason-live"><span class="reason-orb"></span><span class="reason-label">' + escapeHtml(map[stage] || 'Razonando') + '</span><span class="reason-dots"><i></i><i></i><i></i></span></span>';
+  }
+
+  // Ventana de espera del JUEZ (solo modo razonamiento): el especialista ya entrego su
+  // borrador y el juez lo verifica/pule. Muestra un banner animado + un adelanto atenuado del
+  // borrador, para que el usuario vea que su respuesta YA esta lista y solo se esta afinando.
+  function reasoningReviewHtml(review) {
+    const draft = String((review && review.draft) || '').trim();
+    const peek = draft ? renderMarkdown(draft.length > 1600 ? draft.slice(0, 1600) + '…' : draft, { preview: false }) : '';
+    return '<div class="reason-review">'
+      + '<div class="reason-review-bar">'
+      +   '<span class="reason-review-orb"></span>'
+      +   '<div class="reason-review-tx"><strong class="reason-label">Verificando y puliendo</strong>'
+      +     '<span>El especialista ya terminó tu respuesta. El juez la está revisando y afinando los detalles…</span></div>'
+      +   '<span class="reason-review-dots"><i></i><i></i><i></i></span>'
+      + '</div>'
+      + (peek ? '<div class="reason-review-draft"><div class="reason-review-peek">' + peek + '</div><div class="reason-review-fade"></div></div>' : '')
+      + '</div>';
   }
 
   function parseReasonJson(raw) {
