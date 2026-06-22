@@ -134,6 +134,7 @@
     'NAVEGACION DE UNA SOLA PAGINA (obligatoria): cada opcion del menu apunta con hash a una seccion real que EXISTE en la pagina; cada seccion lleva su id correspondiente. Ej: <a href="#inicio">Inicio</a> ... <section id="inicio">. Nunca uses href="/", "/login", "/home", "/auth", "/dashboard", rutas como /inicio, index.html ni enlaces relativos para navegar dentro de la pagina.',
     'BOTONES SEGUROS: todo boton que no envie un formulario es <button type="button">. Si un boton lleva a una seccion (ej. "Explorar Ahora"), usa scroll interno: onclick="document.querySelector(\'#top-comidas\').scrollIntoView({behavior:\'smooth\'})". NUNCA navegues con location.href, location.assign, location.replace ni window.location: eso sacaria al usuario de la pagina.',
     'Entrega contenido realista y completo, diseno responsive, accesibilidad basica y controles funcionales. No uses dependencias externas que requieran claves.',
+    'IMAGENES: si recibes un bloque RECURSOS VISUALES OBLIGATORIOS, usa esas URLs EXACTAS en elementos <img> o fondos segun lo pedido. Nunca las sustituyas por SVG, data:image, iconos dibujados, gradientes ni placeholders. Si el usuario proporciona una URL para logo, portada o imagen principal, obedecela literalmente y no cambies la URL.',
     'Devuelve SOLO un bloque ```html con el documento completo. No agregues explicaciones fuera del bloque.'
   ].join('\n');
 
@@ -145,6 +146,7 @@
     'Responde SOLO JSON valido con esta forma: {"summary":"resumen breve","operations":[{"search":"texto exacto existente","replace":"texto nuevo"}]}.',
     'Cada search debe ser una cadena exacta copiada del HTML actual y aparecer UNA sola vez. Incluye suficiente contexto para que sea unica.',
     'Usa la menor cantidad de operaciones y el menor texto posible. Para insertar, reemplaza un cierre o fragmento cercano por ese mismo fragmento mas la insercion.',
+    'IMAGENES: si la instruccion contiene RECURSOS VISUALES OBLIGATORIOS, inserta esas URLs EXACTAS como fotos reales. Nunca las reemplaces por SVG, data:image, iconos, gradientes ni placeholders. Si el usuario dio una URL para logo o imagen principal, esa URL manda y debe conservarse byte por byte.',
     'No uses markdown ni bloques de codigo. Nunca devuelvas el HTML completo. Si el pedido no requiere cambios, devuelve operations vacio.'
   ].join('\n');
 
@@ -165,6 +167,14 @@
     'Tu trabajo: entender que quiere y convertirlo en UNA instruccion de edicion clara y especifica para el agente editor, para que entienda mejor y acierte. NO amplies el alcance: solo lo que el usuario pidio, bien precisado (que elemento o seccion exacta, que cambia y como debe quedar). Apoyate en el HTML real (nombres de clases, ids, secciones que existen).',
     'Puedes agregar UNA recomendacion breve de mejora coherente con el pedido (opcional). Nunca propongas rehacer la pagina ni cambios no pedidos.',
     'Responde SOLO JSON valido: {"recomendacion":"1 frase breve para el usuario, o vacio","instruccion":"instruccion precisa para el editor, en imperativo, mencionando el elemento/seccion exacto y el resultado esperado"}.'
+  ].join('\n');
+
+  const PROGRAM_ASSET_SEARCH_PROMPT = [
+    'Eres el buscador de recursos visuales del modo Programar de Mady.',
+    'Busca fotografias REALES, relevantes y reutilizables para la pagina descrita. Prioriza Wikimedia Commons y enlaces directos de upload.wikimedia.org.',
+    'No inventes URLs. No devuelvas SVG, data:image, iconos, paginas HTML ni placeholders. Elige fotos raster JPG, JPEG, PNG o WEBP.',
+    'Devuelve SOLO JSON valido: {"query":"terminos de busqueda breves en ingles","assets":[{"url":"https://...","alt":"descripcion en espanol","source":"URL de la pagina de origen","author":"autor si aparece","license":"licencia si aparece"}]}.',
+    'Devuelve entre 3 y 6 recursos distintos. Si no puedes verificar un enlace directo, omite ese recurso.'
   ].join('\n');
 
   // Motor LTH OS (PC): se enruta por la cola remote_commands (accion ia-ask),
@@ -1745,7 +1755,7 @@
     ]).catch(() => {});
   }
 
-  window.LTH_IA_TEST_API = { normalizeBrain, extractBrainFromUserMessage, buildBrainContextBlock, detectCrisisIntent, detectFreeSkillIntent, buildFreeSkillSystem, buildFreeSkillClarification, normalizeResearchQuery, detectFreeResearchIntent, buildFreeResearchContextBlock, buildDeviceMemoryRecallBlock, mergeConvoCollections, serializeConvoForCache, extractEntities, detectBrainConflicts, mergeBrain, parseDuckDuckGoResults, detectLiveWebIntent, buildPreviewDoc, withPreviewShim, closePreviewFrame, applyConversationState, buildCategoryGuidance, buildTemporalSystemBlock, composeSystemWithMemory, ensureConvoBrain, reasonStageHtml, CODE_STRUCTURE_PROMPT, CODE_CSS_PROMPT, CODE_POLISH_PROMPT, ORCHESTRATOR_PROMPT, PROGRAM_WIZARD_PROMPT, PROGRAM_CODER_PROMPT, PROGRAM_PATCH_PROMPT, applyProgramPatch, programStepSignature, formatProgramChoice, buildProgramFallbackPlan, looksTrivial, looksLikeNewProgramProject, extractFencedCode, assembleProgramDoc, splitProgramDocParts };
+  window.LTH_IA_TEST_API = { normalizeBrain, extractBrainFromUserMessage, buildBrainContextBlock, detectCrisisIntent, detectFreeSkillIntent, buildFreeSkillSystem, buildFreeSkillClarification, normalizeResearchQuery, detectFreeResearchIntent, buildFreeResearchContextBlock, buildDeviceMemoryRecallBlock, mergeConvoCollections, serializeConvoForCache, extractEntities, detectBrainConflicts, mergeBrain, parseDuckDuckGoResults, detectLiveWebIntent, buildPreviewDoc, withPreviewShim, closePreviewFrame, applyConversationState, buildCategoryGuidance, buildTemporalSystemBlock, composeSystemWithMemory, ensureConvoBrain, reasonStageHtml, CODE_STRUCTURE_PROMPT, CODE_CSS_PROMPT, CODE_POLISH_PROMPT, ORCHESTRATOR_PROMPT, PROGRAM_WIZARD_PROMPT, PROGRAM_CODER_PROMPT, PROGRAM_PATCH_PROMPT, PROGRAM_ASSET_SEARCH_PROMPT, applyProgramPatch, programStepSignature, formatProgramChoice, buildProgramFallbackPlan, looksTrivial, looksLikeNewProgramProject, extractFencedCode, assembleProgramDoc, splitProgramDocParts, extractProgramMediaUrls, detectProgramMediaIntent, usableProgramPhotoUrl, normalizeProgramAssets, programVisualAssetsApplied };
 
   async function loadConvos() {
     state.convos = loadCachedConvos();
@@ -3211,6 +3221,109 @@
     return (m ? m[0] : s).trim();
   }
 
+  function extractProgramMediaUrls(text) {
+    const matches = String(text || '').match(/https?:\/\/[^\s<>"']+/gi) || [];
+    const seen = new Set();
+    return matches.map((url) => url.replace(/[),.;!?]+$/g, '')).filter((url) => {
+      if (seen.has(url)) return false;
+      seen.add(url);
+      return true;
+    }).slice(0, 12);
+  }
+
+  function detectProgramMediaIntent(text) {
+    const normalized = normalizeForSearch(text);
+    const explicitUrls = extractProgramMediaUrls(text);
+    const mentionsVisual = /\b(foto|fotos|fotografia|fotografias|imagen|imagenes|logo|logotipo|banner|portada|fondo)\b/.test(normalized);
+    const requestsVisual = /\b(agrega|agregar|anade|anadir|integra|integrar|incluye|incluir|inserta|insertar|pon|poner|usa|usar|cambia|cambiar|reemplaza|reemplazar|quiero|necesito)\b/.test(normalized);
+    return { active: mentionsVisual && (requestsVisual || explicitUrls.length > 0), needsSearch: mentionsVisual && requestsVisual && explicitUrls.length === 0, explicitUrls };
+  }
+
+  function usableProgramPhotoUrl(value) {
+    try {
+      const url = new URL(String(value || '').trim());
+      if (!/^https?:$/.test(url.protocol)) return false;
+      const clean = (url.pathname + url.search).toLowerCase();
+      if (/\.svg(?:$|[?#])/.test(clean) || /data:image/i.test(String(value))) return false;
+      return /\.(?:jpe?g|png|webp)(?:$|[?#])/i.test(clean) || url.hostname === 'upload.wikimedia.org';
+    } catch (_) { return false; }
+  }
+
+  function safeProgramSourceUrl(value) {
+    try {
+      const url = new URL(String(value || '').trim());
+      return /^https?:$/.test(url.protocol) ? url.href : '';
+    } catch (_) { return ''; }
+  }
+
+  function normalizeProgramAssets(raw) {
+    const parsed = typeof raw === 'string' ? parseReasonJson(raw) : (raw || {});
+    const input = Array.isArray(parsed.assets) ? parsed.assets : [];
+    const seen = new Set();
+    const assets = [];
+    input.forEach((item) => {
+      const url = String(item && item.url || '').trim();
+      if (!usableProgramPhotoUrl(url) || seen.has(url)) return;
+      seen.add(url);
+      assets.push({ url, alt: clipText(stripHtmlTags(item && item.alt || 'Fotografia relacionada'), 180), source: safeProgramSourceUrl(item && item.source), author: clipText(stripHtmlTags(item && item.author || ''), 160), license: clipText(stripHtmlTags(item && item.license || ''), 120) });
+    });
+    return { query: clipText(parsed.query || '', 180), assets: assets.slice(0, 6) };
+  }
+
+  async function searchCommonsProgramPhotos(query, signal) {
+    const params = new URLSearchParams({ action: 'query', format: 'json', origin: '*', generator: 'search', gsrnamespace: '6', gsrlimit: '8', gsrsearch: String(query || '').trim(), prop: 'imageinfo', iiprop: 'url|extmetadata', iiurlwidth: '1600' });
+    const res = await fetch('https://commons.wikimedia.org/w/api.php?' + params.toString(), { signal });
+    if (!res.ok) return [];
+    const data = await res.json().catch(() => ({}));
+    const pages = Object.values((data && data.query && data.query.pages) || {});
+    return pages.map((page) => {
+      const info = page && Array.isArray(page.imageinfo) ? page.imageinfo[0] : null;
+      const meta = info && info.extmetadata || {};
+      return { url: String(info && (info.thumburl || info.url) || '').trim(), alt: clipText(stripHtmlTags((meta.ImageDescription && meta.ImageDescription.value) || String(page && page.title || '').replace(/^File:/i, '')), 180), source: safeProgramSourceUrl(info && info.descriptionurl), author: clipText(stripHtmlTags(meta.Artist && meta.Artist.value || ''), 160), license: clipText(stripHtmlTags((meta.LicenseShortName && meta.LicenseShortName.value) || (meta.UsageTerms && meta.UsageTerms.value) || ''), 120) };
+    }).filter((item) => usableProgramPhotoUrl(item.url)).slice(0, 6);
+  }
+
+  async function resolveProgramVisualAssets(text, convo, signal) {
+    const intent = detectProgramMediaIntent(text);
+    if (!intent.active) return { intent, assets: [], context: '' };
+    if (intent.explicitUrls.length) {
+      const context = 'RECURSOS VISUALES OBLIGATORIOS (URL proporcionada por el usuario; usala EXACTAMENTE, sin sustituirla):\n' + intent.explicitUrls.map((url, i) => (i + 1) + '. ' + url).join('\n');
+      return { intent, assets: intent.explicitUrls.map((url) => ({ url, explicit: true })), context };
+    }
+
+    let normalized = { query: '', assets: [] };
+    try {
+      const webModel = reasonModel('program_asset_search', 'google/gemini-2.5-flash-lite');
+      const raw = await reasonChat({ model: webModel, system: PROGRAM_ASSET_SEARCH_PROMPT, messages: [{ role: 'user', content: 'PAGINA Y FOTOS PEDIDAS:\n' + String(text || '') }], maxTokens: 1600, temperature: 0.1, plugins: [{ id: 'web', engine: 'exa', max_results: 8, include_domains: ['commons.wikimedia.org', 'upload.wikimedia.org'] }], reasonStage: false }, signal);
+      normalized = normalizeProgramAssets(raw);
+    } catch (_) {}
+
+    let assets = normalized.assets.slice();
+    if (assets.length < 3 && !(signal && signal.aborted)) {
+      try {
+        const fallback = await searchCommonsProgramPhotos(normalized.query || clipText(text, 240), signal);
+        const seen = new Set(assets.map((item) => item.url));
+        fallback.forEach((item) => { if (!seen.has(item.url) && assets.length < 6) { seen.add(item.url); assets.push(item); } });
+      } catch (_) {}
+    }
+    if (!assets.length) throw new Error('No encontre fotografias web verificables para integrar. Intenta describir el tipo de foto con mas detalle.');
+    const lines = assets.map((item, i) => {
+      const credit = [item.author, item.license].filter(Boolean).join(' · ');
+      return (i + 1) + '. URL: ' + item.url + '\n   ALT: ' + (item.alt || 'Fotografia relacionada') + (item.source ? '\n   FUENTE: ' + item.source : '') + (credit ? '\n   CREDITO: ' + credit : '');
+    });
+    const context = 'RECURSOS VISUALES OBLIGATORIOS (fotografias web reales ya verificadas):\n' + lines.join('\n') + '\nUsa estas URLs exactas en <img>; agrega loading="lazy", alt descriptivo y atribucion discreta cuando haya credito. No uses SVG, data:image ni placeholders.';
+    return { intent, assets, context };
+  }
+
+  function programVisualAssetsApplied(doc, resolved) {
+    if (!resolved || !resolved.intent || !resolved.intent.active) return true;
+    const html = String(doc || '');
+    const urls = (resolved.assets || []).map((item) => String(item && item.url || '')).filter(Boolean);
+    if (!urls.length) return false;
+    if (resolved.intent.explicitUrls.length) return resolved.intent.explicitUrls.every((url) => html.includes(url));
+    return urls.some((url) => html.includes(url));
+  }
+
   // Agente de Programar por streaming. NO fija un limite propio: pide el maximo que permita el
   // modelo (lo acota el plan/admin en el edge) y, si hace falta, encadena continuaciones HASTA
   // que el resultado este COMPLETO (no solo "hasta que truncó"). isComplete decide cuando parar.
@@ -3239,7 +3352,10 @@
   async function buildCodePipeline(text, improved, convo, history, bub, signal, billed) {
     const codeModel = reasonModel('spec_codigo', 'deepseek/deepseek-v4-pro');
     const programModel = reasonModel('program_coder', codeModel);
-    const brief = 'PEDIDO DEL USUARIO:\n' + text + (improved && improved !== text ? ('\n\nCONTEXTO ADICIONAL:\n' + improved) : '');
+    const requestText = String(text || '') + (improved && improved !== text ? ('\n' + improved) : '');
+    const visualAssets = await resolveProgramVisualAssets(requestText, convo, signal);
+    const brief = 'PEDIDO DEL USUARIO:\n' + text + (improved && improved !== text ? ('\n\nCONTEXTO ADICIONAL:\n' + improved) : '')
+      + (visualAssets.context ? ('\n\n' + visualAssets.context) : '');
     const stage = billed ? false : undefined;
     bub.innerHTML = reasonStageHtml('codigo');
     const raw = await streamProgramAgent({
@@ -3254,7 +3370,9 @@
       stageLabel: 'Programar · pagina completa'
     }, 'codigo', bub, signal, (acc) => /<\/html\s*>/i.test(extractHtmlDoc(acc)));
     const doc = extractHtmlDoc(raw);
-    return assembleProgramDoc(doc, '', '');
+    const assembled = assembleProgramDoc(doc, '', '');
+    if (!programVisualAssetsApplied(assembled, visualAssets)) throw new Error('La pagina se genero, pero no integro las fotografias o la URL indicada. No guarde una version incompleta.');
+    return assembled;
   }
   /* ─────────── Herramienta "Programar": asistente interactivo + build ─────────── */
   function openProgramModal() { if (el.programModal) el.programModal.hidden = false; }
@@ -3699,6 +3817,7 @@
     // completo como contexto pero solo emite el DELTA, nunca reconstruye el documento.
     let editBrief = String(change || '').trim();
     let editRecommendation = '';
+    let visualAssets = { intent: detectProgramMediaIntent(change), assets: [], context: '' };
     const patchOnce = async (extraNote) => {
       const userMsg = 'CAMBIO PEDIDO (del usuario): ' + change
         + '\n\nINSTRUCCION PRECISA (del orquestador, prioriza esto): ' + editBrief
@@ -3713,9 +3832,16 @@
         reasoning: { enabled: true, effort: 'medium', exclude: true },
         reasonStage: false
       }, signal);
-      return applyProgramPatch(currentDoc, raw);
+      const result = applyProgramPatch(currentDoc, raw);
+      if (result.changed && !programVisualAssetsApplied(result.doc, visualAssets)) throw new Error('el parche no uso las fotografias o la URL obligatoria');
+      return result;
     };
     try {
+      // Las URLs del usuario se conservan literalmente. Sin URL, buscamos fotos reales.
+      if (visualAssets.intent.active) {
+        bub.innerHTML = '<span class="gen-img-loading">Buscando fotografias reales<span class="dots"><i>.</i><i>.</i><i>.</i></span></span>';
+        visualAssets = await resolveProgramVisualAssets(change, convo, signal);
+      }
       // 0) Orquestador de edicion (Gemini Flash): mejora la idea y arma una instruccion precisa
       //    para el editor (entiende mejor y acierta). Si falla, editamos con el pedido literal.
       bub.innerHTML = reasonStageHtml('orchestrate');
@@ -3732,6 +3858,7 @@
         if (o.instruccion && String(o.instruccion).trim()) editBrief = String(o.instruccion).trim();
         if (o.recomendacion && String(o.recomendacion).trim()) editRecommendation = String(o.recomendacion).trim();
       } catch (_) { /* sin orquestador: seguimos con el pedido literal */ }
+      if (visualAssets.context) editBrief += '\n\n' + visualAssets.context;
       if (signal.aborted) return;
       // 1) Parche quirurgico: solo el cambio pedido, el resto intacto.
       bub.innerHTML = reasonStageHtml('codigo');
@@ -3750,6 +3877,8 @@
         await finishProgramDoc(convo, bub, patched.doc, recPrefix + 'Cambio aplicado ✅: ' + summary + '. Solo se tocaron ' + patched.operationCount + ' fragmento(s); el resto quedo intacto. Abre la pagina para revisarla.', 'Edicion: ' + change, 'Edicion incremental (Programar)');
         return;
       }
+      // Insertar fotos o una URL explicita nunca justifica reconstruir toda la pagina.
+      if (visualAssets.intent.active) throw (lastErr || new Error('No pude insertar las fotografias mediante una edicion puntual. La pagina original se conservo intacta.'));
       // 3) Ultimo recurso (raro): solo si lo quirurgico NO logro aplicar nada — p.ej. un
       //    rediseno total. Reescribe el doc. El usuario puede usar "↩ Version anterior".
       if (signal.aborted) return;

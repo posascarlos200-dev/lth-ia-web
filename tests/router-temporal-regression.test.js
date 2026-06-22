@@ -239,6 +239,9 @@ assert.match(api.PROGRAM_PATCH_PROMPT, /Nunca devuelvas el HTML completo/);
 assert.match(api.PROGRAM_PATCH_PROMPT, /UN SOLO PROYECTO persistente/);
 assert.match(api.PROGRAM_PATCH_PROMPT, /razona internamente/i);
 assert.match(api.PROGRAM_PATCH_PROMPT, /logo de modo nocturno/i);
+assert.match(api.PROGRAM_CODER_PROMPT, /RECURSOS VISUALES OBLIGATORIOS/);
+assert.match(api.PROGRAM_PATCH_PROMPT, /Nunca las reemplaces por SVG/);
+assert.match(api.PROGRAM_ASSET_SEARCH_PROMPT, /Wikimedia Commons/);
 assert.equal(typeof api.applyProgramPatch, 'function');
 assert.equal(typeof api.looksLikeNewProgramProject, 'function');
 assert.equal(api.looksLikeNewProgramProject('crea otro proyecto'), true);
@@ -265,5 +268,27 @@ assert.equal(typeof api.closePreviewFrame, 'function');
   assert.match(patched.doc, /\.card\{padding:8px\}/, 'conserva CSS no pedido');
   assert.equal(patched.operationCount, 1);
   assert.throws(() => api.applyProgramPatch(original, { operations: [{ search: '<div>no existe</div>', replace: '' }] }), /no coincide/);
+}
+
+// Programar integra fotografias web reales y respeta URLs explicitas sin reconstruir.
+{
+  const photoIntent = api.detectProgramMediaIntent('Integra fotos reales de carros y servicios');
+  assert.equal(photoIntent.active, true);
+  assert.equal(photoIntent.needsSearch, true);
+  const logoUrl = 'https://cdn.example.com/mi-logo.png';
+  const logoIntent = api.detectProgramMediaIntent('Usa ' + logoUrl + ' como logo principal');
+  assert.deepEqual(Array.from(logoIntent.explicitUrls), [logoUrl]);
+  assert.equal(logoIntent.needsSearch, false);
+  assert.equal(api.usableProgramPhotoUrl('https://upload.wikimedia.org/example/car.jpg'), true);
+  assert.equal(api.usableProgramPhotoUrl('https://upload.wikimedia.org/example/icon.svg'), false);
+  assert.equal(api.usableProgramPhotoUrl('data:image/svg+xml,abc'), false);
+  const normalized = api.normalizeProgramAssets({ query: 'car repair', assets: [
+    { url: 'https://upload.wikimedia.org/example/car.jpg', alt: 'Auto en taller' },
+    { url: 'https://upload.wikimedia.org/example/icon.svg', alt: 'No usar' }
+  ] });
+  assert.equal(normalized.assets.length, 1, 'filtra SVG y conserva fotografia raster');
+  const resolved = { intent: logoIntent, assets: [{ url: logoUrl, explicit: true }] };
+  assert.equal(api.programVisualAssetsApplied('<img src="' + logoUrl + '">', resolved), true);
+  assert.equal(api.programVisualAssetsApplied('<img src="otra.png">', resolved), false);
 }
 console.log('router-temporal-regression: OK');
