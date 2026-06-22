@@ -3205,11 +3205,16 @@
 
   async function streamProgramAgent(baseOpts, stageKey, bub, signal) {
     let combined = '';
-    for (let pass = 0; pass < 2; pass += 1) {
-      const messages = pass === 0 ? baseOpts.messages : [{ role: 'user', content: 'CONTINUA EXACTAMENTE desde donde te quedaste, sin repetir lo ya escrito ni reiniciar, y cierra el bloque de codigo.\n\nULTIMO:\n' + combined.slice(-8000) }];
+    // El edge limita cada llamada a 32k tokens de salida; para paginas grandes encadenamos
+    // continuaciones (1 inicial + hasta 4) hasta que el modelo termine sin truncar. Asi el
+    // resultado no se corta aunque supere el limite de una sola respuesta.
+    const MAX_PASSES = 5;
+    for (let pass = 0; pass < MAX_PASSES; pass += 1) {
+      if (signal && signal.aborted) break;
+      const messages = pass === 0 ? baseOpts.messages : [{ role: 'user', content: 'CONTINUA EXACTAMENTE desde donde te quedaste, sin repetir lo ya escrito ni reiniciar; cuando termines del todo, cierra el bloque de codigo con ```.\n\nULTIMO:\n' + combined.slice(-8000) }];
       const r = await streamReasonChat({
         model: baseOpts.model, system: baseOpts.system, messages: messages,
-        maxTokens: pass === 0 ? baseOpts.maxTokens : Math.min(baseOpts.maxTokens, 10000),
+        maxTokens: pass === 0 ? baseOpts.maxTokens : Math.min(baseOpts.maxTokens, 16000),
         temperature: baseOpts.temperature, reasonStage: baseOpts.reasonStage, stageLabel: baseOpts.stageLabel
       }, signal, { onProgress: (pr) => { bub.innerHTML = renderProgramStageLive(stageKey, pr); scrollDown(); } });
       combined += String(r && r.text || '');
@@ -3229,7 +3234,7 @@
       model: programModel,
       system: composeSystemWithMemory(PROGRAM_CODER_PROMPT, convo, text),
       messages: [{ role: 'user', content: brief }],
-      maxTokens: 30000,
+      maxTokens: 32000,
       temperature: 0.2,
       reasonStage: stage,
       stageLabel: 'Programar · pagina completa'
