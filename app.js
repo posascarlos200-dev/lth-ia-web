@@ -135,8 +135,8 @@
     'BOTONES SEGUROS: todo boton que no envie un formulario es <button type="button">. Si un boton lleva a una seccion (ej. "Explorar Ahora"), usa scroll interno: onclick="document.querySelector(\'#top-comidas\').scrollIntoView({behavior:\'smooth\'})". NUNCA navegues con location.href, location.assign, location.replace ni window.location: eso sacaria al usuario de la pagina.',
     'Entrega contenido realista y completo, diseno responsive, accesibilidad basica y controles funcionales. No uses dependencias externas que requieran claves.',
     'IMAGENES: si recibes un bloque RECURSOS VISUALES OBLIGATORIOS, esas URLs tienen PRIORIDAD ABSOLUTA: usalas EXACTAS y completas (sin recortar ni cambiar) en elementos <img> o fondos segun lo pedido, una por cada foto que pida la pagina. Nunca las sustituyas por SVG, data:image, iconos, gradientes ni placeholders. Si el usuario proporciona una URL para logo/portada/imagen principal, obedecela literalmente.',
-    'IMAGENES SIN RECURSO OBLIGATORIO ni URL del usuario: si la pagina necesita fotos y no recibiste un bloque de RECURSOS VISUALES OBLIGATORIOS, usa SIEMPRE imagenes que cargan seguro con https://picsum.photos/seed/PALABRA/ANCHO/ALTO (PALABRA = un texto unico por imagen, p.ej. jugador1, jugador2). Pon una <img> con su alt en CADA tarjeta/jugador/producto/elemento. NUNCA inventes IDs de Unsplash/Pexels ni uses loremflickr con nombres propios (dan 404/500), NUNCA dejes la tarjeta sin <img>, ni la sustituyas por SVG/gradiente.',
-    'TODA etiqueta <img> debe incluir un onerror que la rescate si la URL falla: onerror="this.onerror=null;this.src=\'https://picsum.photos/seed/x/600/450\'" (incluso en las <img> que generes dentro de plantillas de JavaScript). Asi nunca se ve un icono de imagen rota.',
+    'IMAGENES SIN RECURSO OBLIGATORIO ni URL del usuario (lo normal): si la pagina necesita fotos de un tema y no recibiste RECURSOS VISUALES OBLIGATORIOS, pon en CADA tarjeta/jugador/producto/elemento una <img> con https://loremflickr.com/ANCHO/ALTO/PALABRA donde PALABRA es UNA sola palabra generica del tema EN INGLES (futbol->soccer, comida->food, ciudad->city). REGLA CRITICA: una SOLA palabra, NUNCA nombres propios (messi, barcelona) ni varias palabras separadas por coma: eso hace que loremflickr devuelva error 500 y la foto no cargue. Para variar la foto agrega ?lock=1, ?lock=2, etc. NUNCA inventes IDs de Unsplash/Pexels, NUNCA dejes la tarjeta sin <img>, ni la sustituyas por SVG/gradiente.',
+    'TODA etiqueta <img> debe incluir un onerror que la rescate si la URL falla, hacia un servicio que SIEMPRE responde: onerror="this.onerror=null;this.src=\'https://placehold.co/600x450?text=Foto\'" (incluso en las <img> que generes dentro de plantillas de JavaScript). Asi nunca se ve un icono de imagen rota.',
     'Devuelve SOLO un bloque ```html con el documento completo. No agregues explicaciones fuera del bloque.'
   ].join('\n');
 
@@ -150,7 +150,7 @@
     'Usa la menor cantidad de operaciones y el menor texto posible. replace sustituye search por content; insert_before/insert_after insertan content sin repetir search; delete elimina search. Nunca copies secciones intactas dentro de content.',
     'PROHIBIDO usar todo el documento, <html>, <!DOCTYPE> o bloques gigantes como search/content. Cada operacion debe tocar solo el componente, regla CSS o funcion JS estrictamente necesaria.',
     'IMAGENES: si la instruccion contiene RECURSOS VISUALES OBLIGATORIOS, inserta esas URLs EXACTAS como fotos reales. Nunca las reemplaces por SVG, data:image, iconos, gradientes ni placeholders. Si el usuario dio una URL para logo o imagen principal, esa URL manda y debe conservarse byte por byte.',
-    'NUNCA inventes IDs de fotos de bancos (Unsplash/Pexels adivinados dan 404). Si agregas fotos de un tema sin URL provista, usa imagenes tematicas que SIEMPRE cargan por palabra clave: https://loremflickr.com/ANCHO/ALTO/PALABRAS (PALABRAS en ingles separadas por comas, p.ej. soccer,player). Toda <img> que agregues debe incluir onerror="this.onerror=null;this.src=\'https://picsum.photos/600/400\'" para degradar sin romper.',
+    'NUNCA inventes IDs de fotos de bancos (Unsplash/Pexels adivinados dan 404). Si agregas fotos de un tema sin URL provista, usa https://loremflickr.com/ANCHO/ALTO/PALABRA con UNA sola palabra generica EN INGLES (nunca nombres propios ni comas: dan 500). Toda <img> que agregues debe incluir onerror="this.onerror=null;this.src=\'https://placehold.co/600x450?text=Foto\'" para degradar sin romper.',
     'No uses markdown ni bloques de codigo. Nunca devuelvas el HTML completo. Si el pedido no requiere cambios, devuelve operations vacio.'
   ].join('\n');
 
@@ -3357,19 +3357,25 @@
       return { intent, assets: intent.explicitUrls.map((url) => ({ url, explicit: true })), context };
     }
 
-    // Sin URLs del usuario: ya NO buscamos en sonar/Wikimedia (traia URLs rotas/irrelevantes y la
-    // pagina salia sin fotos). En su lugar le damos al constructor un set de URLs que SIEMPRE
-    // cargan (picsum, deterministas por seed) como RECURSOS OBLIGATORIOS. El modelo pone una por
-    // cada tarjeta y el chequeo + inyeccion (ensureProgramVisualAssets) garantiza que aparezcan.
-    // Asi las imagenes SIEMPRE se ven. (Para fotos especificas, el usuario pega sus propias URLs.)
-    const reliableAssets = [];
-    for (let i = 1; i <= 8; i += 1) reliableAssets.push({ url: 'https://picsum.photos/seed/lth' + i + '/600/450' });
-    state.programProtectedUrls = new Set(reliableAssets.map((a) => a.url));
-    const lines = reliableAssets.map((a, i) => (i + 1) + '. URL: ' + a.url + '\n   ALT: Imagen ' + (i + 1));
-    const context = 'RECURSOS VISUALES OBLIGATORIOS (URLs de imagen que SIEMPRE cargan; usa una DISTINTA en CADA tarjeta/jugador/producto/elemento que deba mostrar una foto, dentro de <img src="..." alt="...">):\n'
-      + lines.join('\n')
-      + '\nNo inventes otras URLs de bancos (Unsplash/Pexels/loremflickr con nombres dan 404/500). Si necesitas mas imagenes que estas, repite estas mismas URLs. Nunca uses SVG ni gradientes en lugar de la foto.';
-    return { intent, assets: reliableAssets, context };
+    // Sin URLs del usuario: el constructor coloca imagenes tematicas con loremflickr (ver
+    // PROGRAM_CODER_PROMPT) y el codigo las normaliza a un formato que SIEMPRE carga
+    // (hardenProgramImages: un solo keyword generico). No forzamos recursos obligatorios.
+    state.programProtectedUrls = new Set();
+    return { intent, assets: [], context: '' };
+  }
+
+  // Las fuentes de imagen gratis fallan facil: loremflickr da 500 con nombres propios o varias
+  // palabras (soccer,messi) y picsum a veces esta caido. Normalizamos en el documento entregado:
+  // toda URL de loremflickr se reduce a UN keyword generico (la primera palabra) + un lock
+  // numerico para variedad, que es el formato que SIEMPRE responde 200.
+  function hardenProgramImages(doc) {
+    let html = String(doc || '');
+    html = html.replace(/(https?:\/\/loremflickr\.com\/\d+\/\d+\/)([^"'\s)\\]+)/gi, (m, base, rest) => {
+      const first = String(rest).split(/[?,/]/)[0] || 'nature';
+      const lockM = String(rest).match(/lock=(\d+)/i);
+      return base + first + (lockM ? '?lock=' + lockM[1] : '');
+    });
+    return html;
   }
 
   function programVisualAssetsApplied(doc, resolved) {
@@ -3934,7 +3940,7 @@
     // URLs obligatorias (las que dio el usuario o los assets verificados) NO se reemplazan.
     const protect = (state.programProtectedUrls instanceof Set) ? state.programProtectedUrls : new Set();
     const urls = new Set();
-    const add = (u) => { const s = String(u || '').trim(); if (/^https?:\/\//i.test(s) && !/picsum\.photos|loremflickr\.com/i.test(s) && !protect.has(s)) urls.add(s); };
+    const add = (u) => { const s = String(u || '').trim(); if (/^https?:\/\//i.test(s) && !/loremflickr\.com|placehold\.co|picsum\.photos/i.test(s) && !protect.has(s)) urls.add(s); };
     let m;
     const imgRx = /<img\b[^>]*\bsrc\s*=\s*["']([^"']+)["']/gi;
     while ((m = imgRx.exec(html))) add(m[1]);
@@ -3959,7 +3965,8 @@
     results.forEach((r) => {
       if (r.ok) return;
       const w = Number((r.url.match(/[?&](?:w|width)=(\d+)/i) || [])[1]) || 800;
-      const fallback = 'https://picsum.photos/seed/lth' + (seed++) + '/' + w + '/' + Math.round(w * 0.66);
+      // Respaldo a un servicio que SIEMPRE responde (picsum llega a estar caido).
+      const fallback = 'https://placehold.co/' + w + 'x' + Math.round(w * 0.66) + '?text=Foto+' + (seed++);
       out = out.split(r.url).join(fallback);
     });
     return out;
@@ -3967,7 +3974,7 @@
 
   // Entrega un resultado de Programar pasando antes por la autoverificacion.
   async function finishProgramDoc(convo, bub, doc, note, request, label, opts) {
-    let safeDoc = String(doc || '');
+    let safeDoc = hardenProgramImages(String(doc || ''));
     try { safeDoc = await validateProgramImages(safeDoc, state.abort && state.abort.signal, bub); } catch (_) {}
     if (opts && opts.skipAutoFix) return pushProgramResult(convo, bub, safeDoc, note, request, label);
     const v = await verifyAndFixProgramDoc(safeDoc, convo, bub);
