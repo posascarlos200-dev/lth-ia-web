@@ -134,9 +134,9 @@
     'NAVEGACION DE UNA SOLA PAGINA (obligatoria): cada opcion del menu apunta con hash a una seccion real que EXISTE en la pagina; cada seccion lleva su id correspondiente. Ej: <a href="#inicio">Inicio</a> ... <section id="inicio">. Nunca uses href="/", "/login", "/home", "/auth", "/dashboard", rutas como /inicio, index.html ni enlaces relativos para navegar dentro de la pagina.',
     'BOTONES SEGUROS: todo boton que no envie un formulario es <button type="button">. Si un boton lleva a una seccion (ej. "Explorar Ahora"), usa scroll interno: onclick="document.querySelector(\'#top-comidas\').scrollIntoView({behavior:\'smooth\'})". NUNCA navegues con location.href, location.assign, location.replace ni window.location: eso sacaria al usuario de la pagina.',
     'Entrega contenido realista y completo, diseno responsive, accesibilidad basica y controles funcionales. No uses dependencias externas que requieran claves.',
-    'IMAGENES: si recibes un bloque RECURSOS VISUALES OBLIGATORIOS, esas URLs tienen PRIORIDAD ABSOLUTA: usalas EXACTAS y completas (sin recortar ni cambiar) en elementos <img> o fondos segun lo pedido, una por cada foto que pida la pagina. Nunca las sustituyas por SVG, data:image, iconos, gradientes ni placeholders. Si el usuario proporciona una URL para logo/portada/imagen principal, obedecela literalmente.',
-    'IMAGENES SIN URL DEL USUARIO (lo normal): cuando la pagina necesite fotos de un tema (jugadores, comida, productos, personas, lugares...) y NO haya URLs provistas, DEBES ponerlas igual con imagenes tematicas reales que SIEMPRE cargan, por palabra clave: https://loremflickr.com/ANCHO/ALTO/PALABRAS (PALABRAS = el tema en ingles separado por comas, p.ej. soccer,player; "futbol" -> "soccer", "comida" -> "food"). Pon una <img> con esa URL, su ancho/alto reales y alt descriptivo, en CADA tarjeta/jugador/producto/elemento que deba mostrar una foto. Para que cada tarjeta tenga una foto distinta, agrega un parametro unico al final, p.ej. ?lock=1, ?lock=2 (o /all?random=1, /all?random=2). NUNCA inventes IDs de Unsplash/Pexels (dan 404), NUNCA dejes la tarjeta sin <img>, ni la sustituyas por SVG/gradiente.',
-    'TODA etiqueta <img> debe incluir un onerror que la rescate si la URL falla: onerror="this.onerror=null;this.src=\'https://picsum.photos/600/400\'" (incluso en las <img> que generes dentro de plantillas de JavaScript). Asi nunca se ve un icono de imagen rota.',
+    'IMAGENES: si recibes un bloque RECURSOS VISUALES OBLIGATORIOS, usa esas URLs EXACTAS en elementos <img> o fondos segun lo pedido. Nunca las sustituyas por SVG, data:image, iconos dibujados, gradientes ni placeholders. Si el usuario proporciona una URL para logo, portada o imagen principal, obedecela literalmente y no cambies la URL.',
+    'IMAGENES SIN RECURSO OBLIGATORIO: NUNCA inventes IDs de fotos de bancos (Unsplash/Pexels con id adivinado casi siempre dan 404 y se ven rotas). Para imagenes decorativas sin URL del usuario ni recurso obligatorio, usa SIEMPRE una fuente determinista que carga seguro: https://picsum.photos/seed/PALABRA/ANCHO/ALTO (cambia PALABRA por un termino del tema, p.ej. moda/comida).',
+    'TODA etiqueta <img> debe incluir onerror="this.style.display=\'none\'" (tambien las que generes dentro de plantillas de JavaScript). Asi, si una URL falla, se ve el fondo/gradiente y nunca un icono de imagen rota.',
     'Devuelve SOLO un bloque ```html con el documento completo. No agregues explicaciones fuera del bloque.'
   ].join('\n');
 
@@ -150,7 +150,7 @@
     'Usa la menor cantidad de operaciones y el menor texto posible. replace sustituye search por content; insert_before/insert_after insertan content sin repetir search; delete elimina search. Nunca copies secciones intactas dentro de content.',
     'PROHIBIDO usar todo el documento, <html>, <!DOCTYPE> o bloques gigantes como search/content. Cada operacion debe tocar solo el componente, regla CSS o funcion JS estrictamente necesaria.',
     'IMAGENES: si la instruccion contiene RECURSOS VISUALES OBLIGATORIOS, inserta esas URLs EXACTAS como fotos reales. Nunca las reemplaces por SVG, data:image, iconos, gradientes ni placeholders. Si el usuario dio una URL para logo o imagen principal, esa URL manda y debe conservarse byte por byte.',
-    'NUNCA inventes IDs de fotos de bancos (Unsplash/Pexels adivinados dan 404). Si agregas fotos de un tema sin URL provista, usa imagenes tematicas que SIEMPRE cargan por palabra clave: https://loremflickr.com/ANCHO/ALTO/PALABRAS (PALABRAS en ingles separadas por comas, p.ej. soccer,player). Toda <img> que agregues debe incluir onerror="this.onerror=null;this.src=\'https://picsum.photos/600/400\'" para degradar sin romper.',
+    'NUNCA inventes IDs de fotos de bancos (Unsplash/Pexels adivinados dan 404). Si necesitas una imagen decorativa sin URL provista, usa https://picsum.photos/seed/PALABRA/ANCHO/ALTO. Toda <img> que agregues debe incluir onerror="this.style.display=\'none\'" para degradar sin romper.',
     'No uses markdown ni bloques de codigo. Nunca devuelvas el HTML completo. Si el pedido no requiere cambios, devuelve operations vacio.'
   ].join('\n');
 
@@ -171,17 +171,14 @@
     'Eres el ORQUESTADOR de edicion de Mady (Gemini Flash), en su fase breve de preparacion ANTES de tocar una pagina web YA existente.',
     'Recibes un JSON: { change: pedido de cambio del usuario, answers: respuestas ya confirmadas, page_outline: mapa compacto (ids/clases/secciones reales) de la pagina, max_questions, remaining_questions }.',
     'Objetivo: convertir el cambio en UNA instruccion de edicion PRECISA, UBICABLE y SEGURA para el agente editor, de modo que nunca tenga que responder "no puedo hacer ese cambio, se mas especifico".',
-    'COMPORTAMIENTO OBLIGATORIO: SIEMPRE haz al menos UNA pregunta o recomendacion (phase "ask") ANTES de editar, aunque el cambio parezca claro. El usuario quiere que siempre le preguntes para mejorar y confirmar; nunca edites en la primera pasada sin preguntar.',
-    '- Cada pregunta lleva 2-3 opciones concretas; la PRIMERA es tu recomendacion profesional. Apoyate en page_outline para nombrar secciones/ids reales. Se permite respuesta libre del usuario.',
-    '- Si el cambio es grande o ambiguo (p.ej. "agregar rastreo de envio al comprar"), usa las preguntas para acotarlo: que datos muestra, en que seccion/flujo va, como se ve y cuando aparece. No lo des por entendido.',
-    '- No amplies el alcance mas alla de lo que el usuario pidio.',
-    '- Devuelve phase "ready" SOLO despues de que el usuario respondio al menos una pregunta, o cuando remaining_questions sea 0.',
-    'ALCANCE (importante para ahorrar): decides si el cambio es minimo o una integracion.',
-    '- scope "region": SOLO para cambios MINIMOS y localizados (editar texto, color, tamano, mover o ajustar UN elemento/seccion que YA existe). En ese caso pon en "locator" el id, la .clase o el nombre de seccion EXACTO (tomado de page_outline) donde ocurre el cambio.',
-    '- scope "full": cuando sea una INTEGRACION o toque varias partes (agregar una seccion/funcion/boton nuevo, boton flotante, rediseno, o algo que necesite HTML+CSS+JS en lugares distintos). En la duda, usa "full" (que el modelo pesado vea toda la pagina).',
+    'Decide en cada paso:',
+    '- Si el cambio YA es claro y sabes que elemento/seccion exacto tocar y como debe quedar, NO preguntes: devuelve phase "ready" con la instruccion exacta.',
+    '- Si es AMBIGUO (varios elementos posibles, falta el objetivo, color/medida/texto sin definir), haz UNA sola pregunta breve con 2-3 opciones concretas; la PRIMERA es tu recomendacion profesional. Apoyate en page_outline para nombrar secciones/ids reales.',
+    '- No amplies el alcance: solo lo que el usuario pidio, bien precisado. Puedes incluir UNA recomendacion breve y util.',
+    '- Cuando remaining_questions sea 0 o ya tengas lo necesario, devuelve SIEMPRE phase "ready".',
     'Devuelve SOLO JSON valido, sin texto fuera del JSON. Dos formatos:',
     'Para preguntar: { "phase":"ask", "question":"texto breve", "options":[{"label":"opcion concreta","value":"valor claro","description":"por que conviene","recommended":true},{"label":"...","value":"...","description":"..."}], "allow_custom": true }',
-    'Para finalizar: { "phase":"ready", "instruccion":"instruccion imperativa precisa: que elemento/seccion exacto, que cambia y como queda", "recomendacion":"1 frase breve para el usuario, o vacio", "scope":"region|full", "locator":"id/.clase/seccion exacta si scope=region; vacio si scope=full" }',
+    'Para finalizar: { "phase":"ready", "instruccion":"instruccion imperativa precisa: que elemento/seccion exacto, que cambia y como queda", "recomendacion":"1 frase breve para el usuario, o vacio" }',
     'Maximo 3 opciones por pregunta, distintas y concretas (no "si/no" vagas).'
   ].join('\n');
 
@@ -3357,13 +3354,29 @@
       return { intent, assets: intent.explicitUrls.map((url) => ({ url, explicit: true })), context };
     }
 
-    // Sin URLs del usuario: ya NO buscamos en sonar/Wikimedia. Esa busqueda estaba restringida a
-    // Commons y, para temas comunes (p.ej. "jugadores"), traia fotos irrelevantes o ninguna, y la
-    // pagina salia sin imagenes. Ahora el constructor coloca imagenes tematicas por palabra clave
-    // (loremflickr, ver PROGRAM_CODER_PROMPT) que SIEMPRE cargan y coinciden con el tema. Sin
-    // recursos obligatorios; nunca bloquea ni descarta la pagina.
-    state.programProtectedUrls = new Set();
-    return { intent, assets: [], context: '' };
+    let normalized = { query: '', assets: [] };
+    try {
+      const webModel = reasonModel('program_asset_search', 'google/gemini-2.5-flash-lite');
+      const raw = await reasonChat({ model: webModel, system: PROGRAM_ASSET_SEARCH_PROMPT, messages: [{ role: 'user', content: 'PAGINA Y FOTOS PEDIDAS:\n' + String(text || '') }], maxTokens: 1600, temperature: 0.1, plugins: [{ id: 'web', engine: 'exa', max_results: 8, include_domains: ['commons.wikimedia.org', 'upload.wikimedia.org'] }], reasonStage: false }, signal);
+      normalized = normalizeProgramAssets(raw);
+    } catch (_) {}
+
+    let assets = normalized.assets.slice();
+    if (assets.length < 3 && !(signal && signal.aborted)) {
+      try {
+        const fallback = await searchCommonsProgramPhotos(normalized.query || clipText(text, 240), signal);
+        const seen = new Set(assets.map((item) => item.url));
+        fallback.forEach((item) => { if (!seen.has(item.url) && assets.length < 6) { seen.add(item.url); assets.push(item); } });
+      } catch (_) {}
+    }
+    if (!assets.length) throw new Error('No encontre fotografias web verificables para integrar. Intenta describir el tipo de foto con mas detalle.');
+    state.programProtectedUrls = new Set(assets.map((item) => String(item && item.url || '')).filter(Boolean));
+    const lines = assets.map((item, i) => {
+      const credit = [item.author, item.license].filter(Boolean).join(' · ');
+      return (i + 1) + '. URL: ' + item.url + '\n   ALT: ' + (item.alt || 'Fotografia relacionada') + (item.source ? '\n   FUENTE: ' + item.source : '') + (credit ? '\n   CREDITO: ' + credit : '');
+    });
+    const context = 'RECURSOS VISUALES OBLIGATORIOS (fotografias web reales ya verificadas):\n' + lines.join('\n') + '\nUsa estas URLs exactas en <img>; agrega loading="lazy", alt descriptivo y atribucion discreta cuando haya credito. No uses SVG, data:image ni placeholders.';
+    return { intent, assets, context };
   }
 
   function programVisualAssetsApplied(doc, resolved) {
@@ -3373,26 +3386,6 @@
     if (!urls.length) return false;
     if (resolved.intent.explicitUrls.length) return resolved.intent.explicitUrls.every((url) => html.includes(url));
     return urls.some((url) => html.includes(url));
-  }
-
-  // Si el constructor NO integro las fotos obligatorias, NO descartamos la pagina (eso quema
-  // tokens y deja al usuario sin nada). En su lugar inyectamos por codigo las URLs reales:
-  // reemplazamos el src de las primeras <img> con los assets verificados. Si no hay <img> que
-  // tocar, devolvemos la pagina tal cual (siempre usable). Nunca lanza.
-  function ensureProgramVisualAssets(doc, resolved) {
-    let html = String(doc || '');
-    if (!resolved || !resolved.intent || !resolved.intent.active) return html;
-    if (programVisualAssetsApplied(html, resolved)) return html;
-    const urls = (resolved.assets || []).map((item) => String(item && item.url || '')).filter(Boolean);
-    if (!urls.length) return html;
-    let i = 0;
-    html = html.replace(/(<img\b[^>]*\bsrc\s*=\s*")([^"]*)(")/gi, (m, pre, _src, post) => {
-      if (i >= urls.length) return m;
-      const url = urls[i];
-      i += 1;
-      return pre + url + post;
-    });
-    return html;
   }
 
   // Agente de Programar por streaming. NO fija un limite propio: pide el maximo que permita el
@@ -3508,9 +3501,8 @@
     }, 'codigo', bub, signal, (acc) => /<\/html\s*>/i.test(extractHtmlDoc(acc)));
     const doc = extractHtmlDoc(raw);
     const assembled = assembleProgramDoc(doc, '', '');
-    // Nunca descartamos una pagina ya generada (cuesta tokens reales). Si faltan las fotos
-    // obligatorias, las inyectamos por codigo y entregamos igual.
-    return ensureProgramVisualAssets(assembled, visualAssets);
+    if (!programVisualAssetsApplied(assembled, visualAssets)) throw new Error('La pagina se genero, pero no integro las fotografias o la URL indicada. No guarde una version incompleta.');
+    return assembled;
   }
   /* ─────────── Herramienta "Programar": asistente interactivo + build ─────────── */
   function openProgramModal() { if (el.programModal) el.programModal.hidden = false; }
@@ -3928,7 +3920,7 @@
     // URLs obligatorias (las que dio el usuario o los assets verificados) NO se reemplazan.
     const protect = (state.programProtectedUrls instanceof Set) ? state.programProtectedUrls : new Set();
     const urls = new Set();
-    const add = (u) => { const s = String(u || '').trim(); if (/^https?:\/\//i.test(s) && !/picsum\.photos|loremflickr\.com/i.test(s) && !protect.has(s)) urls.add(s); };
+    const add = (u) => { const s = String(u || '').trim(); if (/^https?:\/\//i.test(s) && !/picsum\.photos/i.test(s) && !protect.has(s)) urls.add(s); };
     let m;
     const imgRx = /<img\b[^>]*\bsrc\s*=\s*["']([^"']+)["']/gi;
     while ((m = imgRx.exec(html))) add(m[1]);
@@ -4071,9 +4063,7 @@
     if (phase !== 'ask' || f.answers.length >= 2) {
       const brief = String((step && step.instruccion) || '').trim() || composeEditBrief(f);
       const rec = String((step && step.recomendacion) || '').trim();
-      const scope = String((step && step.scope) || '').trim().toLowerCase();
-      const locator = String((step && step.locator) || '').trim();
-      finishEditWizard(brief, rec, scope, locator);
+      finishEditWizard(brief, rec);
       return;
     }
     f.lastStep = step;
@@ -4097,55 +4087,18 @@
     editWizardNextStep();
   }
 
-  function finishEditWizard(editBrief, editRecommendation, scope, locator) {
+  function finishEditWizard(editBrief, editRecommendation) {
     const f = state.editFlow;
     if (!f) return;
     f.active = false;
     closeProgramModal();
-    executeProgramEdit(f.change, f.currentDoc, f.convo, editBrief, editRecommendation, { scope: scope, locator: locator });
-  }
-
-  // Recorta de la pagina SOLO la zona relevante (segun el localizador de Gemini Flash) + los
-  // bloques <style> (los cambios de color/medida viven en CSS). Asi el modelo pesado lee menos
-  // tokens en cambios minimos. Devuelve '' si no ubica la zona o si el recorte no ahorra de
-  // verdad (>=70% del doc): en ese caso el llamador usa la pagina completa.
-  function extractProgramRegion(doc, locator) {
-    const html = String(doc || '');
-    const loc = String(locator || '').trim();
-    if (!html || !loc) return '';
-    const esc = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-    let idx = -1;
-    const classMatch = loc.match(/^\.([A-Za-z][\w-]*)$/);
-    const idMatch = loc.match(/^#?([A-Za-z][\w-]*)$/);
-    if (classMatch) {
-      const m = new RegExp('class\\s*=\\s*["\'][^"\']*\\b' + esc(classMatch[1]) + '\\b', 'i').exec(html);
-      if (m) idx = m.index;
-    }
-    if (idx < 0 && idMatch) {
-      const m = new RegExp('id\\s*=\\s*["\']' + esc(idMatch[1]) + '["\']', 'i').exec(html);
-      if (m) idx = m.index;
-      if (idx < 0) { const mt = new RegExp('<' + esc(idMatch[1]) + '\\b', 'i').exec(html); if (mt) idx = mt.index; }
-    }
-    if (idx < 0) { const at = html.toLowerCase().indexOf(loc.toLowerCase()); if (at >= 0) idx = at; }
-    if (idx < 0) return '';
-    // Ventana alrededor del ancla, ajustada a limites de etiqueta para no cortar a la mitad.
-    let start = Math.max(0, idx - 2500);
-    let end = Math.min(html.length, idx + 4000);
-    const lt = html.indexOf('<', start); if (lt >= 0 && lt < idx) start = lt;
-    const gt = html.lastIndexOf('>', end); if (gt > idx) end = gt + 1;
-    const region = html.slice(start, end);
-    let styles = '';
-    let sm; const styleRx = /<style\b[^>]*>[\s\S]*?<\/style>/gi;
-    while ((sm = styleRx.exec(html))) styles += sm[0] + '\n';
-    const scoped = (styles ? styles + '\n' : '') + region;
-    if (scoped.length >= html.length * 0.7) return '';
-    return scoped;
+    executeProgramEdit(f.change, f.currentDoc, f.convo, editBrief, editRecommendation);
   }
 
   // Ejecuta el parche con la instruccion ya precisada por el asistente. La IA EDITA sobre el
   // codigo (lee el HTML completo como contexto pero solo emite el DELTA). Streaming + parche
   // tolerante: nunca reconstruye el documento; aplica lo valido y reporta lo omitido.
-  async function executeProgramEdit(change, currentDoc, convo, editBrief, editRecommendation, scopeOpts) {
+  async function executeProgramEdit(change, currentDoc, convo, editBrief, editRecommendation) {
     if (!currentDoc || state.busy) return;
     convo = convo || activeConvo() || ensureActiveConvo(change);
     const built = bubbleEl('ai', '<span class="gen-img-loading">Aplicando tu cambio<span class="dots"><i>.</i><i>.</i><i>.</i></span></span>');
@@ -4158,15 +4111,10 @@
     const programModel = reasonModel('program_coder', codeModel);
     let brief = String(editBrief || change || '').trim();
     let visualAssets = { intent: detectProgramMediaIntent(change), assets: [], context: '' };
-    // El parche SIEMPRE se aplica al documento COMPLETO; lo unico que cambia es cuanto HTML VE
-    // el modelo: en cambios minimos (scope=region) ve solo el recorte (menos tokens, mas rapido).
-    const patchOnce = async (contextHtml, scoped) => {
-      const intro = scoped
-        ? 'FRAGMENTO RELEVANTE de la pagina (NO es el documento completo; el resto quedo igual): edita SOLO aqui y copia el "search" EXACTO de este fragmento, con sus mismos espacios y saltos de linea. No agregues <!doctype> ni <html>.'
-        : 'HTML ACTUAL (NO lo reescribas; copia el "search" EXACTO de aqui, con sus mismos espacios y saltos de linea):';
+    const patchOnce = async () => {
       const userMsg = 'CAMBIO PEDIDO (del usuario): ' + change
         + '\n\nINSTRUCCION PRECISA (del orquestador, prioriza esto): ' + brief
-        + '\n\n' + intro + '\n' + contextHtml;
+        + '\n\nHTML ACTUAL (NO lo reescribas; copia el "search" EXACTO de aqui, con sus mismos espacios y saltos de linea):\n' + currentDoc;
       const raw = await streamEditPatch({
         model: programModel,
         system: composeSystemWithMemory(PROGRAM_PATCH_PROMPT, convo, brief),
@@ -4175,8 +4123,7 @@
         temperature: 0.05
       }, bub, signal);
       const result = applyProgramPatch(currentDoc, raw);
-      // No descartamos un cambio bueno por las fotos: si faltan, las inyectamos por codigo.
-      if (result.changed) result.doc = ensureProgramVisualAssets(result.doc, visualAssets);
+      if (result.changed && !programVisualAssetsApplied(result.doc, visualAssets)) throw new Error('el parche no uso las fotografias o la URL obligatoria');
       return result;
     };
     try {
@@ -4187,19 +4134,9 @@
         if (visualAssets.context) brief += '\n\n' + visualAssets.context;
       }
       if (signal.aborted) return;
-      // Gemini Flash decide el alcance: si es un cambio MINIMO (scope=region) y la pagina es
-      // grande, recortamos la zona relevante para ahorrar tokens; si es integracion (scope=full),
-      // el modelo pesado ve toda la pagina. Red de seguridad: si el recorte no alcanza, reintenta
-      // con el documento completo (nunca deja la edicion a medias).
+      // Parche quirurgico: solo el cambio pedido, el resto intacto.
       bub.innerHTML = reasonStageHtml('codigo');
-      const REGION_MIN_DOC = 8000;
-      const region = (scopeOpts && scopeOpts.scope === 'region' && currentDoc.length > REGION_MIN_DOC)
-        ? extractProgramRegion(currentDoc, scopeOpts.locator)
-        : '';
-      let patched = await patchOnce(region || currentDoc, !!region);
-      if (region && (!patched || !patched.changed) && !signal.aborted) {
-        patched = await patchOnce(currentDoc, false);
-      }
+      const patched = await patchOnce();
       const recPrefix = editRecommendation ? ('💡 _' + editRecommendation + '_\n\n') : '';
       if (patched && patched.changed) {
         const summary = patched.summary || String(change).trim();
