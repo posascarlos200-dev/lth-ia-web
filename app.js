@@ -4255,19 +4255,35 @@
     return out;
   }
 
+  // URLs de imagen externas presentes en un documento (para detectar si una edicion toco fotos).
+  function docImageUrlSet(doc) {
+    const set = new Set();
+    let m; const rx = /https?:\/\/[^"'\s)]+/gi;
+    while ((m = rx.exec(String(doc || '')))) {
+      const u = m[0].replace(/[.,);]+$/, '');
+      if (/\.(?:jpe?g|png|webp|gif|avif)(?:$|[?#])/i.test(u) || /upload\.wikimedia\.org|images\.unsplash\.com|loremflickr\.com|picsum\.photos|placehold\.co/i.test(u)) set.add(u);
+    }
+    return set;
+  }
+
   // Entrega un resultado de Programar pasando antes por la autoverificacion.
   async function finishProgramDoc(convo, bub, doc, note, request, label, opts) {
     let safeDoc = hardenProgramImages(String(doc || ''));
     const imgSignal = state.abort && state.abort.signal;
-    // Con fotos confirmadas por el usuario NO corregimos (ya son las correctas); solo reparamos
-    // por si quedo alguna rota que no estaba en el set confirmado.
-    if (!(opts && opts.confirmedImages)) {
-      try { safeDoc = await correctEntityImages(safeDoc, imgSignal, bub); } catch (_) {}
+    // El procesamiento de imagenes (buscar la foto correcta + validar que carguen) hace llamadas
+    // de red. Solo vale la pena al CONSTRUIR o en ediciones que de verdad agregaron/cambiaron
+    // imagenes. En ediciones que no tocaron fotos (lo normal) se SALTA, para no "buscar imagenes"
+    // ni gastar llamadas en cada edit.
+    if (!(opts && opts.skipImages)) {
+      // Con fotos confirmadas por el usuario NO corregimos (ya son las correctas); solo reparamos.
+      if (!(opts && opts.confirmedImages)) {
+        try { safeDoc = await correctEntityImages(safeDoc, imgSignal, bub); } catch (_) {}
+      }
+      try {
+        if (bub) bub.innerHTML = '<span class="gen-img-loading">Verificando imágenes<span class="dots"><i>.</i><i>.</i><i>.</i></span></span>';
+        safeDoc = await repairProgramImages(safeDoc, imgSignal);
+      } catch (_) {}
     }
-    try {
-      if (bub) bub.innerHTML = '<span class="gen-img-loading">Verificando imágenes<span class="dots"><i>.</i><i>.</i><i>.</i></span></span>';
-      safeDoc = await repairProgramImages(safeDoc, imgSignal);
-    } catch (_) {}
     if (opts && opts.skipAutoFix) return pushProgramResult(convo, bub, safeDoc, note, request, label);
     const v = await verifyAndFixProgramDoc(safeDoc, convo, bub);
     const finalNote = v.fixed
@@ -4511,7 +4527,12 @@
         const skippedNote = (patched.skipped && patched.skipped.length)
           ? ' Omití ' + patched.skipped.length + ' parte(s) que no se pudieron ubicar (' + patched.skipped.join('; ') + '); esa parte quedó intacta.'
           : '';
-        await finishProgramDoc(convo, bub, patched.doc, recPrefix + 'Cambio aplicado ✅: ' + summary + '. Se tocaron ' + patched.operationCount + ' fragmento(s); el resto quedó intacto.' + skippedNote + ' Abre la página para revisarla.', 'Edicion: ' + change, 'Edicion incremental (Programar)', { skipAutoFix: true });
+        // ¿La edicion agrego/cambio imagenes? Solo entonces vale procesar fotos (evita el
+        // "buscando imagenes" y llamadas innecesarias en cada edit que no toca fotos).
+        const before = docImageUrlSet(currentDoc);
+        let addedImages = false;
+        docImageUrlSet(patched.doc).forEach((u) => { if (!before.has(u)) addedImages = true; });
+        await finishProgramDoc(convo, bub, patched.doc, recPrefix + 'Cambio aplicado ✅: ' + summary + '. Se tocaron ' + patched.operationCount + ' fragmento(s); el resto quedó intacto.' + skippedNote + ' Abre la página para revisarla.', 'Edicion: ' + change, 'Edicion incremental (Programar)', { skipAutoFix: true, skipImages: !addedImages });
         return;
       }
       throw new Error('La IA no produjo un parche puntual valido. La pagina original se conservo intacta; intenta pedir un cambio mas especifico.');
