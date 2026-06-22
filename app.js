@@ -3350,24 +3350,85 @@
 
   async function resolveProgramVisualAssets(text, convo, signal) {
     const intent = detectProgramMediaIntent(text);
-    if (!intent.active) { state.programProtectedUrls = new Set(); return { intent, assets: [], context: '' }; }
+    if (!intent.active) { state.programProtectedUrls = new Set(); state.programVisualPool = []; return { intent, assets: [], context: '' }; }
     if (intent.explicitUrls.length) {
       const context = 'RECURSOS VISUALES OBLIGATORIOS (URL proporcionada por el usuario; usala EXACTAMENTE, sin sustituirla):\n' + intent.explicitUrls.map((url, i) => (i + 1) + '. ' + url).join('\n');
       state.programProtectedUrls = new Set(intent.explicitUrls);
+      state.programVisualPool = [];
       return { intent, assets: intent.explicitUrls.map((url) => ({ url, explicit: true })), context };
     }
 
-    // Sin URLs del usuario: el constructor coloca imagenes tematicas con loremflickr (ver
-    // PROGRAM_CODER_PROMPT) y el codigo las normaliza a un formato que SIEMPRE carga
-    // (hardenProgramImages: un solo keyword generico). No forzamos recursos obligatorios.
-    state.programProtectedUrls = new Set();
-    return { intent, assets: [], context: '' };
+    // Sin URLs del usuario: buscamos fotos REALES del tema en internet (motor web de OpenRouter
+    // + API de Wikimedia) y nos quedamos SOLO con las que CARGAN de verdad (validacion). Esas
+    // URLs validadas se entregan como recursos obligatorios y forman el pool para reparar luego.
+    let candidates = [];
+    let searchQuery = '';
+    try {
+      const webModel = reasonModel('program_asset_search', 'perplexity/sonar');
+      const raw = await reasonChat({ model: webModel, system: PROGRAM_ASSET_SEARCH_PROMPT, messages: [{ role: 'user', content: 'PAGINA Y FOTOS PEDIDAS:\n' + String(text || '') }], maxTokens: 1600, temperature: 0.1, plugins: [{ id: 'web', engine: 'exa', max_results: 8, include_domains: ['commons.wikimedia.org', 'upload.wikimedia.org'] }], reasonStage: false }, signal);
+      const norm = normalizeProgramAssets(raw);
+      candidates = norm.assets;
+      searchQuery = norm.query;
+    } catch (_) {}
+    if (candidates.length < 6 && !(signal && signal.aborted)) {
+      try {
+        const more = await searchCommonsProgramPhotos(searchQuery || programThemeKeyword(text), signal);
+        const seen = new Set(candidates.map((c) => c.url));
+        more.forEach((c) => { if (c && c.url && !seen.has(c.url)) { seen.add(c.url); candidates.push(c); } });
+      } catch (_) {}
+    }
+    // Validacion: SOLO las que cargan de verdad.
+    const working = await validateImageUrls(candidates.map((c) => c.url), signal);
+    let assets = candidates.filter((c) => working.has(c.url)).slice(0, 8);
+    if (!assets.length && !(signal && signal.aborted)) {
+      // Nada cargo: pool de respaldo tematico (loremflickr keyword generico), tambien validado.
+      const kw = programThemeKeyword(text);
+      const fb = [];
+      for (let i = 1; i <= 6; i += 1) fb.push('https://loremflickr.com/600/450/' + kw + '?lock=' + i);
+      const ok = await validateImageUrls(fb, signal);
+      assets = fb.filter((u) => ok.has(u)).map((u) => ({ url: u }));
+    }
+    state.programVisualPool = assets.map((a) => a.url);
+    state.programProtectedUrls = new Set(state.programVisualPool);
+    if (!assets.length) return { intent, assets: [], context: '' };
+    const lines = assets.map((a, i) => (i + 1) + '. URL: ' + a.url + '\n   ALT: ' + (a.alt || ('Foto ' + (i + 1))));
+    const context = 'RECURSOS VISUALES OBLIGATORIOS (fotos reales ya verificadas que SI cargan; usa una DISTINTA en CADA tarjeta/jugador/producto/elemento dentro de <img src="..." alt="...">):\n'
+      + lines.join('\n')
+      + '\nUsa estas URLs EXACTAS y completas; NO inventes otras (las inventadas dan 404). Si necesitas mas imagenes que estas, repite estas mismas. Nunca uses SVG ni gradientes en vez de la foto.';
+    return { intent, assets, context };
   }
 
-  // Las fuentes de imagen gratis fallan facil: loremflickr da 500 con nombres propios o varias
-  // palabras (soccer,messi) y picsum a veces esta caido. Normalizamos en el documento entregado:
-  // toda URL de loremflickr se reduce a UN keyword generico (la primera palabra) + un lock
-  // numerico para variedad, que es el formato que SIEMPRE responde 200.
+  // Prueba en paralelo que cada URL cargue como imagen (new Image + timeout). Devuelve un Set
+  // con las que SI cargan. Solo en navegador. Es el nucleo: nada se usa sin haber cargado 200.
+  async function validateImageUrls(urls, signal, timeoutMs) {
+    const list = [...new Set((urls || []).map((u) => String(u || '').trim()).filter((u) => /^https?:\/\//i.test(u)))].slice(0, 24);
+    if (!list.length || typeof Image === 'undefined') return new Set();
+    const to = timeoutMs || 6000;
+    const test = (url) => new Promise((resolve) => {
+      const img = new Image();
+      let done = false;
+      const finish = (ok) => { if (done) return; done = true; img.onload = null; img.onerror = null; resolve(ok ? url : ''); };
+      const t = setTimeout(() => finish(false), to);
+      img.onload = () => { clearTimeout(t); finish(true); };
+      img.onerror = () => { clearTimeout(t); finish(false); };
+      try { img.src = url; } catch (_) { clearTimeout(t); finish(false); }
+    });
+    const results = await Promise.all(list.map(test));
+    if (signal && signal.aborted) return new Set();
+    return new Set(results.filter(Boolean));
+  }
+
+  // Deriva una palabra clave generica EN INGLES para el respaldo de loremflickr (que carga
+  // seguro con keywords genericos de una sola palabra).
+  function programThemeKeyword(text) {
+    const t = normalizeForSearch(text);
+    const map = [['futbol', 'soccer'], ['jugador', 'soccer'], ['soccer', 'soccer'], ['comida', 'food'], ['restaurant', 'food'], ['food', 'food'], ['ciudad', 'city'], ['viaje', 'travel'], ['naturaleza', 'nature'], ['perro', 'dog'], ['gato', 'cat'], ['auto', 'car'], ['carro', 'car'], ['coche', 'car'], ['musica', 'music'], ['tecnolog', 'technology'], ['moda', 'fashion'], ['ropa', 'fashion'], ['casa', 'house'], ['inmobili', 'house'], ['flor', 'flower'], ['playa', 'beach']];
+    for (let i = 0; i < map.length; i += 1) { if (t.includes(map[i][0])) return map[i][1]; }
+    return 'nature';
+  }
+
+  // Normaliza las URLs de loremflickr a un solo keyword generico (las multiples palabras o
+  // nombres propios dan 500). Se aplica antes de reparar.
   function hardenProgramImages(doc) {
     let html = String(doc || '');
     html = html.replace(/(https?:\/\/loremflickr\.com\/\d+\/\d+\/)([^"'\s)\\]+)/gi, (m, base, rest) => {
@@ -3376,6 +3437,38 @@
       return base + first + (lockM ? '?lock=' + lockM[1] : '');
     });
     return html;
+  }
+
+  // Repara TODAS las imagenes del documento (incluidas las que viven en arrays de JavaScript,
+  // p.ej. img:"https://..."): valida cada URL y reemplaza las ROTAS por una del pool de fotos
+  // reales ya verificadas (o un respaldo). Asi las URLs que el modelo inventa mal (Wikimedia
+  // 404) se cambian por fotos que SI cargan. No toca hosts ya confiables ni las del usuario.
+  async function repairProgramImages(doc, signal) {
+    let html = String(doc || '');
+    if (!html || typeof Image === 'undefined') return html;
+    const pool = Array.isArray(state.programVisualPool) ? state.programVisualPool.slice() : [];
+    const protect = (state.programProtectedUrls instanceof Set) ? state.programProtectedUrls : new Set();
+    const found = new Set();
+    let m; const urlRx = /https?:\/\/[^"'\s)]+/gi;
+    while ((m = urlRx.exec(html))) {
+      const u = m[0].replace(/[.,);]+$/, '');
+      if (/loremflickr\.com|placehold\.co|picsum\.photos|fonts\.googleapis|fonts\.gstatic|googleapis\.com/i.test(u)) continue;
+      if (protect.has(u)) continue;
+      if (/\.(?:jpe?g|png|webp|gif|avif)(?:$|[?#])/i.test(u) || /upload\.wikimedia\.org/i.test(u)) found.add(u);
+    }
+    const list = [...found].slice(0, 30);
+    if (!list.length) return html;
+    const working = await validateImageUrls(list, signal);
+    if (signal && signal.aborted) return html;
+    let out = html; let poolIdx = 0; let seed = 0;
+    list.forEach((url) => {
+      if (working.has(url)) return;
+      const repl = pool.length
+        ? pool[poolIdx++ % pool.length]
+        : ('https://loremflickr.com/600/450/' + programThemeKeyword(html) + '?lock=' + (++seed));
+      out = out.split(url).join(repl);
+    });
+    return out;
   }
 
   function programVisualAssetsApplied(doc, resolved) {
@@ -3975,7 +4068,10 @@
   // Entrega un resultado de Programar pasando antes por la autoverificacion.
   async function finishProgramDoc(convo, bub, doc, note, request, label, opts) {
     let safeDoc = hardenProgramImages(String(doc || ''));
-    try { safeDoc = await validateProgramImages(safeDoc, state.abort && state.abort.signal, bub); } catch (_) {}
+    try {
+      if (bub) bub.innerHTML = '<span class="gen-img-loading">Verificando imágenes<span class="dots"><i>.</i><i>.</i><i>.</i></span></span>';
+      safeDoc = await repairProgramImages(safeDoc, state.abort && state.abort.signal);
+    } catch (_) {}
     if (opts && opts.skipAutoFix) return pushProgramResult(convo, bub, safeDoc, note, request, label);
     const v = await verifyAndFixProgramDoc(safeDoc, convo, bub);
     const finalNote = v.fixed
