@@ -267,11 +267,23 @@ assert.equal(typeof api.closePreviewFrame, 'function');
   assert.match(patched.doc, /<p>Intacto<\/p>/, 'conserva contenido no pedido');
   assert.match(patched.doc, /\.card\{padding:8px\}/, 'conserva CSS no pedido');
   assert.equal(patched.operationCount, 1);
-  assert.throws(() => api.applyProgramPatch(original, { operations: [{ search: '<div>no existe</div>', replace: '' }] }), /no coincide/);
+  // Edicion tolerante: una operacion sin ancla NO rompe la edicion; se omite y se reporta,
+  // dejando el documento intacto en esa parte (antes lanzaba excepcion y abandonaba todo).
+  const notFound = api.applyProgramPatch(original, { operations: [{ search: '<div>no existe</div>', replace: '' }] });
+  assert.equal(notFound.changed, false, 'una operacion sin ancla no aplica cambios');
+  assert.equal(notFound.operationCount, 0, 'no cuenta operaciones que no ubican el ancla');
+  assert.ok(notFound.skipped && notFound.skipped.length >= 1, 'reporta la operacion omitida');
+  assert.equal(notFound.doc, original, 'conserva el documento intacto si no ubica el ancla');
   const inserted = api.applyProgramPatch(original, { operations: [{ type: 'insert_after', search: '<h1>Hola</h1>', content: '<img src="car.jpg" alt="Carro">' }] });
   assert.match(inserted.doc, /<h1>Hola<\/h1><img src="car\.jpg"/, 'inserta sin repetir el ancla en la salida del modelo');
-  assert.throws(() => api.applyProgramPatch(original, { operations: [{ search: original, content: original.replace('Hola', 'Otro') }] }), /demasiado grande/, 'rechaza reemplazar el documento entero');
-  assert.throws(() => api.applyProgramPatch(original, { operations: [{ search: '<h1>Hola</h1>', content: '<!doctype html><html><body>Rehecho</body></html>' }] }), /reconstruir/, 'rechaza HTML completo escondido en un parche');
+  // Garantia de seguridad conservada: nunca reemplaza el documento entero (se omite la op).
+  const whole = api.applyProgramPatch(original, { operations: [{ search: original, content: original.replace('Hola', 'Otro') }] });
+  assert.equal(whole.changed, false, 'no reemplaza el documento entero');
+  assert.equal(whole.doc, original, 'el documento queda intacto ante un reemplazo gigante');
+  // Garantia conservada: no permite esconder un HTML completo dentro de content.
+  const rebuilt = api.applyProgramPatch(original, { operations: [{ search: '<h1>Hola</h1>', content: '<!doctype html><html><body>Rehecho</body></html>' }] });
+  assert.equal(rebuilt.changed, false, 'no reconstruye el documento via content');
+  assert.equal(rebuilt.doc, original, 'el documento queda intacto ante un content que reconstruye');
   const outline = api.buildProgramEditOutline('<main id="inicio"><section id="servicios" class="cards grid"><h2>Servicios</h2></section></main>');
   assert.match(outline, /#servicios/);
   assert.ok(outline.length < 4201, 'el mapa del orquestador permanece compacto');

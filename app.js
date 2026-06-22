@@ -135,6 +135,8 @@
     'BOTONES SEGUROS: todo boton que no envie un formulario es <button type="button">. Si un boton lleva a una seccion (ej. "Explorar Ahora"), usa scroll interno: onclick="document.querySelector(\'#top-comidas\').scrollIntoView({behavior:\'smooth\'})". NUNCA navegues con location.href, location.assign, location.replace ni window.location: eso sacaria al usuario de la pagina.',
     'Entrega contenido realista y completo, diseno responsive, accesibilidad basica y controles funcionales. No uses dependencias externas que requieran claves.',
     'IMAGENES: si recibes un bloque RECURSOS VISUALES OBLIGATORIOS, usa esas URLs EXACTAS en elementos <img> o fondos segun lo pedido. Nunca las sustituyas por SVG, data:image, iconos dibujados, gradientes ni placeholders. Si el usuario proporciona una URL para logo, portada o imagen principal, obedecela literalmente y no cambies la URL.',
+    'IMAGENES SIN RECURSO OBLIGATORIO: NUNCA inventes IDs de fotos de bancos (Unsplash/Pexels con id adivinado casi siempre dan 404 y se ven rotas). Para imagenes decorativas sin URL del usuario ni recurso obligatorio, usa SIEMPRE una fuente determinista que carga seguro: https://picsum.photos/seed/PALABRA/ANCHO/ALTO (cambia PALABRA por un termino del tema, p.ej. moda/comida).',
+    'TODA etiqueta <img> debe incluir onerror="this.style.display=\'none\'" (tambien las que generes dentro de plantillas de JavaScript). Asi, si una URL falla, se ve el fondo/gradiente y nunca un icono de imagen rota.',
     'Devuelve SOLO un bloque ```html con el documento completo. No agregues explicaciones fuera del bloque.'
   ].join('\n');
 
@@ -148,6 +150,7 @@
     'Usa la menor cantidad de operaciones y el menor texto posible. replace sustituye search por content; insert_before/insert_after insertan content sin repetir search; delete elimina search. Nunca copies secciones intactas dentro de content.',
     'PROHIBIDO usar todo el documento, <html>, <!DOCTYPE> o bloques gigantes como search/content. Cada operacion debe tocar solo el componente, regla CSS o funcion JS estrictamente necesaria.',
     'IMAGENES: si la instruccion contiene RECURSOS VISUALES OBLIGATORIOS, inserta esas URLs EXACTAS como fotos reales. Nunca las reemplaces por SVG, data:image, iconos, gradientes ni placeholders. Si el usuario dio una URL para logo o imagen principal, esa URL manda y debe conservarse byte por byte.',
+    'NUNCA inventes IDs de fotos de bancos (Unsplash/Pexels adivinados dan 404). Si necesitas una imagen decorativa sin URL provista, usa https://picsum.photos/seed/PALABRA/ANCHO/ALTO. Toda <img> que agregues debe incluir onerror="this.style.display=\'none\'" para degradar sin romper.',
     'No uses markdown ni bloques de codigo. Nunca devuelvas el HTML completo. Si el pedido no requiere cambios, devuelve operations vacio.'
   ].join('\n');
 
@@ -3231,7 +3234,7 @@
       ? '<span class="pg-live-paused">⏸ Pausa — reanudando (' + (idleMs / 1000).toFixed(1) + 's)</span>'
       : '<span class="pg-live-writing"><span class="reason-orb"></span> Escribiendo…</span>';
     const meta = '<span class="pg-live-count">' + fmt(tokens) + ' tokens · ' + fmt(chars) + ' caracteres</span>';
-    const tail = programLiveCodeTail(text, 14);
+    const tail = p.hidePeek ? '' : programLiveCodeTail(text, 14);
     const codeHtml = tail
       ? '<details class="pg-live-codewrap" open><summary>Ver lo que escribe</summary>'
         + '<pre class="pg-live-code"><code>' + escapeHtml(tail) + '</code></pre></details>'
@@ -3325,9 +3328,10 @@
 
   async function resolveProgramVisualAssets(text, convo, signal) {
     const intent = detectProgramMediaIntent(text);
-    if (!intent.active) return { intent, assets: [], context: '' };
+    if (!intent.active) { state.programProtectedUrls = new Set(); return { intent, assets: [], context: '' }; }
     if (intent.explicitUrls.length) {
       const context = 'RECURSOS VISUALES OBLIGATORIOS (URL proporcionada por el usuario; usala EXACTAMENTE, sin sustituirla):\n' + intent.explicitUrls.map((url, i) => (i + 1) + '. ' + url).join('\n');
+      state.programProtectedUrls = new Set(intent.explicitUrls);
       return { intent, assets: intent.explicitUrls.map((url) => ({ url, explicit: true })), context };
     }
 
@@ -3347,6 +3351,7 @@
       } catch (_) {}
     }
     if (!assets.length) throw new Error('No encontre fotografias web verificables para integrar. Intenta describir el tipo de foto con mas detalle.');
+    state.programProtectedUrls = new Set(assets.map((item) => String(item && item.url || '')).filter(Boolean));
     const lines = assets.map((item, i) => {
       const credit = [item.author, item.license].filter(Boolean).join(' · ');
       return (i + 1) + '. URL: ' + item.url + '\n   ALT: ' + (item.alt || 'Fotografia relacionada') + (item.source ? '\n   FUENTE: ' + item.source : '') + (credit ? '\n   CREDITO: ' + credit : '');
@@ -3410,12 +3415,55 @@
     return combined;
   }
 
+  // Editor por streaming: muestra el panel en vivo mientras la IA escribe el parche (JSON)
+  // y, si el JSON queda truncado, CONTINUA pidiendo el resto en vez de fallar (evita el
+  // "corte" que abandonaba toda la edicion). Devuelve el texto crudo combinado.
+  async function streamEditPatch(opts, bub, signal) {
+    let combined = '';
+    const MAX_PASSES = 4;
+    const live = { stageKey: 'codigo', pass: 0, maxPasses: 0, chars: 0, text: '', lastDeltaAt: Date.now(), phase: 'resuming', hidePeek: true };
+    const timer = startProgramLiveTimer(bub, live);
+    const patchReady = (acc) => { const p = parseReasonJson(acc); return !!(p && Array.isArray(p.operations) && p.operations.length); };
+    try {
+      for (let pass = 0; pass < MAX_PASSES; pass += 1) {
+        if (signal && signal.aborted) break;
+        live.phase = 'resuming';
+        live.lastDeltaAt = Date.now();
+        bub.innerHTML = renderProgramStageLive('codigo', live); scrollDown();
+        const messages = pass === 0 ? opts.messages : [{ role: 'user', content: 'CONTINUA EXACTAMENTE el JSON desde donde se corto, sin repetir lo ya escrito ni reiniciar, hasta cerrarlo por completo.\n\nULTIMO:\n' + combined.slice(-4000) }];
+        const r = await streamReasonChat({
+          model: opts.model, system: opts.system, messages: messages,
+          maxTokens: opts.maxTokens, temperature: opts.temperature, reasonStage: false
+        }, signal, { onProgress: (pr) => {
+          live.text = combined + String((pr && pr.text) || '');
+          live.chars = live.text.length;
+          live.lastDeltaAt = Date.now();
+          live.phase = 'writing';
+          bub.innerHTML = renderProgramStageLive('codigo', live); scrollDown();
+        } });
+        const chunk = String(r && r.text || '');
+        if (!chunk) break;
+        combined += chunk;
+        live.text = combined;
+        live.chars = combined.length;
+        const truncated = !!(r && r.truncated);
+        if (!truncated || patchReady(combined)) break;
+      }
+    } finally {
+      stopProgramLiveTimer(timer);
+    }
+    return combined;
+  }
+
   // Una sola IA produce el unico HTML. Una peticion = una llamada facturable.
   async function buildCodePipeline(text, improved, convo, history, bub, signal, billed) {
     await fetchReasonStatus();
     const codeModel = reasonModel('spec_codigo', 'deepseek/deepseek-v4-pro');
     const programModel = reasonModel('program_coder', codeModel);
     const requestText = String(text || '') + (improved && improved !== text ? ('\n' + improved) : '');
+    if (bub && detectProgramMediaIntent(requestText).active) {
+      bub.innerHTML = '<span class="gen-img-loading">Buscando fotografías reales<span class="dots"><i>.</i><i>.</i><i>.</i></span></span>';
+    }
     const visualAssets = await resolveProgramVisualAssets(requestText, convo, signal);
     const brief = 'PEDIDO DEL USUARIO:\n' + text + (improved && improved !== text ? ('\n\nCONTEXTO ADICIONAL:\n' + improved) : '')
       + (visualAssets.context ? ('\n\n' + visualAssets.context) : '');
@@ -3721,12 +3769,18 @@
   }
 
   /* ─────────── Editar una pagina ya hecha (re-corre solo la parte que cambia) ─────────── */
+  // Aplica el parche de forma TOLERANTE: ejecuta las operaciones validas y OMITE las
+  // problematicas (sin ancla, demasiado grandes, etc.) en vez de descartar toda la edicion.
+  // Asi una sola operacion mala no provoca un "corte" que abandona el cambio completo.
+  // Devuelve { doc, changed, summary, operationCount, skipped[] }. Solo es fallo total si
+  // NINGUNA operacion se aplico (lo decide el llamador segun changed/operationCount).
   function applyProgramPatch(doc, response) {
     const current = String(doc || '');
     const patch = typeof response === 'string' ? parseReasonJson(response) : (response || {});
     const operations = Array.isArray(patch.operations) ? patch.operations : [];
-    if (!operations.length) throw new Error('La IA no devolvio ningun cambio puntual.');
-    if (operations.length > 24) throw new Error('La IA intento hacer demasiados cambios a la vez.');
+    const skipped = [];
+    const summary = String(patch.summary || '').trim();
+    if (!operations.length) return { doc: current, changed: false, summary: summary, operationCount: 0, skipped: skipped };
     const maxSearch = Math.min(6000, Math.max(1200, Math.floor(current.length * 0.18)));
     const maxContent = Math.max(8000, Math.floor(current.length * 0.45));
     const maxTotalSearch = Math.max(2400, Math.floor(current.length * 0.35));
@@ -3735,26 +3789,28 @@
     let applied = 0;
     let totalSearch = 0;
     let totalContent = 0;
-    operations.forEach((operation, index) => {
+    operations.slice(0, 24).forEach((operation, index) => {
       const type = String(operation && operation.type || 'replace').toLowerCase();
       const search = String(operation && operation.search || '');
       const content = String(operation && (operation.content != null ? operation.content : operation.replace) || '');
-      if (!search) throw new Error('El parche ' + (index + 1) + ' no tiene texto de referencia.');
-      if (!/^(replace|insert_before|insert_after|delete)$/.test(type)) throw new Error('El parche ' + (index + 1) + ' usa una operacion desconocida.');
-      if (search === current || search.length > maxSearch || /<!doctype\b|<html[\s>]/i.test(search)) throw new Error('El parche ' + (index + 1) + ' intenta reemplazar una parte demasiado grande de la pagina.');
-      if (content.length > maxContent || /<!doctype\b|<html[\s>]/i.test(content)) throw new Error('El parche ' + (index + 1) + ' intenta reconstruir el documento completo.');
+      const skip = (why) => skipped.push('cambio ' + (index + 1) + ' (' + why + ')');
+      if (!search) return skip('sin referencia');
+      if (!/^(replace|insert_before|insert_after|delete)$/.test(type)) return skip('operacion desconocida');
+      if (search === current || search.length > maxSearch || /<!doctype\b|<html[\s>]/i.test(search)) return skip('referencia demasiado grande');
+      if (content.length > maxContent || /<!doctype\b|<html[\s>]/i.test(content)) return skip('reconstruiria el documento');
+      if (totalSearch + search.length > maxTotalSearch || totalContent + content.length > maxTotalContent) return skip('conjunto demasiado grande');
+      const at = locatePatch(next, search);
+      if (!at) return skip('no se ubico en la pagina');
       totalSearch += search.length;
       totalContent += content.length;
-      if (totalSearch > maxTotalSearch || totalContent > maxTotalContent) throw new Error('El conjunto de parches es demasiado grande para una edicion incremental.');
-      const at = locatePatch(next, search);
-      if (!at) throw new Error('El parche ' + (index + 1) + ' no coincide con la pagina actual.');
       if (type === 'insert_before') next = next.slice(0, at.index) + content + next.slice(at.index);
       else if (type === 'insert_after') next = next.slice(0, at.index + at.length) + content + next.slice(at.index + at.length);
       else if (type === 'delete') next = next.slice(0, at.index) + next.slice(at.index + at.length);
       else next = next.slice(0, at.index) + content + next.slice(at.index + at.length);
       applied++;
     });
-    return { doc: next, changed: next !== current, summary: String(patch.summary || '').trim(), operationCount: applied };
+    if (operations.length > 24) skipped.push((operations.length - 24) + ' cambio(s) extra omitido(s)');
+    return { doc: next, changed: next !== current, summary: summary, operationCount: applied, skipped: skipped };
   }
 
   // Localiza el texto de referencia de un parche. 1) match exacto; 2) si no, tolerante a
@@ -3835,10 +3891,52 @@
     return { doc: current, fixed: 0 };
   }
 
+  // Reconoce que URLs de imagen SI cargan y reemplaza las rotas por un fallback determinista
+  // (picsum siempre responde). Cubre <img src> y url(...) de CSS. Solo prueba http(s) externas;
+  // respeta data:, internas y picsum. El onerror del HTML es la segunda red de seguridad.
+  async function validateProgramImages(doc, signal, bub) {
+    const html = String(doc || '');
+    if (!html || typeof Image === 'undefined') return html;
+    // URLs obligatorias (las que dio el usuario o los assets verificados) NO se reemplazan.
+    const protect = (state.programProtectedUrls instanceof Set) ? state.programProtectedUrls : new Set();
+    const urls = new Set();
+    const add = (u) => { const s = String(u || '').trim(); if (/^https?:\/\//i.test(s) && !/picsum\.photos/i.test(s) && !protect.has(s)) urls.add(s); };
+    let m;
+    const imgRx = /<img\b[^>]*\bsrc\s*=\s*["']([^"']+)["']/gi;
+    while ((m = imgRx.exec(html))) add(m[1]);
+    const cssRx = /url\(\s*["']?([^"')]+)["']?\s*\)/gi;
+    while ((m = cssRx.exec(html))) add(m[1]);
+    const list = [...urls].slice(0, 40);
+    if (!list.length) return html;
+    if (bub) bub.innerHTML = '<span class="gen-img-loading">Verificando imágenes<span class="dots"><i>.</i><i>.</i><i>.</i></span></span>';
+    const check = (url) => new Promise((resolve) => {
+      const img = new Image();
+      let done = false;
+      const finish = (ok) => { if (done) return; done = true; img.onload = null; img.onerror = null; resolve({ url: url, ok: ok }); };
+      const t = setTimeout(() => finish(false), 6000);
+      img.onload = () => { clearTimeout(t); finish(true); };
+      img.onerror = () => { clearTimeout(t); finish(false); };
+      try { img.src = url; } catch (_) { clearTimeout(t); finish(false); }
+    });
+    const results = await Promise.all(list.map(check));
+    if (signal && signal.aborted) return html;
+    let out = html;
+    let seed = 0;
+    results.forEach((r) => {
+      if (r.ok) return;
+      const w = Number((r.url.match(/[?&](?:w|width)=(\d+)/i) || [])[1]) || 800;
+      const fallback = 'https://picsum.photos/seed/lth' + (seed++) + '/' + w + '/' + Math.round(w * 0.66);
+      out = out.split(r.url).join(fallback);
+    });
+    return out;
+  }
+
   // Entrega un resultado de Programar pasando antes por la autoverificacion.
   async function finishProgramDoc(convo, bub, doc, note, request, label, opts) {
-    if (opts && opts.skipAutoFix) return pushProgramResult(convo, bub, doc, note, request, label);
-    const v = await verifyAndFixProgramDoc(doc, convo, bub);
+    let safeDoc = String(doc || '');
+    try { safeDoc = await validateProgramImages(safeDoc, state.abort && state.abort.signal, bub); } catch (_) {}
+    if (opts && opts.skipAutoFix) return pushProgramResult(convo, bub, safeDoc, note, request, label);
+    const v = await verifyAndFixProgramDoc(safeDoc, convo, bub);
     const finalNote = v.fixed
       ? (note + '\n\n🔎 _Autorrevisión: ajusté ' + v.fixed + ' detalle(s) (enlaces/secciones) para que todo funcione._')
       : note;
@@ -3923,15 +4021,15 @@
         + '\n\nINSTRUCCION PRECISA (del orquestador, prioriza esto): ' + editBrief
         + (extraNote ? '\n\n' + extraNote : '')
         + '\n\nHTML ACTUAL (NO lo reescribas; copia el "search" EXACTO de aqui, con sus mismos espacios y saltos de linea):\n' + currentDoc;
-      const raw = await reasonChat({
+      // Streaming + continuacion: el techo alto y el reintento ante truncado evitan que un
+      // parche grande se corte. El panel en vivo muestra la actividad (sin volcar el JSON).
+      const raw = await streamEditPatch({
         model: programModel,
         system: composeSystemWithMemory(PROGRAM_PATCH_PROMPT, convo, editBrief),
         messages: [{ role: 'user', content: userMsg }],
-        maxTokens: 5000,
-        temperature: 0.05,
-        reasoning: { enabled: true, effort: 'low', exclude: true },
-        reasonStage: false
-      }, signal);
+        maxTokens: 16000,
+        temperature: 0.05
+      }, bub, signal);
       const result = applyProgramPatch(currentDoc, raw);
       if (result.changed && !programVisualAssetsApplied(result.doc, visualAssets)) throw new Error('el parche no uso las fotografias o la URL obligatoria');
       return result;
@@ -3946,14 +4044,26 @@
       //    para el editor (entiende mejor y acierta). Si falla, editamos con el pedido literal.
       bub.innerHTML = reasonStageHtml('orchestrate');
       try {
-        const orchRaw = await reasonChat({
-          model: orchModel,
-          system: composeSystemWithMemory(EDIT_ORCHESTRATOR_PROMPT, convo, change),
-          messages: [{ role: 'user', content: 'PEDIDO DEL USUARIO:\n' + change + '\n\nMAPA COMPACTO DE LA PAGINA (solo para ubicar el cambio):\n' + buildProgramEditOutline(currentDoc) }],
-          maxTokens: 400,
-          temperature: 0.3,
-          reasonStage: false
-        }, signal);
+        const orchLive = { stageKey: 'orchestrate', pass: 0, maxPasses: 0, chars: 0, text: '', lastDeltaAt: Date.now(), phase: 'resuming', hidePeek: true };
+        const orchTimer = startProgramLiveTimer(bub, orchLive);
+        let orchRaw = '';
+        try {
+          const orchRes = await streamReasonChat({
+            model: orchModel,
+            system: composeSystemWithMemory(EDIT_ORCHESTRATOR_PROMPT, convo, change),
+            messages: [{ role: 'user', content: 'PEDIDO DEL USUARIO:\n' + change + '\n\nMAPA COMPACTO DE LA PAGINA (solo para ubicar el cambio):\n' + buildProgramEditOutline(currentDoc) }],
+            maxTokens: 400,
+            temperature: 0.3,
+            reasonStage: false
+          }, signal, { onProgress: (pr) => {
+            orchLive.text = String((pr && pr.text) || '');
+            orchLive.chars = orchLive.text.length;
+            orchLive.lastDeltaAt = Date.now();
+            orchLive.phase = 'writing';
+            bub.innerHTML = renderProgramStageLive('orchestrate', orchLive); scrollDown();
+          } });
+          orchRaw = String((orchRes && orchRes.text) || '');
+        } finally { stopProgramLiveTimer(orchTimer); }
         const o = parseReasonJson(orchRaw) || {};
         if (o.instruccion && String(o.instruccion).trim()) editBrief = String(o.instruccion).trim();
         if (o.recomendacion && String(o.recomendacion).trim()) editRecommendation = String(o.recomendacion).trim();
@@ -3966,7 +4076,10 @@
       const recPrefix = editRecommendation ? ('💡 _' + editRecommendation + '_\n\n') : '';
       if (patched && patched.changed) {
         const summary = patched.summary || String(change).trim();
-        await finishProgramDoc(convo, bub, patched.doc, recPrefix + 'Cambio aplicado ✅: ' + summary + '. Solo se tocaron ' + patched.operationCount + ' fragmento(s); el resto quedo intacto. Abre la pagina para revisarla.', 'Edicion: ' + change, 'Edicion incremental (Programar)', { skipAutoFix: true });
+        const skippedNote = (patched.skipped && patched.skipped.length)
+          ? ' Omití ' + patched.skipped.length + ' parte(s) que no se pudieron ubicar (' + patched.skipped.join('; ') + '); esa parte quedó intacta.'
+          : '';
+        await finishProgramDoc(convo, bub, patched.doc, recPrefix + 'Cambio aplicado ✅: ' + summary + '. Se tocaron ' + patched.operationCount + ' fragmento(s); el resto quedó intacto.' + skippedNote + ' Abre la página para revisarla.', 'Edicion: ' + change, 'Edicion incremental (Programar)', { skipAutoFix: true });
         return;
       }
       throw new Error('La IA no produjo un parche puntual valido. La pagina original se conservo intacta; intenta pedir un cambio mas especifico.');
