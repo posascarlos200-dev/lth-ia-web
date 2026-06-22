@@ -268,6 +268,23 @@ assert.equal(typeof api.closePreviewFrame, 'function');
   assert.match(patched.doc, /\.card\{padding:8px\}/, 'conserva CSS no pedido');
   assert.equal(patched.operationCount, 1);
   assert.throws(() => api.applyProgramPatch(original, { operations: [{ search: '<div>no existe</div>', replace: '' }] }), /no coincide/);
+  const inserted = api.applyProgramPatch(original, { operations: [{ type: 'insert_after', search: '<h1>Hola</h1>', content: '<img src="car.jpg" alt="Carro">' }] });
+  assert.match(inserted.doc, /<h1>Hola<\/h1><img src="car\.jpg"/, 'inserta sin repetir el ancla en la salida del modelo');
+  assert.throws(() => api.applyProgramPatch(original, { operations: [{ search: original, content: original.replace('Hola', 'Otro') }] }), /demasiado grande/, 'rechaza reemplazar el documento entero');
+  assert.throws(() => api.applyProgramPatch(original, { operations: [{ search: '<h1>Hola</h1>', content: '<!doctype html><html><body>Rehecho</body></html>' }] }), /reconstruir/, 'rechaza HTML completo escondido en un parche');
+  const outline = api.buildProgramEditOutline('<main id="inicio"><section id="servicios" class="cards grid"><h2>Servicios</h2></section></main>');
+  assert.match(outline, /#servicios/);
+  assert.ok(outline.length < 4201, 'el mapa del orquestador permanece compacto');
+}
+
+{
+  const start = appSrc.indexOf('async function runProgramEdit');
+  const end = appSrc.indexOf('// El documento va ADJUNTO', start);
+  const editSource = appSrc.slice(start, end);
+  assert.equal((editSource.match(/await patchOnce\(/g) || []).length, 1, 'una edicion hace un solo intento de parche');
+  assert.doesNotMatch(editSource, /PROGRAM_REWRITE_PROMPT|Edicion completa \(Programar\)/, 'editar nunca reconstruye el documento');
+  assert.match(editSource, /skipAutoFix: true/, 'una edicion no dispara otra IA de autorreparacion');
+  assert.match(editSource, /buildProgramEditOutline\(currentDoc\)/, 'el orquestador recibe un mapa compacto, no todo el HTML');
 }
 
 // Programar integra fotografias web reales y respeta URLs explicitas sin reconstruir.

@@ -143,21 +143,12 @@
     'Este chat representa UN SOLO PROYECTO persistente. Cada peticion modifica la version actual; nunca empieces otro proyecto ni reemplaces la pagina por una distinta. Si el usuario pide otro proyecto, devuelve operations vacio y explica en summary que debe abrir un chat nuevo.',
     'Antes de responder, razona internamente sobre la intencion, localiza los elementos y estados relacionados y revisa sus dependencias en HTML, CSS y JS. Ejemplo: "mejora visualmente el logo de modo nocturno" exige encontrar el logo y las reglas [data-theme="dark"] o equivalentes, y modificar solo lo necesario para ese estado.',
     'Aplica UNICAMENTE el cambio pedido. Conserva byte por byte todo lo que no necesita cambiar: no redisenes, no limpies, no reformatees y no reconstruyas el documento.',
-    'Responde SOLO JSON valido con esta forma: {"summary":"resumen breve","operations":[{"search":"texto exacto existente","replace":"texto nuevo"}]}.',
+    'Responde SOLO JSON valido con esta forma: {"summary":"resumen breve","operations":[{"type":"replace|insert_before|insert_after|delete","search":"ancla exacta y corta","content":"contenido nuevo"}]}.',
     'Cada search debe ser una cadena exacta copiada del HTML actual y aparecer UNA sola vez. Incluye suficiente contexto para que sea unica.',
-    'Usa la menor cantidad de operaciones y el menor texto posible. Para insertar, reemplaza un cierre o fragmento cercano por ese mismo fragmento mas la insercion.',
+    'Usa la menor cantidad de operaciones y el menor texto posible. replace sustituye search por content; insert_before/insert_after insertan content sin repetir search; delete elimina search. Nunca copies secciones intactas dentro de content.',
+    'PROHIBIDO usar todo el documento, <html>, <!DOCTYPE> o bloques gigantes como search/content. Cada operacion debe tocar solo el componente, regla CSS o funcion JS estrictamente necesaria.',
     'IMAGENES: si la instruccion contiene RECURSOS VISUALES OBLIGATORIOS, inserta esas URLs EXACTAS como fotos reales. Nunca las reemplaces por SVG, data:image, iconos, gradientes ni placeholders. Si el usuario dio una URL para logo o imagen principal, esa URL manda y debe conservarse byte por byte.',
     'No uses markdown ni bloques de codigo. Nunca devuelvas el HTML completo. Si el pedido no requiere cambios, devuelve operations vacio.'
-  ].join('\n');
-
-  // Reescritura COMPLETA: para cambios grandes que el parche quirurgico no puede hacer
-  // (rediseno, reestructura, varias secciones). Devuelve el HTML entero actualizado.
-  const PROGRAM_REWRITE_PROMPT = [
-    'Eres la UNICA IA editora del modo Programar de Mady. Recibes una pagina web (un solo HTML autocontenido) y un CAMBIO pedido por el usuario.',
-    'Aplica el cambio pedido, por grande que sea (rediseno, reestructura, nuevas secciones). Conserva lo que el usuario NO pidio cambiar: el contenido, estilo y funcionalidad que ya existian y siguen teniendo sentido.',
-    'Devuelve el DOCUMENTO HTML COMPLETO y actualizado: empieza con <!DOCTYPE html>, con TODO el CSS dentro de <style> y TODO el JavaScript dentro de <script>. Un solo archivo, sin dependencias externas que requieran clave.',
-    'NAVEGACION SEGURA (obligatoria): el menu apunta con href="#seccion" a secciones que existen y llevan su id; los botones son <button type="button"> con scroll interno; NUNCA uses href="/", "/login", "/home", location.href ni window.location para navegar.',
-    'Devuelve SOLO un bloque ```html con el documento completo. Nada de explicaciones fuera del bloque.'
   ].join('\n');
 
   // Orquestador de EDICION (modelo rapido, p.ej. Gemini Flash). Mejora el pedido del usuario
@@ -1755,7 +1746,7 @@
     ]).catch(() => {});
   }
 
-  window.LTH_IA_TEST_API = { normalizeBrain, extractBrainFromUserMessage, buildBrainContextBlock, detectCrisisIntent, detectFreeSkillIntent, buildFreeSkillSystem, buildFreeSkillClarification, normalizeResearchQuery, detectFreeResearchIntent, buildFreeResearchContextBlock, buildDeviceMemoryRecallBlock, mergeConvoCollections, serializeConvoForCache, extractEntities, detectBrainConflicts, mergeBrain, parseDuckDuckGoResults, detectLiveWebIntent, buildPreviewDoc, withPreviewShim, closePreviewFrame, applyConversationState, buildCategoryGuidance, buildTemporalSystemBlock, composeSystemWithMemory, ensureConvoBrain, reasonStageHtml, CODE_STRUCTURE_PROMPT, CODE_CSS_PROMPT, CODE_POLISH_PROMPT, ORCHESTRATOR_PROMPT, PROGRAM_WIZARD_PROMPT, PROGRAM_CODER_PROMPT, PROGRAM_PATCH_PROMPT, PROGRAM_ASSET_SEARCH_PROMPT, applyProgramPatch, programStepSignature, formatProgramChoice, buildProgramFallbackPlan, looksTrivial, looksLikeNewProgramProject, extractFencedCode, assembleProgramDoc, splitProgramDocParts, extractProgramMediaUrls, detectProgramMediaIntent, usableProgramPhotoUrl, normalizeProgramAssets, programVisualAssetsApplied };
+  window.LTH_IA_TEST_API = { normalizeBrain, extractBrainFromUserMessage, buildBrainContextBlock, detectCrisisIntent, detectFreeSkillIntent, buildFreeSkillSystem, buildFreeSkillClarification, normalizeResearchQuery, detectFreeResearchIntent, buildFreeResearchContextBlock, buildDeviceMemoryRecallBlock, mergeConvoCollections, serializeConvoForCache, extractEntities, detectBrainConflicts, mergeBrain, parseDuckDuckGoResults, detectLiveWebIntent, buildPreviewDoc, withPreviewShim, closePreviewFrame, applyConversationState, buildCategoryGuidance, buildTemporalSystemBlock, composeSystemWithMemory, ensureConvoBrain, reasonStageHtml, CODE_STRUCTURE_PROMPT, CODE_CSS_PROMPT, CODE_POLISH_PROMPT, ORCHESTRATOR_PROMPT, PROGRAM_WIZARD_PROMPT, PROGRAM_CODER_PROMPT, PROGRAM_PATCH_PROMPT, PROGRAM_ASSET_SEARCH_PROMPT, applyProgramPatch, programStepSignature, formatProgramChoice, buildProgramFallbackPlan, looksTrivial, looksLikeNewProgramProject, buildProgramEditOutline, extractFencedCode, assembleProgramDoc, splitProgramDocParts, extractProgramMediaUrls, detectProgramMediaIntent, usableProgramPhotoUrl, normalizeProgramAssets, programVisualAssetsApplied };
 
   async function loadConvos() {
     state.convos = loadCachedConvos();
@@ -3620,6 +3611,23 @@
       || /\b(empezar|comenzar|crear)\s+(otro|otra|de cero|desde cero)\b/.test(value);
   }
 
+  function buildProgramEditOutline(doc) {
+    const html = String(doc || '');
+    const entries = [];
+    const rx = /<(header|nav|main|section|article|footer|div|img|form|button|h[1-6])\b([^>]*)>/gi;
+    let match;
+    while ((match = rx.exec(html)) && entries.length < 120) {
+      const attrs = String(match[2] || '');
+      const id = (attrs.match(/\bid=["']([^"']+)["']/i) || [])[1] || '';
+      const classes = (attrs.match(/\bclass=["']([^"']+)["']/i) || [])[1] || '';
+      const alt = (attrs.match(/\balt=["']([^"']+)["']/i) || [])[1] || '';
+      if (id || classes || alt || /^(header|nav|main|section|article|footer|h[1-6])$/i.test(match[1])) {
+        entries.push('<' + String(match[1]).toLowerCase() + '>' + (id ? ' #' + id : '') + (classes ? ' .' + classes.replace(/\s+/g, '.') : '') + (alt ? ' alt="' + clipText(alt, 80) + '"' : ''));
+      }
+    }
+    return entries.join('\n').slice(0, 4200) || 'Documento HTML sin ids o clases descriptivas.';
+  }
+
   // Un chat de Programar equivale a un unico proyecto. Todo mensaje posterior se procesa
   // obligatoriamente como edicion de la revision mas reciente.
   async function programFollowup(convo, text) {
@@ -3644,16 +3652,33 @@
     const current = String(doc || '');
     const patch = typeof response === 'string' ? parseReasonJson(response) : (response || {});
     const operations = Array.isArray(patch.operations) ? patch.operations : [];
-    if (operations.length > 80) throw new Error('La IA intento hacer demasiados cambios a la vez.');
+    if (!operations.length) throw new Error('La IA no devolvio ningun cambio puntual.');
+    if (operations.length > 24) throw new Error('La IA intento hacer demasiados cambios a la vez.');
+    const maxSearch = Math.min(6000, Math.max(1200, Math.floor(current.length * 0.18)));
+    const maxContent = Math.max(8000, Math.floor(current.length * 0.45));
+    const maxTotalSearch = Math.max(2400, Math.floor(current.length * 0.35));
+    const maxTotalContent = Math.max(12000, Math.floor(current.length * 0.65));
     let next = current;
     let applied = 0;
+    let totalSearch = 0;
+    let totalContent = 0;
     operations.forEach((operation, index) => {
+      const type = String(operation && operation.type || 'replace').toLowerCase();
       const search = String(operation && operation.search || '');
-      const replace = String(operation && operation.replace || '');
+      const content = String(operation && (operation.content != null ? operation.content : operation.replace) || '');
       if (!search) throw new Error('El parche ' + (index + 1) + ' no tiene texto de referencia.');
+      if (!/^(replace|insert_before|insert_after|delete)$/.test(type)) throw new Error('El parche ' + (index + 1) + ' usa una operacion desconocida.');
+      if (search === current || search.length > maxSearch || /<!doctype\b|<html[\s>]/i.test(search)) throw new Error('El parche ' + (index + 1) + ' intenta reemplazar una parte demasiado grande de la pagina.');
+      if (content.length > maxContent || /<!doctype\b|<html[\s>]/i.test(content)) throw new Error('El parche ' + (index + 1) + ' intenta reconstruir el documento completo.');
+      totalSearch += search.length;
+      totalContent += content.length;
+      if (totalSearch > maxTotalSearch || totalContent > maxTotalContent) throw new Error('El conjunto de parches es demasiado grande para una edicion incremental.');
       const at = locatePatch(next, search);
       if (!at) throw new Error('El parche ' + (index + 1) + ' no coincide con la pagina actual.');
-      next = next.slice(0, at.index) + replace + next.slice(at.index + at.length);
+      if (type === 'insert_before') next = next.slice(0, at.index) + content + next.slice(at.index);
+      else if (type === 'insert_after') next = next.slice(0, at.index + at.length) + content + next.slice(at.index + at.length);
+      else if (type === 'delete') next = next.slice(0, at.index) + next.slice(at.index + at.length);
+      else next = next.slice(0, at.index) + content + next.slice(at.index + at.length);
       applied++;
     });
     return { doc: next, changed: next !== current, summary: String(patch.summary || '').trim(), operationCount: applied };
@@ -3738,7 +3763,8 @@
   }
 
   // Entrega un resultado de Programar pasando antes por la autoverificacion.
-  async function finishProgramDoc(convo, bub, doc, note, request, label) {
+  async function finishProgramDoc(convo, bub, doc, note, request, label, opts) {
+    if (opts && opts.skipAutoFix) return pushProgramResult(convo, bub, doc, note, request, label);
     const v = await verifyAndFixProgramDoc(doc, convo, bub);
     const finalNote = v.fixed
       ? (note + '\n\n🔎 _Autorrevisión: ajusté ' + v.fixed + ' detalle(s) (enlaces/secciones) para que todo funcione._')
@@ -3827,9 +3853,9 @@
         model: programModel,
         system: composeSystemWithMemory(PROGRAM_PATCH_PROMPT, convo, editBrief),
         messages: [{ role: 'user', content: userMsg }],
-        maxTokens: 8000,
+        maxTokens: 5000,
         temperature: 0.05,
-        reasoning: { enabled: true, effort: 'medium', exclude: true },
+        reasoning: { enabled: true, effort: 'low', exclude: true },
         reasonStage: false
       }, signal);
       const result = applyProgramPatch(currentDoc, raw);
@@ -3849,8 +3875,8 @@
         const orchRaw = await reasonChat({
           model: orchModel,
           system: composeSystemWithMemory(EDIT_ORCHESTRATOR_PROMPT, convo, change),
-          messages: [{ role: 'user', content: 'PEDIDO DEL USUARIO:\n' + change + '\n\nHTML ACTUAL (contexto):\n' + currentDoc }],
-          maxTokens: 700,
+          messages: [{ role: 'user', content: 'PEDIDO DEL USUARIO:\n' + change + '\n\nMAPA COMPACTO DE LA PAGINA (solo para ubicar el cambio):\n' + buildProgramEditOutline(currentDoc) }],
+          maxTokens: 400,
           temperature: 0.3,
           reasonStage: false
         }, signal);
@@ -3862,39 +3888,14 @@
       if (signal.aborted) return;
       // 1) Parche quirurgico: solo el cambio pedido, el resto intacto.
       bub.innerHTML = reasonStageHtml('codigo');
-      let patched = null, lastErr = null;
-      try { patched = await patchOnce(''); } catch (e1) { lastErr = e1; }
-      // 2) Reintento quirurgico con feedback del fallo (sigue emitiendo solo el delta).
-      if (!(patched && patched.changed) && !signal.aborted) {
-        bub.innerHTML = reasonStageHtml('codigo');
-        try {
-          patched = await patchOnce('Tu intento anterior NO se pudo aplicar (' + ((lastErr && lastErr.message) || 'el texto de referencia no coincidio') + '). Copia el "search" EXACTAMENTE del HTML de abajo, con la misma indentacion, saltos de linea y comillas. Usa el fragmento UNICO mas corto posible.');
-        } catch (e2) { lastErr = e2; }
-      }
+      const patched = await patchOnce('');
       const recPrefix = editRecommendation ? ('💡 _' + editRecommendation + '_\n\n') : '';
       if (patched && patched.changed) {
         const summary = patched.summary || String(change).trim();
-        await finishProgramDoc(convo, bub, patched.doc, recPrefix + 'Cambio aplicado ✅: ' + summary + '. Solo se tocaron ' + patched.operationCount + ' fragmento(s); el resto quedo intacto. Abre la pagina para revisarla.', 'Edicion: ' + change, 'Edicion incremental (Programar)');
+        await finishProgramDoc(convo, bub, patched.doc, recPrefix + 'Cambio aplicado ✅: ' + summary + '. Solo se tocaron ' + patched.operationCount + ' fragmento(s); el resto quedo intacto. Abre la pagina para revisarla.', 'Edicion: ' + change, 'Edicion incremental (Programar)', { skipAutoFix: true });
         return;
       }
-      // Insertar fotos o una URL explicita nunca justifica reconstruir toda la pagina.
-      if (visualAssets.intent.active) throw (lastErr || new Error('No pude insertar las fotografias mediante una edicion puntual. La pagina original se conservo intacta.'));
-      // 3) Ultimo recurso (raro): solo si lo quirurgico NO logro aplicar nada — p.ej. un
-      //    rediseno total. Reescribe el doc. El usuario puede usar "↩ Version anterior".
-      if (signal.aborted) return;
-      bub.innerHTML = reasonStageHtml('codigo');
-      const rewriteRaw = await reasonChat({
-        model: programModel,
-        system: composeSystemWithMemory(PROGRAM_REWRITE_PROMPT, convo, editBrief),
-        messages: [{ role: 'user', content: 'CAMBIO PEDIDO:\n' + editBrief + '\n\nHTML ACTUAL:\n' + currentDoc }],
-        maxTokens: 16000,
-        temperature: 0.2,
-        reasoning: { enabled: true, effort: 'medium', exclude: true },
-        reasonStage: false
-      }, signal);
-      const newDoc = String(extractFencedCode(rewriteRaw, ['html', 'htm']) || '').trim();
-      if (!newDoc || !/<html[\s>]/i.test(newDoc)) throw new Error('La IA no devolvio un HTML completo.');
-      await finishProgramDoc(convo, bub, newDoc, recPrefix + 'Cambio aplicado ✅: ' + String(change).trim() + '. (No se pudo como edicion puntual, así que reescribí la página; si cambió algo de más, usa "↩ Versión anterior".)', 'Edicion: ' + change, 'Edicion completa (Programar)');
+      throw new Error('La IA no produjo un parche puntual valido. La pagina original se conservo intacta; intenta pedir un cambio mas especifico.');
     } catch (e) {
       bub.innerHTML = renderMarkdown('No se pudo aplicar el cambio: ' + ((e && e.message) || 'error') + '. Intenta describirlo con otras palabras.');
     } finally {
