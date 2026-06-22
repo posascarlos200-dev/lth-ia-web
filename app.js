@@ -3426,6 +3426,46 @@
     return 'nature';
   }
 
+  // Corrige las fotos de PERSONAS: la validacion solo asegura que la imagen cargue, no que sea
+  // la persona correcta (p.ej. el modelo pone una foto que carga pero no es Pele). Por cada foto
+  // que el modelo saco de Wikimedia, busca en la API de Wikimedia Commons (GRATIS, sin tokens)
+  // la foto REAL del nombre asociado en los datos y la reemplaza. Solo toca URLs de
+  // upload.wikimedia.org (no toca Unsplash de productos, que ya salen bien).
+  async function correctEntityImages(doc, signal, bub) {
+    let html = String(doc || '');
+    if (!html || typeof Image === 'undefined') return html;
+    const imgRx = /https?:\/\/upload\.wikimedia\.org\/[^"'\s)]+/gi;
+    const tasks = [];
+    const seenUrl = new Set();
+    let m;
+    while ((m = imgRx.exec(html)) && tasks.length < 14) {
+      const url = m[0];
+      if (seenUrl.has(url)) continue;
+      seenUrl.add(url);
+      const before = html.slice(Math.max(0, m.index - 500), m.index);
+      const names = [...before.matchAll(/(?:nombre|name|titulo|title|jugador|player|persona)\s*:\s*["']([^"']{2,46})["']/gi)];
+      const name = names.length ? names[names.length - 1][1].trim() : '';
+      if (!name || !/[A-Za-zÁÉÍÓÚÑáéíóúñ]/.test(name)) continue;
+      tasks.push({ url, name });
+    }
+    if (!tasks.length) return html;
+    if (bub) bub.innerHTML = '<span class="gen-img-loading">Buscando las fotos correctas<span class="dots"><i>.</i><i>.</i><i>.</i></span></span>';
+    let out = html;
+    for (let i = 0; i < tasks.length; i += 1) {
+      if (signal && signal.aborted) break;
+      const tk = tasks[i];
+      try {
+        const photos = await searchCommonsProgramPhotos(tk.name, signal);
+        const cands = (photos || []).map((p) => p && p.url).filter(Boolean).slice(0, 4);
+        if (!cands.length) continue;
+        const ok = await validateImageUrls(cands, signal, 5000);
+        const good = cands.find((u) => ok.has(u));
+        if (good && good !== tk.url) out = out.split(tk.url).join(good);
+      } catch (_) {}
+    }
+    return out;
+  }
+
   // Normaliza las URLs de loremflickr a un solo keyword generico (las multiples palabras o
   // nombres propios dan 500). Se aplica antes de reparar.
   function hardenProgramImages(doc) {
@@ -4067,9 +4107,11 @@
   // Entrega un resultado de Programar pasando antes por la autoverificacion.
   async function finishProgramDoc(convo, bub, doc, note, request, label, opts) {
     let safeDoc = hardenProgramImages(String(doc || ''));
+    const imgSignal = state.abort && state.abort.signal;
+    try { safeDoc = await correctEntityImages(safeDoc, imgSignal, bub); } catch (_) {}
     try {
       if (bub) bub.innerHTML = '<span class="gen-img-loading">Verificando imágenes<span class="dots"><i>.</i><i>.</i><i>.</i></span></span>';
-      safeDoc = await repairProgramImages(safeDoc, state.abort && state.abort.signal);
+      safeDoc = await repairProgramImages(safeDoc, imgSignal);
     } catch (_) {}
     if (opts && opts.skipAutoFix) return pushProgramResult(convo, bub, safeDoc, note, request, label);
     const v = await verifyAndFixProgramDoc(safeDoc, convo, bub);
