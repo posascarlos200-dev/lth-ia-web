@@ -3203,22 +3203,34 @@
     return reasonStageHtml(stageKey) + '<div style="margin-top:8px;font-size:12px;color:rgba(212,255,246,.6)">Escribiendo… ' + Number(p.events || 0) + ' eventos</div>';
   }
 
-  async function streamProgramAgent(baseOpts, stageKey, bub, signal) {
+  // Quita TODOS los marcadores de fence (```html, ```) y devuelve el documento HTML desde su
+  // inicio. Robusto frente a continuaciones que reabren el bloque o lo dejan sin cerrar.
+  function extractHtmlDoc(raw) {
+    let s = String(raw || '').replace(/```[\w+-]*\n?/g, '').replace(/```/g, '');
+    const m = s.match(/<!doctype html[\s\S]*/i) || s.match(/<html[\s\S]*/i);
+    return (m ? m[0] : s).trim();
+  }
+
+  // Agente de Programar por streaming. NO fija un limite propio: pide el maximo que permita el
+  // modelo (lo acota el plan/admin en el edge) y, si hace falta, encadena continuaciones HASTA
+  // que el resultado este COMPLETO (no solo "hasta que truncó"). isComplete decide cuando parar.
+  async function streamProgramAgent(baseOpts, stageKey, bub, signal, isComplete) {
     let combined = '';
-    // El edge limita cada llamada a 32k tokens de salida; para paginas grandes encadenamos
-    // continuaciones (1 inicial + hasta 4) hasta que el modelo termine sin truncar. Asi el
-    // resultado no se corta aunque supere el limite de una sola respuesta.
-    const MAX_PASSES = 5;
+    const MAX_PASSES = 8;
     for (let pass = 0; pass < MAX_PASSES; pass += 1) {
       if (signal && signal.aborted) break;
-      const messages = pass === 0 ? baseOpts.messages : [{ role: 'user', content: 'CONTINUA EXACTAMENTE desde donde te quedaste, sin repetir lo ya escrito ni reiniciar; cuando termines del todo, cierra el bloque de codigo con ```.\n\nULTIMO:\n' + combined.slice(-8000) }];
+      const messages = pass === 0 ? baseOpts.messages : [{ role: 'user', content: 'CONTINUA EXACTAMENTE desde donde te quedaste, sin repetir lo ya escrito ni reiniciar. Sigue hasta terminar TODO el documento (hasta </html>).\n\nULTIMO:\n' + combined.slice(-8000) }];
       const r = await streamReasonChat({
         model: baseOpts.model, system: baseOpts.system, messages: messages,
-        maxTokens: pass === 0 ? baseOpts.maxTokens : Math.min(baseOpts.maxTokens, 16000),
+        maxTokens: baseOpts.maxTokens,
         temperature: baseOpts.temperature, reasonStage: baseOpts.reasonStage, stageLabel: baseOpts.stageLabel
       }, signal, { onProgress: (pr) => { bub.innerHTML = renderProgramStageLive(stageKey, pr); scrollDown(); } });
-      combined += String(r && r.text || '');
-      if (!(r && r.truncated)) break;
+      const chunk = String(r && r.text || '');
+      if (!chunk) break;
+      combined += chunk;
+      const truncated = !!(r && r.truncated);
+      const done = isComplete ? isComplete(combined) : !truncated;
+      if (done) break;            // ya esta completo (aunque el modelo haya parado "ok")
     }
     return combined;
   }
@@ -3234,12 +3246,14 @@
       model: programModel,
       system: composeSystemWithMemory(PROGRAM_CODER_PROMPT, convo, text),
       messages: [{ role: 'user', content: brief }],
-      maxTokens: 32000,
+      // Sin limite propio: pedimos un techo alto y el edge lo acota al max_tokens del modelo
+      // (lo que tu definas en el admin). La continuacion completa lo que falte.
+      maxTokens: 60000,
       temperature: 0.2,
       reasonStage: stage,
       stageLabel: 'Programar · pagina completa'
-    }, 'codigo', bub, signal);
-    const doc = extractFencedCode(raw, ['html', 'markup', 'xml']);
+    }, 'codigo', bub, signal, (acc) => /<\/html\s*>/i.test(extractHtmlDoc(acc)));
+    const doc = extractHtmlDoc(raw);
     return assembleProgramDoc(doc, '', '');
   }
   /* ─────────── Herramienta "Programar": asistente interactivo + build ─────────── */
