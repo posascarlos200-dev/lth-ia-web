@@ -3898,6 +3898,40 @@
     bub.appendChild(card);
   }
 
+  // El especialista por STREAMING con auto-continuacion: si la respuesta se trunca por longitud
+  // (preguntas grandes con muchos puntos/codigo), continua donde quedo (hasta 2 veces) en vez de
+  // entregar un borrador cortado. Asi el juez no rechaza por "borrador incompleto".
+  async function streamSpecialistDraft(spec, history, convo, improved, bub, signal) {
+    const system = composeSystemWithMemory(spec.system, convo, improved);
+    let full = '';
+    let messages = history.slice();
+    const MAX_CONTINUE = 2;
+    for (let turn = 0; turn <= MAX_CONTINUE; turn += 1) {
+      const res = await streamReasonChat({
+        model: spec.model,
+        system,
+        messages,
+        maxTokens: 16000,
+        temperature: spec.temperature,
+        plugins: spec.plugins,
+        reasonStage: false
+      }, signal, {
+        onProgress: (p) => {
+          const chars = full.length + String((p && p.text) || '').length;
+          bub.innerHTML = reasonStageHtml(spec.stage) + '<div style="margin-top:8px;font-size:12px;color:rgba(212,255,246,.6)">Redactando… ' + chars + ' caracteres' + (turn > 0 ? ' (continuando)' : '') + '</div>';
+        }
+      });
+      full += String((res && res.text) || '');
+      if (!(res && res.truncated)) break;        // termino completo
+      if (turn === MAX_CONTINUE) break;            // tope de continuaciones
+      messages = history.concat([
+        { role: 'assistant', content: full },
+        { role: 'user', content: 'Continua EXACTAMENTE donde te quedaste, sin repetir nada de lo ya escrito ni volver a saludar. Sigue hasta completar TODO lo pedido.' }
+      ]);
+    }
+    return full.trim();
+  }
+
   // Pipeline premium: IA principal (clasifica + mejora prompt) -> especialista -> juez Opus 4.8.
   async function reasoningAnswer(text, convo, bub) {
     const signal = state.abort && state.abort.signal;
@@ -3951,7 +3985,15 @@
 
     const spec = categorySpecialist(category, improved);
     bub.innerHTML = reasonStageHtml(spec.stage);
-    const draft = await reasonChat({ model: spec.model, system: composeSystemWithMemory(spec.system, convo, improved), messages: history, maxTokens: 9000, temperature: spec.temperature, plugins: spec.plugins, reasonStage: false }, signal);
+    const draft = await streamSpecialistDraft(spec, history, convo, improved, bub, signal);
+    if (!draft || !draft.trim()) {
+      const msg = 'No se pudo generar la respuesta. Intenta de nuevo.';
+      bub.innerHTML = renderMarkdown(msg);
+      markAssistantTurn(convo, msg, 'Respuesta razonada');
+      convo.messages.push({ id: uid(), role: 'assistant', content: msg, ts: Date.now() });
+      convo.updated = Date.now(); saveConvos(); renderConvoList(); syncPushOne(convo);
+      return;
+    }
 
     // Checkpoint durable: el especialista termina y su borrador se guarda ANTES de
     // arrancar al juez. La revision corre desacoplada y puede reanudarse tras recargar.
