@@ -163,6 +163,25 @@
     'Responde SOLO JSON valido: {"recomendacion":"1 frase breve para el usuario, o vacio","instruccion":"instruccion precisa para el editor, en imperativo, mencionando el elemento/seccion exacto y el resultado esperado"}.'
   ].join('\n');
 
+  // Asistente INTERACTIVO de edicion (Gemini Flash): antes de tocar la pagina, si el cambio
+  // es ambiguo pregunta/recomienda con tarjetas (como el asistente de inicio); cuando la idea
+  // queda clara, entrega una instruccion EXACTA para que la IA editora no falle ni pida "se mas
+  // especifico". Si el cambio ya es claro, NO pregunta: pasa directo a "ready".
+  const EDIT_WIZARD_PROMPT = [
+    'Eres el ORQUESTADOR de edicion de Mady (Gemini Flash), en su fase breve de preparacion ANTES de tocar una pagina web YA existente.',
+    'Recibes un JSON: { change: pedido de cambio del usuario, answers: respuestas ya confirmadas, page_outline: mapa compacto (ids/clases/secciones reales) de la pagina, max_questions, remaining_questions }.',
+    'Objetivo: convertir el cambio en UNA instruccion de edicion PRECISA, UBICABLE y SEGURA para el agente editor, de modo que nunca tenga que responder "no puedo hacer ese cambio, se mas especifico".',
+    'Decide en cada paso:',
+    '- Si el cambio YA es claro y sabes que elemento/seccion exacto tocar y como debe quedar, NO preguntes: devuelve phase "ready" con la instruccion exacta.',
+    '- Si es AMBIGUO (varios elementos posibles, falta el objetivo, color/medida/texto sin definir), haz UNA sola pregunta breve con 2-3 opciones concretas; la PRIMERA es tu recomendacion profesional. Apoyate en page_outline para nombrar secciones/ids reales.',
+    '- No amplies el alcance: solo lo que el usuario pidio, bien precisado. Puedes incluir UNA recomendacion breve y util.',
+    '- Cuando remaining_questions sea 0 o ya tengas lo necesario, devuelve SIEMPRE phase "ready".',
+    'Devuelve SOLO JSON valido, sin texto fuera del JSON. Dos formatos:',
+    'Para preguntar: { "phase":"ask", "question":"texto breve", "options":[{"label":"opcion concreta","value":"valor claro","description":"por que conviene","recommended":true},{"label":"...","value":"...","description":"..."}], "allow_custom": true }',
+    'Para finalizar: { "phase":"ready", "instruccion":"instruccion imperativa precisa: que elemento/seccion exacto, que cambia y como queda", "recomendacion":"1 frase breve para el usuario, o vacio" }',
+    'Maximo 3 opciones por pregunta, distintas y concretas (no "si/no" vagas).'
+  ].join('\n');
+
   const PROGRAM_ASSET_SEARCH_PROMPT = [
     'Eres el buscador de recursos visuales del modo Programar de Mady.',
     'Busca fotografias REALES, relevantes y reutilizables para la pagina descrita. Prioriza Wikimedia Commons y enlaces directos de upload.wikimedia.org.',
@@ -3487,7 +3506,7 @@
   }
   /* ─────────── Herramienta "Programar": asistente interactivo + build ─────────── */
   function openProgramModal() { if (el.programModal) el.programModal.hidden = false; }
-  function closeProgramModal() { if (el.programModal) el.programModal.hidden = true; }
+  function closeProgramModal() { if (el.programModal) el.programModal.hidden = true; if (state.editFlow) state.editFlow.active = false; }
 
   function setProgramBusy() {
     if (el.programBody) el.programBody.innerHTML = '<div class="pg-busy"><span class="reason-orb"></span> Pensando opciones…</div>';
@@ -3495,7 +3514,7 @@
   function renderProgramError(msg) {
     if (!el.programBody) return;
     el.programBody.innerHTML = '<div class="pg-busy">No se pudo continuar' + (msg ? ': ' + escapeHtml(msg) : '') + '. <button id="pgRetry" type="button" class="pg-next">Reintentar</button></div>';
-    const r = el.programBody.querySelector('#pgRetry'); if (r) r.addEventListener('click', programNextStep);
+    const r = el.programBody.querySelector('#pgRetry'); if (r) r.addEventListener('click', () => { if (state.editFlow && state.editFlow.active) editWizardNextStep(); else programNextStep(); });
   }
 
   async function openProgramWizard(request, convo, seed) {
@@ -3622,6 +3641,7 @@
   }
 
   function submitProgramChoice(value) {
+    if (state.editFlow && state.editFlow.active) return submitEditWizardChoice(value);
     if (!state.program || !state.program.active) return;
     const formatted = formatProgramChoice(state.program.lastStep, value);
     if (!formatted) return;
@@ -3999,8 +4019,88 @@
     if (!ed || !ed.doc || state.busy) return;
     const convo = ed.convo || activeConvo() || ensureActiveConvo(change);
     const currentDoc = String(ed.doc);
-    closeProgramModal();
     state.programEdit = null;
+    // Antes de tocar la pagina, el cambio pasa por el asistente interactivo (Gemini Flash):
+    // si es ambiguo te pregunta/recomienda con tarjetas; cuando la idea queda clara, manda a
+    // la IA editora una instruccion exacta (evita el "no puedo hacer ese cambio, se especifico").
+    startEditWizard(String(change || '').trim(), convo, currentDoc);
+  }
+
+  // Abre el asistente interactivo de edicion. Reusa el modal y las tarjetas del asistente
+  // de inicio (renderProgramStep / submitProgramChoice), pero enrutado al flujo de edicion.
+  function startEditWizard(change, convo, currentDoc) {
+    if (!change || !currentDoc || state.busy) return;
+    state.editFlow = { active: true, change: change, convo: convo, currentDoc: currentDoc, answers: [], lastStep: null };
+    openProgramModal();
+    editWizardNextStep();
+  }
+
+  async function editWizardNextStep() {
+    const f = state.editFlow;
+    if (!f || !f.active) return;
+    const currentDoc = f.currentDoc;
+    setProgramBusy();
+    let step;
+    try {
+      await fetchReasonStatus();
+      // Gemini Flash: recibe SOLO un mapa compacto (no todo el HTML) para ubicar el cambio.
+      const orchModel = reasonModel('edit_orchestrator', 'google/gemini-2.5-flash');
+      const raw = await reasonChat({
+        model: orchModel,
+        system: composeSystemWithMemory(EDIT_WIZARD_PROMPT, f.convo, f.change),
+        messages: [{ role: 'user', content: JSON.stringify({ change: f.change, answers: f.answers, page_outline: buildProgramEditOutline(currentDoc), max_questions: 2, remaining_questions: Math.max(0, 2 - f.answers.length) }, null, 2) }],
+        maxTokens: 700, temperature: 0.25, reasonStage: false
+      }, null);
+      step = parseReasonJson(raw);
+    } catch (e) {
+      // Si el asistente falla, no bloqueamos al usuario: editamos directo con el pedido literal.
+      finishEditWizard(f.change, '');
+      return;
+    }
+    if (!step || !step.phase) { finishEditWizard(f.change, ''); return; }
+    const phase = String(step.phase).toLowerCase();
+    // "ready" (o ya alcanzado el tope de preguntas) -> instruccion exacta y a editar.
+    if (phase !== 'ask' || f.answers.length >= 2) {
+      const brief = String((step && step.instruccion) || '').trim() || composeEditBrief(f);
+      const rec = String((step && step.recomendacion) || '').trim();
+      finishEditWizard(brief, rec);
+      return;
+    }
+    f.lastStep = step;
+    renderProgramStep(step);
+  }
+
+  // Si la IA no devolvio instruccion, armamos el brief uniendo el pedido y las respuestas.
+  function composeEditBrief(f) {
+    const parts = [String((f && f.change) || '').trim()];
+    ((f && f.answers) || []).forEach((a) => { const s = String(a || '').trim(); if (s) parts.push(s); });
+    return parts.filter(Boolean).join('. ');
+  }
+
+  function submitEditWizardChoice(value) {
+    const f = state.editFlow;
+    if (!f || !f.active) return;
+    const formatted = formatProgramChoice(f.lastStep, value);
+    if (!formatted) return;
+    f.answers.push(formatted);
+    f.lastStep = null;
+    editWizardNextStep();
+  }
+
+  function finishEditWizard(editBrief, editRecommendation) {
+    const f = state.editFlow;
+    if (!f) return;
+    f.active = false;
+    closeProgramModal();
+    executeProgramEdit(f.change, f.currentDoc, f.convo, editBrief, editRecommendation);
+  }
+
+  // Ejecuta el parche con la instruccion ya precisada por el asistente. La IA EDITA sobre el
+  // codigo (lee el HTML completo como contexto pero solo emite el DELTA). Streaming + parche
+  // tolerante: nunca reconstruye el documento; aplica lo valido y reporta lo omitido.
+  async function executeProgramEdit(change, currentDoc, convo, editBrief, editRecommendation) {
+    if (!currentDoc || state.busy) return;
+    convo = convo || activeConvo() || ensureActiveConvo(change);
     const built = bubbleEl('ai', '<span class="gen-img-loading">Aplicando tu cambio<span class="dots"><i>.</i><i>.</i><i>.</i></span></span>');
     const bub = built.bub;
     el.messages.appendChild(built.wrap); scrollDown();
@@ -4009,23 +4109,15 @@
     await fetchReasonStatus();
     const codeModel = reasonModel('spec_codigo', 'deepseek/deepseek-v4-pro');
     const programModel = reasonModel('program_coder', codeModel);
-    const orchModel = reasonModel('edit_orchestrator', 'google/gemini-2.5-flash');
-    // El orquestador de edicion (Gemini Flash) mejora el pedido ANTES de editar; el editor
-    // recibe una instruccion precisa (editBrief). La IA EDITA sobre el codigo: lee el HTML
-    // completo como contexto pero solo emite el DELTA, nunca reconstruye el documento.
-    let editBrief = String(change || '').trim();
-    let editRecommendation = '';
+    let brief = String(editBrief || change || '').trim();
     let visualAssets = { intent: detectProgramMediaIntent(change), assets: [], context: '' };
-    const patchOnce = async (extraNote) => {
+    const patchOnce = async () => {
       const userMsg = 'CAMBIO PEDIDO (del usuario): ' + change
-        + '\n\nINSTRUCCION PRECISA (del orquestador, prioriza esto): ' + editBrief
-        + (extraNote ? '\n\n' + extraNote : '')
+        + '\n\nINSTRUCCION PRECISA (del orquestador, prioriza esto): ' + brief
         + '\n\nHTML ACTUAL (NO lo reescribas; copia el "search" EXACTO de aqui, con sus mismos espacios y saltos de linea):\n' + currentDoc;
-      // Streaming + continuacion: el techo alto y el reintento ante truncado evitan que un
-      // parche grande se corte. El panel en vivo muestra la actividad (sin volcar el JSON).
       const raw = await streamEditPatch({
         model: programModel,
-        system: composeSystemWithMemory(PROGRAM_PATCH_PROMPT, convo, editBrief),
+        system: composeSystemWithMemory(PROGRAM_PATCH_PROMPT, convo, brief),
         messages: [{ role: 'user', content: userMsg }],
         maxTokens: 16000,
         temperature: 0.05
@@ -4039,40 +4131,12 @@
       if (visualAssets.intent.active) {
         bub.innerHTML = '<span class="gen-img-loading">Buscando fotografias reales<span class="dots"><i>.</i><i>.</i><i>.</i></span></span>';
         visualAssets = await resolveProgramVisualAssets(change, convo, signal);
+        if (visualAssets.context) brief += '\n\n' + visualAssets.context;
       }
-      // 0) Orquestador de edicion (Gemini Flash): mejora la idea y arma una instruccion precisa
-      //    para el editor (entiende mejor y acierta). Si falla, editamos con el pedido literal.
-      bub.innerHTML = reasonStageHtml('orchestrate');
-      try {
-        const orchLive = { stageKey: 'orchestrate', pass: 0, maxPasses: 0, chars: 0, text: '', lastDeltaAt: Date.now(), phase: 'resuming', hidePeek: true };
-        const orchTimer = startProgramLiveTimer(bub, orchLive);
-        let orchRaw = '';
-        try {
-          const orchRes = await streamReasonChat({
-            model: orchModel,
-            system: composeSystemWithMemory(EDIT_ORCHESTRATOR_PROMPT, convo, change),
-            messages: [{ role: 'user', content: 'PEDIDO DEL USUARIO:\n' + change + '\n\nMAPA COMPACTO DE LA PAGINA (solo para ubicar el cambio):\n' + buildProgramEditOutline(currentDoc) }],
-            maxTokens: 400,
-            temperature: 0.3,
-            reasonStage: false
-          }, signal, { onProgress: (pr) => {
-            orchLive.text = String((pr && pr.text) || '');
-            orchLive.chars = orchLive.text.length;
-            orchLive.lastDeltaAt = Date.now();
-            orchLive.phase = 'writing';
-            bub.innerHTML = renderProgramStageLive('orchestrate', orchLive); scrollDown();
-          } });
-          orchRaw = String((orchRes && orchRes.text) || '');
-        } finally { stopProgramLiveTimer(orchTimer); }
-        const o = parseReasonJson(orchRaw) || {};
-        if (o.instruccion && String(o.instruccion).trim()) editBrief = String(o.instruccion).trim();
-        if (o.recomendacion && String(o.recomendacion).trim()) editRecommendation = String(o.recomendacion).trim();
-      } catch (_) { /* sin orquestador: seguimos con el pedido literal */ }
-      if (visualAssets.context) editBrief += '\n\n' + visualAssets.context;
       if (signal.aborted) return;
-      // 1) Parche quirurgico: solo el cambio pedido, el resto intacto.
+      // Parche quirurgico: solo el cambio pedido, el resto intacto.
       bub.innerHTML = reasonStageHtml('codigo');
-      const patched = await patchOnce('');
+      const patched = await patchOnce();
       const recPrefix = editRecommendation ? ('💡 _' + editRecommendation + '_\n\n') : '';
       if (patched && patched.changed) {
         const summary = patched.summary || String(change).trim();
