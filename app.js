@@ -3341,6 +3341,7 @@
 
   // Una sola IA produce el unico HTML. Una peticion = una llamada facturable.
   async function buildCodePipeline(text, improved, convo, history, bub, signal, billed) {
+    await fetchReasonStatus();
     const codeModel = reasonModel('spec_codigo', 'deepseek/deepseek-v4-pro');
     const programModel = reasonModel('program_coder', codeModel);
     const requestText = String(text || '') + (improved && improved !== text ? ('\n' + improved) : '');
@@ -3391,6 +3392,7 @@
 
   async function programOrchestrate() {
     const p = state.program;
+    await fetchReasonStatus();
     const codeModel = reasonModel('spec_codigo', 'deepseek/deepseek-v4-pro');
     const raw = await reasonChat({
       model: reasonModel('program_coder', codeModel),
@@ -3835,6 +3837,7 @@
     el.messages.appendChild(built.wrap); scrollDown();
     setBusy(true); state.abort = new AbortController();
     const signal = state.abort.signal;
+    await fetchReasonStatus();
     const codeModel = reasonModel('spec_codigo', 'deepseek/deepseek-v4-pro');
     const programModel = reasonModel('program_coder', codeModel);
     const orchModel = reasonModel('edit_orchestrator', 'google/gemini-2.5-flash');
