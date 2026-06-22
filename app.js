@@ -3066,7 +3066,7 @@
     liveConvo.updated = Date.now();
     saveConvos();
     if (state.activeId === liveConvo.id) renderMessages();
-    renderConvoList();
+    renderConvoList(); fetchStatus();
     await syncPushOne(liveConvo).catch(() => {});
     void maybeUpdateConvoBrain(liveConvo);
   }
@@ -3944,7 +3944,7 @@
     };
     convo.messages.push(m);
     convo.updated = Date.now();
-    saveConvos(); renderMessages(); renderConvoList();
+    saveConvos(); renderMessages(); renderConvoList(); fetchStatus();
     await syncPushOne(convo).catch(() => {});
     void finalizeReasoningReview(convo.id, m.id);
   }
@@ -3969,6 +3969,8 @@
       if (data && data.credits) { state.credits = mergeCredits(state.credits, data.credits); renderCredits(); }
       throw ApiError(stageErrorMessage(opts, data, res), data.status || res.status, data.credits);
     }
+    // Cobro por token: refrescamos la barra de uso en vivo tras cada llamada del razonamiento.
+    if (data && data.credits) { state.credits = mergeCredits(state.credits, data.credits); renderCredits(); }
     return String(data.text || '').trim();
   }
 
@@ -4057,6 +4059,8 @@
       }
     }
     if (errored) throw ApiError(stageErrorMessage(opts, { error: errored, status: errorStatus }, null), errorStatus, credits);
+    // Cobro por token: refrescamos la barra de uso con el costo real del stream (p.ej. el juez).
+    if (credits) { state.credits = mergeCredits(state.credits, credits); renderCredits(); }
     return { text: full, credits, finishReason, truncated, events, sawReasoning };
   }
 
