@@ -135,8 +135,8 @@
     'BOTONES SEGUROS: todo boton que no envie un formulario es <button type="button">. Si un boton lleva a una seccion (ej. "Explorar Ahora"), usa scroll interno: onclick="document.querySelector(\'#top-comidas\').scrollIntoView({behavior:\'smooth\'})". NUNCA navegues con location.href, location.assign, location.replace ni window.location: eso sacaria al usuario de la pagina.',
     'Entrega contenido realista y completo, diseno responsive, accesibilidad basica y controles funcionales. No uses dependencias externas que requieran claves.',
     'IMAGENES: si recibes un bloque RECURSOS VISUALES OBLIGATORIOS, esas URLs tienen PRIORIDAD ABSOLUTA: usalas EXACTAS y completas (sin recortar ni cambiar) en elementos <img> o fondos segun lo pedido, una por cada foto que pida la pagina. Nunca las sustituyas por SVG, data:image, iconos, gradientes ni placeholders. Si el usuario proporciona una URL para logo/portada/imagen principal, obedecela literalmente.',
-    'IMAGENES SIN URL DEL USUARIO (lo normal): cuando la pagina necesite fotos de un tema (jugadores, comida, productos, personas, lugares...) y NO haya URLs provistas, DEBES ponerlas igual con imagenes tematicas reales que SIEMPRE cargan, por palabra clave: https://loremflickr.com/ANCHO/ALTO/PALABRAS (PALABRAS = el tema en ingles separado por comas, p.ej. soccer,player; "futbol" -> "soccer", "comida" -> "food"). Pon una <img> con esa URL, su ancho/alto reales y alt descriptivo, en CADA tarjeta/jugador/producto/elemento que deba mostrar una foto. Para que cada tarjeta tenga una foto distinta, agrega un parametro unico al final, p.ej. ?lock=1, ?lock=2 (o /all?random=1, /all?random=2). NUNCA inventes IDs de Unsplash/Pexels (dan 404), NUNCA dejes la tarjeta sin <img>, ni la sustituyas por SVG/gradiente.',
-    'TODA etiqueta <img> debe incluir un onerror que la rescate si la URL falla: onerror="this.onerror=null;this.src=\'https://picsum.photos/600/400\'" (incluso en las <img> que generes dentro de plantillas de JavaScript). Asi nunca se ve un icono de imagen rota.',
+    'IMAGENES SIN RECURSO OBLIGATORIO ni URL del usuario: si la pagina necesita fotos y no recibiste un bloque de RECURSOS VISUALES OBLIGATORIOS, usa SIEMPRE imagenes que cargan seguro con https://picsum.photos/seed/PALABRA/ANCHO/ALTO (PALABRA = un texto unico por imagen, p.ej. jugador1, jugador2). Pon una <img> con su alt en CADA tarjeta/jugador/producto/elemento. NUNCA inventes IDs de Unsplash/Pexels ni uses loremflickr con nombres propios (dan 404/500), NUNCA dejes la tarjeta sin <img>, ni la sustituyas por SVG/gradiente.',
+    'TODA etiqueta <img> debe incluir un onerror que la rescate si la URL falla: onerror="this.onerror=null;this.src=\'https://picsum.photos/seed/x/600/450\'" (incluso en las <img> que generes dentro de plantillas de JavaScript). Asi nunca se ve un icono de imagen rota.',
     'Devuelve SOLO un bloque ```html con el documento completo. No agregues explicaciones fuera del bloque.'
   ].join('\n');
 
@@ -3357,13 +3357,19 @@
       return { intent, assets: intent.explicitUrls.map((url) => ({ url, explicit: true })), context };
     }
 
-    // Sin URLs del usuario: ya NO buscamos en sonar/Wikimedia. Esa busqueda estaba restringida a
-    // Commons y, para temas comunes (p.ej. "jugadores"), traia fotos irrelevantes o ninguna, y la
-    // pagina salia sin imagenes. Ahora el constructor coloca imagenes tematicas por palabra clave
-    // (loremflickr, ver PROGRAM_CODER_PROMPT) que SIEMPRE cargan y coinciden con el tema. Sin
-    // recursos obligatorios; nunca bloquea ni descarta la pagina.
-    state.programProtectedUrls = new Set();
-    return { intent, assets: [], context: '' };
+    // Sin URLs del usuario: ya NO buscamos en sonar/Wikimedia (traia URLs rotas/irrelevantes y la
+    // pagina salia sin fotos). En su lugar le damos al constructor un set de URLs que SIEMPRE
+    // cargan (picsum, deterministas por seed) como RECURSOS OBLIGATORIOS. El modelo pone una por
+    // cada tarjeta y el chequeo + inyeccion (ensureProgramVisualAssets) garantiza que aparezcan.
+    // Asi las imagenes SIEMPRE se ven. (Para fotos especificas, el usuario pega sus propias URLs.)
+    const reliableAssets = [];
+    for (let i = 1; i <= 8; i += 1) reliableAssets.push({ url: 'https://picsum.photos/seed/lth' + i + '/600/450' });
+    state.programProtectedUrls = new Set(reliableAssets.map((a) => a.url));
+    const lines = reliableAssets.map((a, i) => (i + 1) + '. URL: ' + a.url + '\n   ALT: Imagen ' + (i + 1));
+    const context = 'RECURSOS VISUALES OBLIGATORIOS (URLs de imagen que SIEMPRE cargan; usa una DISTINTA en CADA tarjeta/jugador/producto/elemento que deba mostrar una foto, dentro de <img src="..." alt="...">):\n'
+      + lines.join('\n')
+      + '\nNo inventes otras URLs de bancos (Unsplash/Pexels/loremflickr con nombres dan 404/500). Si necesitas mas imagenes que estas, repite estas mismas URLs. Nunca uses SVG ni gradientes en lugar de la foto.';
+    return { intent, assets: reliableAssets, context };
   }
 
   function programVisualAssetsApplied(doc, resolved) {
