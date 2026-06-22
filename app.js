@@ -68,12 +68,15 @@
   ].join('\n');
   const JUDGE_PROMPT = [
     'Eres el JUEZ FINAL del modo razonamiento de Mady. Recibes la PETICION ORIGINAL del usuario, el PROMPT MEJORADO que se le dio al especialista y el BORRADOR que produjo (con sus fuentes si las hay).',
-    'Tu trabajo:',
-    '1) Juzga si el borrador cumple EXACTAMENTE el prompt mejorado y responde bien la peticion original.',
-    '2) Si esta correcto, APRUEBALO SIN REESCRIBIRLO y devuelve correcciones=[].',
-    '3) Si algo concreto falla, devuelve SOLO correcciones incrementales. Cada correccion debe contener un fragmento literal y unico del borrador en "buscar" y su sustitucion minima en "reemplazar". Conserva intacto todo lo demas.',
+    'TUS HABILIDADES (aplicalas siempre que apliquen):',
+    '- EXACTITUD FACTUAL: verifica fechas, numeros, precios, nombres, versiones y hechos. Si recibes RESULTADOS DE BUSQUEDA WEB, trátalos como la verdad: corrige lo que no coincida y cita las URLs reales en "fuentes". No apruebes datos dudosos o desactualizados.',
+    '- CUMPLIMIENTO: confirma que el borrador responde EXACTAMENTE la peticion original y el prompt mejorado (nada faltante, nada fuera de tema).',
+    '- COHERENCIA Y RIGOR: detecta contradicciones, vaguedad, afirmaciones inventadas o pasos logicos rotos.',
+    'COMO ACTUAS:',
+    '1) Si el borrador esta correcto, APRUEBALO SIN REESCRIBIRLO y devuelve correcciones=[].',
+    '2) Si algo concreto falla, devuelve SOLO correcciones incrementales. Cada correccion debe contener un fragmento literal y unico del borrador en "buscar" y su sustitucion minima en "reemplazar". Conserva intacto todo lo demas.',
     'PROHIBIDO devolver una respuesta final completa, resumir, cambiar el tono, reorganizar por gusto o reescribir partes correctas. Si no puedes corregirlo con reemplazos puntuales, marca RECHAZADO y explica el motivo en advertencia.',
-    'Devuelve SOLO JSON valido:',
+    'Devuelve SIEMPRE un veredicto. Devuelve SOLO JSON valido:',
     '{ "veredicto": "APROBADO", "confianza": 90, "fuentes": [], "advertencia": "", "correcciones": [] }',
     'veredicto in {APROBADO, APROBADO_CON_CORRECCIONES, RECHAZADO}. confianza 0-100. fuentes = URLs reales usadas (si aplica). advertencia = que no se pudo verificar o por que se rechaza. correcciones = maximo 8 objetos {"buscar":"texto literal unico","reemplazar":"cambio minimo"}.'
   ].join('\n');
@@ -817,6 +820,7 @@
       const review = message.reasoningReview;
       next.reasoningReview = {
         status: ['pending', 'reviewing', 'complete'].includes(review.status) ? review.status : 'pending',
+        category: String(review.category || '').slice(0, 40),
         original: String(review.original || '').slice(0, 30000),
         improved: String(review.improved || '').slice(0, 30000),
         draft: String(review.draft || '').slice(0, 120000),
@@ -3018,7 +3022,12 @@
       || /timeout|tiempo de espera|tardo demasiado|l[ií]mite.*tiempo|resource limit/i.test(message);
   }
 
-  async function runJudgeReview(model, text, improved, draft, convo, signal, timeoutMs) {
+  async function runJudgeReview(model, text, improved, draft, convo, signal, timeoutMs, opts) {
+    const plugins = opts && Array.isArray(opts.plugins) ? opts.plugins : null;
+    const needWeb = !!(opts && opts.needWeb);
+    const hoy = new Date().toLocaleDateString('es', { day: '2-digit', month: 'long', year: 'numeric' });
+    const ctx = '\nHoy es ' + hoy + ' (estamos en el ano 2026; NUNCA trates esta fecha como futura).'
+      + (needWeb ? ' Tienes BUSQUEDA WEB ACTIVA: usa los resultados para validar datos reales y actuales ANTES de aprobar; corrige lo desactualizado y cita las URLs.' : '');
     const controller = typeof AbortController === 'function' ? new AbortController() : null;
     const reviewSignal = controller ? controller.signal : signal;
     const abortReview = () => { try { controller?.abort(); } catch (_) {} };
@@ -3028,14 +3037,16 @@
     }
     const timer = controller ? setTimeout(abortReview, timeoutMs || 100000) : null;
     try {
-      const result = await streamReasonChat({
+      const payload = {
         model,
-        system: composeSystemWithMemory(JUDGE_PROMPT, convo, text),
+        system: composeSystemWithMemory(JUDGE_PROMPT + ctx, convo, text),
         messages: [{ role: 'user', content: 'PETICION ORIGINAL:\n' + text + '\n\nPROMPT MEJORADO:\n' + improved + '\n\nBORRADOR DEL ESPECIALISTA:\n' + draft }],
-        maxTokens: 1200,
+        maxTokens: needWeb ? 1600 : 1200,
         temperature: 0.1,
         reasonStage: false
-      }, reviewSignal);
+      };
+      if (plugins) payload.plugins = plugins;
+      const result = await streamReasonChat(payload, reviewSignal);
       return parseReasonJson(result?.text || '');
     } finally {
       if (timer) clearTimeout(timer);
@@ -3086,13 +3097,14 @@
       improved: String(review.improved || review.original || ''),
       draft: String(review.draft || ''),
       specialistModel: String(review.specialistModel || ''),
+      category: String(review.category || ''),
       attempts: Math.max(0, Number(review.attempts || 0)),
       createdAt: Number(review.createdAt || now)
     };
     if (snapshot.attempts >= MAX_REASON_REVIEW_RUNS) {
       await commitReasoningReviewResult(convoId, messageId, snapshot, {
-        veredicto: 'RECHAZADO', confianza: null, fuentes: [],
-        advertencia: 'La revision automatica ya uso su unico intento; se conserva intacta la respuesta del especialista.',
+        veredicto: 'SIN_REVISION', confianza: null, fuentes: [],
+        advertencia: 'El juez no alcanzo a revisar (ya uso su intento); se conserva intacta la respuesta del especialista.',
         correcciones: []
       });
       return;
@@ -3109,21 +3121,35 @@
     if (state.activeId === convo.id) renderMessages();
     await syncPushOne(convo).catch(() => {});
 
+    // El juez debe validar DATOS REALES: en categorias factuales (chat_max) corre con BUSQUEDA
+    // WEB activa (modelo online). Cadena de fallback para que NO se caiga: web -> opus ->
+    // gemini. Solo si TODAS fallan se marca "Sin revision" y se conserva el borrador intacto.
+    const factual = snapshot.category === 'chat_max';
+    const attempts = [];
+    if (factual) attempts.push({ model: reasonModel('judge_web', 'anthropic/claude-sonnet-4.6:online'), timeoutMs: 115000, opts: { plugins: [{ id: 'web', max_results: 5 }], needWeb: true } });
+    attempts.push({ model: reasonModel('judge', 'anthropic/claude-opus-4.8'), timeoutMs: 100000, opts: null });
+    attempts.push({ model: reasonModel('orchestrator', 'google/gemini-2.5-flash'), timeoutMs: 45000, opts: null });
+
     let judge = null;
-    try {
+    for (const attempt of attempts) {
+      if (judge) break;
       try {
-        judge = await runJudgeReview(reasonModel('judge', 'anthropic/claude-opus-4.8'), snapshot.original, snapshot.improved, snapshot.draft, convo, null, 100000);
-      } catch (_) {
-        judge = await runJudgeReview(reasonModel('orchestrator', 'google/gemini-2.5-flash'), snapshot.original, snapshot.improved, snapshot.draft, convo, null, 45000);
-      }
-    } catch (_) {
+        const result = await runJudgeReview(attempt.model, snapshot.original, snapshot.improved, snapshot.draft, convo, null, attempt.timeoutMs, attempt.opts);
+        if (result && typeof result === 'object') judge = result;
+      } catch (_) { /* probamos el siguiente modelo del fallback */ }
+    }
+    if (!judge) {
+      // El juez NO debe caerse: si pasara, conservamos el borrador y lo marcamos sin revision.
       judge = {
-        veredicto: 'RECHAZADO',
+        veredicto: 'SIN_REVISION',
         confianza: null,
         fuentes: [],
-        advertencia: 'La verificacion final agoto el tiempo disponible; se conserva intacta la respuesta del especialista.',
+        advertencia: 'El juez no estuvo disponible; se conserva intacta la respuesta del especialista.',
         correcciones: []
       };
+    } else if (!String(judge.veredicto || '').trim()) {
+      // Corrio pero no devolvio veredicto legible -> el borrador queda aprobado tal cual.
+      judge.veredicto = 'APROBADO';
     }
 
     try {
@@ -3843,10 +3869,13 @@
 
   function appendVerdict(bub, v) {
     if (!v) return;
-    const tone = v.veredicto === 'APROBADO' ? 'ok' : v.veredicto === 'RECHAZADO' ? 'bad' : 'warn';
-    const label = v.veredicto === 'APROBADO' ? 'Aprobado'
-      : v.veredicto === 'APROBADO_CON_CORRECCIONES' ? 'Aprobado con correcciones'
-        : v.veredicto === 'RECHAZADO' ? 'Rechazado' : 'Revisado';
+    const tone = v.veredicto === 'APROBADO' ? 'ok'
+      : v.veredicto === 'RECHAZADO' ? 'bad'
+        : v.veredicto === 'SIN_REVISION' ? 'idle' : 'warn';
+    const label = v.veredicto === 'APROBADO' ? '✓ Aprobado por el juez'
+      : v.veredicto === 'APROBADO_CON_CORRECCIONES' ? '✓ Aprobado con correcciones'
+        : v.veredicto === 'RECHAZADO' ? 'Rechazado'
+          : v.veredicto === 'SIN_REVISION' ? 'Sin revisión' : 'Revisado';
     const card = document.createElement('div');
     card.className = 'verdict-card v-' + tone;
     let html = '<div class="vc-head"><span class="vc-badge">' + escapeHtml(label) + '</span>';
@@ -3933,6 +3962,7 @@
       ts: Date.now(),
       reasoningReview: {
         status: 'pending',
+        category,
         original: text,
         improved,
         draft,

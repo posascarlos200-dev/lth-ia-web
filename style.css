@@ -463,6 +463,8 @@ input, textarea { font-family: inherit; }
 .v-ok .vc-badge { color: #00231a; background: #5bffd0; }
 .v-warn .vc-badge { color: #2a1c00; background: #ffd15b; }
 .v-bad .vc-badge { color: #2a0010; background: #ff7a93; }
+.verdict-card.v-idle { border-color: var(--line); background: rgba(150,160,210,.06); }
+.v-idle .vc-badge { color: #dbe2ff; background: rgba(150,160,210,.28); }
 .vc-conf { font-size: 11px; color: var(--text-dim); white-space: nowrap; }
 .vc-bar { height: 6px; border-radius: 4px; background: rgba(0,0,0,.35); border: 1px solid var(--line); overflow: hidden; margin: 9px 0 1px; }
 .vc-bar i { display: block; height: 100%; background: linear-gradient(90deg, var(--cyan), var(--cyan-2)); box-shadow: 0 0 8px var(--cyan); }
