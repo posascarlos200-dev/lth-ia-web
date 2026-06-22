@@ -134,8 +134,8 @@
     'NAVEGACION DE UNA SOLA PAGINA (obligatoria): cada opcion del menu apunta con hash a una seccion real que EXISTE en la pagina; cada seccion lleva su id correspondiente. Ej: <a href="#inicio">Inicio</a> ... <section id="inicio">. Nunca uses href="/", "/login", "/home", "/auth", "/dashboard", rutas como /inicio, index.html ni enlaces relativos para navegar dentro de la pagina.',
     'BOTONES SEGUROS: todo boton que no envie un formulario es <button type="button">. Si un boton lleva a una seccion (ej. "Explorar Ahora"), usa scroll interno: onclick="document.querySelector(\'#top-comidas\').scrollIntoView({behavior:\'smooth\'})". NUNCA navegues con location.href, location.assign, location.replace ni window.location: eso sacaria al usuario de la pagina.',
     'Entrega contenido realista y completo, diseno responsive, accesibilidad basica y controles funcionales. No uses dependencias externas que requieran claves.',
-    'IMAGENES: si recibes un bloque RECURSOS VISUALES OBLIGATORIOS, usa esas URLs EXACTAS en elementos <img> o fondos segun lo pedido. Nunca las sustituyas por SVG, data:image, iconos dibujados, gradientes ni placeholders. Si el usuario proporciona una URL para logo, portada o imagen principal, obedecela literalmente y no cambies la URL.',
-    'IMAGENES SIN RECURSO OBLIGATORIO: NUNCA inventes IDs de fotos de bancos (Unsplash/Pexels con id adivinado casi siempre dan 404 y se ven rotas). Para imagenes decorativas sin URL del usuario ni recurso obligatorio, usa SIEMPRE una fuente determinista que carga seguro: https://picsum.photos/seed/PALABRA/ANCHO/ALTO (cambia PALABRA por un termino del tema, p.ej. moda/comida).',
+    'IMAGENES: si recibes un bloque RECURSOS VISUALES OBLIGATORIOS, esas URLs tienen PRIORIDAD ABSOLUTA: usalas EXACTAS y completas (sin recortar ni cambiar) en elementos <img> o fondos segun lo pedido, una por cada foto que pida la pagina. Nunca las sustituyas por SVG, data:image, iconos, gradientes, placeholders NI por picsum. Si el usuario proporciona una URL para logo/portada/imagen principal, obedecela literalmente.',
+    'SOLO cuando NO haya bloque de RECURSOS VISUALES OBLIGATORIOS ni URL del usuario, y necesites una imagen decorativa: NUNCA inventes IDs de bancos (Unsplash/Pexels adivinados dan 404); usa una fuente determinista que carga seguro: https://picsum.photos/seed/PALABRA/ANCHO/ALTO (PALABRA = termino del tema). Si SÍ hay recursos obligatorios, NO uses picsum.',
     'TODA etiqueta <img> debe incluir onerror="this.style.display=\'none\'" (tambien las que generes dentro de plantillas de JavaScript). Asi, si una URL falla, se ve el fondo/gradiente y nunca un icono de imagen rota.',
     'Devuelve SOLO un bloque ```html con el documento completo. No agregues explicaciones fuera del bloque.'
   ].join('\n');
@@ -3391,6 +3391,26 @@
     return urls.some((url) => html.includes(url));
   }
 
+  // Si el constructor NO integro las fotos obligatorias, NO descartamos la pagina (eso quema
+  // tokens y deja al usuario sin nada). En su lugar inyectamos por codigo las URLs reales:
+  // reemplazamos el src de las primeras <img> con los assets verificados. Si no hay <img> que
+  // tocar, devolvemos la pagina tal cual (siempre usable). Nunca lanza.
+  function ensureProgramVisualAssets(doc, resolved) {
+    let html = String(doc || '');
+    if (!resolved || !resolved.intent || !resolved.intent.active) return html;
+    if (programVisualAssetsApplied(html, resolved)) return html;
+    const urls = (resolved.assets || []).map((item) => String(item && item.url || '')).filter(Boolean);
+    if (!urls.length) return html;
+    let i = 0;
+    html = html.replace(/(<img\b[^>]*\bsrc\s*=\s*")([^"]*)(")/gi, (m, pre, _src, post) => {
+      if (i >= urls.length) return m;
+      const url = urls[i];
+      i += 1;
+      return pre + url + post;
+    });
+    return html;
+  }
+
   // Agente de Programar por streaming. NO fija un limite propio: pide el maximo que permita el
   // modelo (lo acota el plan/admin en el edge) y, si hace falta, encadena continuaciones HASTA
   // que el resultado este COMPLETO (no solo "hasta que truncó"). isComplete decide cuando parar.
@@ -3504,8 +3524,9 @@
     }, 'codigo', bub, signal, (acc) => /<\/html\s*>/i.test(extractHtmlDoc(acc)));
     const doc = extractHtmlDoc(raw);
     const assembled = assembleProgramDoc(doc, '', '');
-    if (!programVisualAssetsApplied(assembled, visualAssets)) throw new Error('La pagina se genero, pero no integro las fotografias o la URL indicada. No guarde una version incompleta.');
-    return assembled;
+    // Nunca descartamos una pagina ya generada (cuesta tokens reales). Si faltan las fotos
+    // obligatorias, las inyectamos por codigo y entregamos igual.
+    return ensureProgramVisualAssets(assembled, visualAssets);
   }
   /* ─────────── Herramienta "Programar": asistente interactivo + build ─────────── */
   function openProgramModal() { if (el.programModal) el.programModal.hidden = false; }
@@ -4170,7 +4191,8 @@
         temperature: 0.05
       }, bub, signal);
       const result = applyProgramPatch(currentDoc, raw);
-      if (result.changed && !programVisualAssetsApplied(result.doc, visualAssets)) throw new Error('el parche no uso las fotografias o la URL obligatoria');
+      // No descartamos un cambio bueno por las fotos: si faltan, las inyectamos por codigo.
+      if (result.changed) result.doc = ensureProgramVisualAssets(result.doc, visualAssets);
       return result;
     };
     try {
