@@ -135,7 +135,7 @@
     'BOTONES SEGUROS: todo boton que no envie un formulario es <button type="button">. Si un boton lleva a una seccion (ej. "Explorar Ahora"), usa scroll interno: onclick="document.querySelector(\'#top-comidas\').scrollIntoView({behavior:\'smooth\'})". NUNCA navegues con location.href, location.assign, location.replace ni window.location: eso sacaria al usuario de la pagina.',
     'Entrega contenido realista y completo, diseno responsive, accesibilidad basica y controles funcionales. No uses dependencias externas que requieran claves.',
     'IMAGENES: si recibes un bloque RECURSOS VISUALES OBLIGATORIOS, esas URLs tienen PRIORIDAD ABSOLUTA: usalas EXACTAS y completas (sin recortar ni cambiar) en elementos <img> o fondos segun lo pedido, una por cada foto que pida la pagina. Nunca las sustituyas por SVG, data:image, iconos, gradientes ni placeholders. Si el usuario proporciona una URL para logo/portada/imagen principal, obedecela literalmente.',
-    'IMAGENES SIN RECURSO OBLIGATORIO ni URL del usuario (lo normal): si la pagina necesita fotos de un tema y no recibiste RECURSOS VISUALES OBLIGATORIOS, pon en CADA tarjeta/jugador/producto/elemento una <img> con https://loremflickr.com/ANCHO/ALTO/PALABRA donde PALABRA es UNA sola palabra generica del tema EN INGLES (futbol->soccer, comida->food, ciudad->city). REGLA CRITICA: una SOLA palabra, NUNCA nombres propios (messi, barcelona) ni varias palabras separadas por coma: eso hace que loremflickr devuelva error 500 y la foto no cargue. Para variar la foto agrega ?lock=1, ?lock=2, etc. NUNCA inventes IDs de Unsplash/Pexels, NUNCA dejes la tarjeta sin <img>, ni la sustituyas por SVG/gradiente.',
+    'IMAGENES SIN URL del usuario (lo normal): pon en CADA tarjeta/jugador/producto/elemento una <img> con una foto REAL y RELEVANTE. PRIORIDAD 1: usa URLs reales y especificas que conozcas y que correspondan al contenido — p.ej. images.unsplash.com/photo-... (con ?w=600&q=80) para productos/ropa/objetos/escenas, o upload.wikimedia.org para personas/lugares famosos. Usa la foto que de verdad corresponda a cada item. PRIORIDAD 2 (solo si no conoces una URL real para ese item): https://loremflickr.com/ANCHO/ALTO/PALABRA con UNA sola palabra generica del tema EN INGLES (futbol->soccer, comida->food); una SOLA palabra, NUNCA nombres propios ni comas (dan 500). NUNCA dejes la tarjeta sin <img> ni la sustituyas por SVG/gradiente. El sistema validara y reemplazara automaticamente cualquier foto que no cargue, asi que prioriza la relevancia.',
     'TODA etiqueta <img> debe incluir un onerror que la rescate si la URL falla, hacia un servicio que SIEMPRE responde: onerror="this.onerror=null;this.src=\'https://placehold.co/600x450?text=Foto\'" (incluso en las <img> que generes dentro de plantillas de JavaScript). Asi nunca se ve un icono de imagen rota.',
     'Devuelve SOLO un bloque ```html con el documento completo. No agregues explicaciones fuera del bloque.'
   ].join('\n');
@@ -321,7 +321,7 @@
       + '<div class="code-preview-bar"><span class="code-preview-title">Vista de la página</span>'
       + '<button class="code-preview-fs" type="button" data-preview-download="single" title="Descargar como un solo archivo HTML">⬇ HTML</button>'
       + '<button class="code-preview-fs" type="button" data-preview-edit="1" title="Editar esta página">✎ Editar</button><button class="code-preview-fs code-preview-close" type="button" data-preview-close="1" title="Volver al chat">← Volver</button></div>'
-      + '<iframe class="code-preview-iframe" sandbox="allow-scripts allow-modals allow-popups" loading="lazy" data-doc="' + previewAttr(doc) + '" src="' + previewDataUrl(withPreviewShim(doc)) + '"></iframe></div>'
+      + '<iframe class="code-preview-iframe" sandbox="allow-scripts allow-modals allow-popups" loading="lazy" data-doc="' + previewAttr(doc) + '" srcdoc="' + previewAttr(withPreviewShim(doc)) + '"></iframe></div>'
       + '<div class="code-preview-code" hidden>'
       + '<div class="code-preview-bar"><span class="code-preview-title">Código HTML</span>'
       + '<button class="code-preview-fs" type="button" data-preview-copy="1" title="Copiar el código">⧉ Copiar</button>'
@@ -3388,14 +3388,13 @@
       const ok = await validateImageUrls(fb, signal);
       assets = fb.filter((u) => ok.has(u)).map((u) => ({ url: u }));
     }
+    // NO forzamos estas fotos como obligatorias: el modelo suele acertar con SUS propias URLs
+    // reales (p.ej. images.unsplash.com para productos). El pool queda solo para REPARAR las
+    // imagenes que el modelo ponga rotas (validacion en repairProgramImages). Asi no degradamos
+    // la calidad cuando el modelo ya elige bien, y rescatamos cuando se equivoca.
     state.programVisualPool = assets.map((a) => a.url);
-    state.programProtectedUrls = new Set(state.programVisualPool);
-    if (!assets.length) return { intent, assets: [], context: '' };
-    const lines = assets.map((a, i) => (i + 1) + '. URL: ' + a.url + '\n   ALT: ' + (a.alt || ('Foto ' + (i + 1))));
-    const context = 'RECURSOS VISUALES OBLIGATORIOS (fotos reales ya verificadas que SI cargan; usa una DISTINTA en CADA tarjeta/jugador/producto/elemento dentro de <img src="..." alt="...">):\n'
-      + lines.join('\n')
-      + '\nUsa estas URLs EXACTAS y completas; NO inventes otras (las inventadas dan 404). Si necesitas mas imagenes que estas, repite estas mismas. Nunca uses SVG ni gradientes en vez de la foto.';
-    return { intent, assets, context };
+    state.programProtectedUrls = new Set();
+    return { intent, assets: [], context: '' };
   }
 
   // Prueba en paralelo que cada URL cargue como imagen (new Image + timeout). Devuelve un Set
