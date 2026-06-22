@@ -453,6 +453,19 @@ input, textarea { font-family: inherit; }
 .reason-review-fade { position: absolute; left: 0; right: 0; bottom: 0; height: 96px; background: linear-gradient(180deg, transparent, var(--panel-solid)); pointer-events: none; }
 .reason-review-draft::after { content: ''; position: absolute; left: 0; bottom: 0; height: 3px; width: 36%; border-radius: 3px; background: linear-gradient(90deg, transparent, #7a5cff, #3aa0ff, transparent); animation: reasonSweep 1.6s ease-in-out infinite; }
 @keyframes reasonSweep { 0% { transform: translateX(-70%); } 100% { transform: translateX(300%); } }
+/* Panel de actividad del modo Programar: muestra en vivo lo que escribe + pausas/continuaciones */
+.pg-live { margin: 1px 0; padding: 11px 13px; border-radius: 14px; border: 1px solid rgba(122,140,255,.28); background: linear-gradient(120deg, rgba(77,163,255,.10), rgba(122,92,255,.10)); }
+.pg-live-head { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.pg-live-part { font-size: 11.5px; font-weight: 600; color: #cfe2ff; padding: 2px 9px; border-radius: 999px; border: 1px solid rgba(122,140,255,.4); background: rgba(122,140,255,.12); }
+.pg-live-meta { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin-top: 8px; font-size: 12px; }
+.pg-live-writing { display: inline-flex; align-items: center; gap: 7px; color: #9ec5ff; }
+.pg-live-writing .reason-orb { width: 9px; height: 9px; }
+.pg-live-paused { display: inline-flex; align-items: center; gap: 6px; font-weight: 600; color: #ffce6e; padding: 2px 9px; border-radius: 999px; border: 1px solid rgba(255,180,60,.45); background: rgba(255,180,60,.10); animation: blink 1.1s ease-in-out infinite; }
+.pg-live-count { color: var(--text-dim); margin-left: auto; }
+.pg-live-codewrap { margin-top: 9px; }
+.pg-live-codewrap summary { cursor: pointer; font-size: 11.5px; color: var(--text-dim); list-style: none; user-select: none; }
+.pg-live-codewrap summary::-webkit-details-marker { display: none; }
+.pg-live-code { margin: 7px 0 0; padding: 10px 12px; max-height: 180px; overflow: auto; border-radius: 10px; border: 1px solid var(--line); background: var(--field); font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace; font-size: 11.5px; line-height: 1.45; color: #b9d4c9; white-space: pre-wrap; word-break: break-word; }
 /* Tarjeta de veredicto del juez */
 .verdict-card { margin-top: 11px; padding: 11px 13px; border-radius: 13px; border: 1px solid var(--line); background: rgba(74,163,255,.05); }
 .verdict-card.v-ok { border-color: rgba(74,214,160,.4); background: rgba(74,214,160,.07); }

@@ -3199,10 +3199,59 @@
     return '<!DOCTYPE html>\n<html lang="es">\n<head>\n<meta charset="utf-8">\n<meta name="viewport" content="width=device-width, initial-scale=1">\n' + cssBlock + '\n</head>\n<body>\n' + doc + '\n' + jsBlock + '\n</body>\n</html>';
   }
 
+  // Devuelve las ultimas N lineas no vacias del texto, para mostrar "en vivo" lo que la IA
+  // esta escribiendo sin volcar el documento entero (el panel se queda corto y auto-scroll).
+  function programLiveCodeTail(text, lines) {
+    const raw = String(text || '');
+    if (!raw.trim()) return '';
+    const arr = raw.replace(/\s+$/, '').split('\n');
+    return arr.slice(-(lines || 14)).join('\n');
+  }
+
+  // Panel de actividad del modo Programar: muestra etapa, contador (tokens/caracteres),
+  // numero de continuacion y un aviso de PAUSA con cronometro cuando el stream se congela
+  // (el hueco entre continuaciones, justo donde se notaba el "corte"). Sin costo extra.
   function renderProgramStageLive(stageKey, progress) {
     const p = progress || {};
-    return reasonStageHtml(stageKey) + '<div style="margin-top:8px;font-size:12px;color:rgba(212,255,246,.6)">Escribiendo… ' + Number(p.events || 0) + ' eventos</div>';
+    const text = p.text != null ? String(p.text) : '';
+    const chars = Number(p.chars != null ? p.chars : text.length) || 0;
+    const tokens = Math.max(0, Math.ceil(chars / 3.6));
+    const pass = Number(p.pass || 0) || 0;
+    const maxPasses = Number(p.maxPasses || 0) || 0;
+    const last = Number(p.lastDeltaAt || 0) || 0;
+    const idleMs = last ? Math.max(0, Date.now() - last) : 0;
+    const explicitPause = p.phase === 'paused' || p.phase === 'resuming';
+    const paused = explicitPause || (last && idleMs > 1200);
+    const fmt = (n) => { try { return Number(n).toLocaleString('es-MX'); } catch (_) { return String(n); } };
+
+    const partLabel = pass > 1
+      ? '<span class="pg-live-part">Parte ' + pass + (maxPasses ? ' de ' + maxPasses : '') + '</span>'
+      : '';
+    const statusHtml = paused
+      ? '<span class="pg-live-paused">⏸ Pausa — reanudando (' + (idleMs / 1000).toFixed(1) + 's)</span>'
+      : '<span class="pg-live-writing"><span class="reason-orb"></span> Escribiendo…</span>';
+    const meta = '<span class="pg-live-count">' + fmt(tokens) + ' tokens · ' + fmt(chars) + ' caracteres</span>';
+    const tail = programLiveCodeTail(text, 14);
+    const codeHtml = tail
+      ? '<details class="pg-live-codewrap" open><summary>Ver lo que escribe</summary>'
+        + '<pre class="pg-live-code"><code>' + escapeHtml(tail) + '</code></pre></details>'
+      : '';
+    return '<div class="pg-live">'
+      + '<div class="pg-live-head">' + reasonStageHtml(stageKey) + partLabel + '</div>'
+      + '<div class="pg-live-meta">' + statusHtml + meta + '</div>'
+      + codeHtml
+      + '</div>';
   }
+
+  // Heartbeat: re-renderiza el panel cada 500ms aunque NO lleguen eventos del stream, para
+  // que el cronometro de "Pausa (Xs)" avance durante el congelamiento entre continuaciones.
+  function startProgramLiveTimer(bub, live) {
+    if (!bub || !live) return null;
+    return setInterval(() => {
+      try { bub.innerHTML = renderProgramStageLive(live.stageKey, live); } catch (_) {}
+    }, 500);
+  }
+  function stopProgramLiveTimer(id) { if (id) clearInterval(id); }
 
   // Quita TODOS los marcadores de fence (```html, ```) y devuelve el documento HTML desde su
   // inicio. Robusto frente a continuaciones que reabren el bloque o lo dejan sin cerrar.
@@ -3321,20 +3370,42 @@
   async function streamProgramAgent(baseOpts, stageKey, bub, signal, isComplete) {
     let combined = '';
     const MAX_PASSES = 8;
-    for (let pass = 0; pass < MAX_PASSES; pass += 1) {
-      if (signal && signal.aborted) break;
-      const messages = pass === 0 ? baseOpts.messages : [{ role: 'user', content: 'CONTINUA EXACTAMENTE desde donde te quedaste, sin repetir lo ya escrito ni reiniciar. Sigue hasta terminar TODO el documento (hasta </html>).\n\nULTIMO:\n' + combined.slice(-8000) }];
-      const r = await streamReasonChat({
-        model: baseOpts.model, system: baseOpts.system, messages: messages,
-        maxTokens: baseOpts.maxTokens,
-        temperature: baseOpts.temperature, reasonStage: baseOpts.reasonStage, stageLabel: baseOpts.stageLabel
-      }, signal, { onProgress: (pr) => { bub.innerHTML = renderProgramStageLive(stageKey, pr); scrollDown(); } });
-      const chunk = String(r && r.text || '');
-      if (!chunk) break;
-      combined += chunk;
-      const truncated = !!(r && r.truncated);
-      const done = isComplete ? isComplete(combined) : !truncated;
-      if (done) break;            // ya esta completo (aunque el modelo haya parado "ok")
+    // Estado compartido entre el stream (onProgress) y el heartbeat (timer): el panel en
+    // vivo lee de aqui para mostrar contador, continuacion actual y la pausa entre pases.
+    const live = { stageKey: stageKey, pass: 0, maxPasses: MAX_PASSES, chars: 0, text: '', lastDeltaAt: Date.now(), phase: 'resuming' };
+    const timer = startProgramLiveTimer(bub, live);
+    try {
+      for (let pass = 0; pass < MAX_PASSES; pass += 1) {
+        if (signal && signal.aborted) break;
+        // Arranque de cada pase: entre continuaciones hay un hueco (round-trip + el modelo
+        // "pensando" antes del primer token). Lo marcamos como pausa para que se vea el corte.
+        live.pass = pass + 1;
+        live.phase = 'resuming';
+        live.lastDeltaAt = Date.now();
+        bub.innerHTML = renderProgramStageLive(stageKey, live); scrollDown();
+        const messages = pass === 0 ? baseOpts.messages : [{ role: 'user', content: 'CONTINUA EXACTAMENTE desde donde te quedaste, sin repetir lo ya escrito ni reiniciar. Sigue hasta terminar TODO el documento (hasta </html>).\n\nULTIMO:\n' + combined.slice(-8000) }];
+        const r = await streamReasonChat({
+          model: baseOpts.model, system: baseOpts.system, messages: messages,
+          maxTokens: baseOpts.maxTokens,
+          temperature: baseOpts.temperature, reasonStage: baseOpts.reasonStage, stageLabel: baseOpts.stageLabel
+        }, signal, { onProgress: (pr) => {
+          live.text = combined + String((pr && pr.text) || '');
+          live.chars = live.text.length;
+          live.lastDeltaAt = Date.now();
+          live.phase = 'writing';
+          bub.innerHTML = renderProgramStageLive(stageKey, live); scrollDown();
+        } });
+        const chunk = String(r && r.text || '');
+        if (!chunk) break;
+        combined += chunk;
+        live.text = combined;
+        live.chars = combined.length;
+        const truncated = !!(r && r.truncated);
+        const done = isComplete ? isComplete(combined) : !truncated;
+        if (done) break;            // ya esta completo (aunque el modelo haya parado "ok")
+      }
+    } finally {
+      stopProgramLiveTimer(timer);
     }
     return combined;
   }
