@@ -134,9 +134,9 @@
     'NAVEGACION DE UNA SOLA PAGINA (obligatoria): cada opcion del menu apunta con hash a una seccion real que EXISTE en la pagina; cada seccion lleva su id correspondiente. Ej: <a href="#inicio">Inicio</a> ... <section id="inicio">. Nunca uses href="/", "/login", "/home", "/auth", "/dashboard", rutas como /inicio, index.html ni enlaces relativos para navegar dentro de la pagina.',
     'BOTONES SEGUROS: todo boton que no envie un formulario es <button type="button">. Si un boton lleva a una seccion (ej. "Explorar Ahora"), usa scroll interno: onclick="document.querySelector(\'#top-comidas\').scrollIntoView({behavior:\'smooth\'})". NUNCA navegues con location.href, location.assign, location.replace ni window.location: eso sacaria al usuario de la pagina.',
     'Entrega contenido realista y completo, diseno responsive, accesibilidad basica y controles funcionales. No uses dependencias externas que requieran claves.',
-    'IMAGENES: si recibes un bloque RECURSOS VISUALES OBLIGATORIOS, esas URLs tienen PRIORIDAD ABSOLUTA: usalas EXACTAS y completas (sin recortar ni cambiar) en elementos <img> o fondos segun lo pedido, una por cada foto que pida la pagina. Nunca las sustituyas por SVG, data:image, iconos, gradientes, placeholders NI por picsum. Si el usuario proporciona una URL para logo/portada/imagen principal, obedecela literalmente.',
-    'SOLO cuando NO haya bloque de RECURSOS VISUALES OBLIGATORIOS ni URL del usuario, y necesites una imagen decorativa: NUNCA inventes IDs de bancos (Unsplash/Pexels adivinados dan 404); usa una fuente determinista que carga seguro: https://picsum.photos/seed/PALABRA/ANCHO/ALTO (PALABRA = termino del tema). Si SÍ hay recursos obligatorios, NO uses picsum.',
-    'TODA etiqueta <img> debe incluir onerror="this.style.display=\'none\'" (tambien las que generes dentro de plantillas de JavaScript). Asi, si una URL falla, se ve el fondo/gradiente y nunca un icono de imagen rota.',
+    'IMAGENES: si recibes un bloque RECURSOS VISUALES OBLIGATORIOS, esas URLs tienen PRIORIDAD ABSOLUTA: usalas EXACTAS y completas (sin recortar ni cambiar) en elementos <img> o fondos segun lo pedido, una por cada foto que pida la pagina. Nunca las sustituyas por SVG, data:image, iconos, gradientes ni placeholders. Si el usuario proporciona una URL para logo/portada/imagen principal, obedecela literalmente.',
+    'IMAGENES SIN URL DEL USUARIO (lo normal): cuando la pagina necesite fotos de un tema (jugadores, comida, productos, personas, lugares...) y NO haya URLs provistas, DEBES ponerlas igual con imagenes tematicas reales que SIEMPRE cargan, por palabra clave: https://loremflickr.com/ANCHO/ALTO/PALABRAS (PALABRAS = el tema en ingles separado por comas, p.ej. soccer,player; "futbol" -> "soccer", "comida" -> "food"). Pon una <img> con esa URL, su ancho/alto reales y alt descriptivo, en CADA tarjeta/jugador/producto/elemento que deba mostrar una foto. Para que cada tarjeta tenga una foto distinta, agrega un parametro unico al final, p.ej. ?lock=1, ?lock=2 (o /all?random=1, /all?random=2). NUNCA inventes IDs de Unsplash/Pexels (dan 404), NUNCA dejes la tarjeta sin <img>, ni la sustituyas por SVG/gradiente.',
+    'TODA etiqueta <img> debe incluir un onerror que la rescate si la URL falla: onerror="this.onerror=null;this.src=\'https://picsum.photos/600/400\'" (incluso en las <img> que generes dentro de plantillas de JavaScript). Asi nunca se ve un icono de imagen rota.',
     'Devuelve SOLO un bloque ```html con el documento completo. No agregues explicaciones fuera del bloque.'
   ].join('\n');
 
@@ -150,7 +150,7 @@
     'Usa la menor cantidad de operaciones y el menor texto posible. replace sustituye search por content; insert_before/insert_after insertan content sin repetir search; delete elimina search. Nunca copies secciones intactas dentro de content.',
     'PROHIBIDO usar todo el documento, <html>, <!DOCTYPE> o bloques gigantes como search/content. Cada operacion debe tocar solo el componente, regla CSS o funcion JS estrictamente necesaria.',
     'IMAGENES: si la instruccion contiene RECURSOS VISUALES OBLIGATORIOS, inserta esas URLs EXACTAS como fotos reales. Nunca las reemplaces por SVG, data:image, iconos, gradientes ni placeholders. Si el usuario dio una URL para logo o imagen principal, esa URL manda y debe conservarse byte por byte.',
-    'NUNCA inventes IDs de fotos de bancos (Unsplash/Pexels adivinados dan 404). Si necesitas una imagen decorativa sin URL provista, usa https://picsum.photos/seed/PALABRA/ANCHO/ALTO. Toda <img> que agregues debe incluir onerror="this.style.display=\'none\'" para degradar sin romper.',
+    'NUNCA inventes IDs de fotos de bancos (Unsplash/Pexels adivinados dan 404). Si agregas fotos de un tema sin URL provista, usa imagenes tematicas que SIEMPRE cargan por palabra clave: https://loremflickr.com/ANCHO/ALTO/PALABRAS (PALABRAS en ingles separadas por comas, p.ej. soccer,player). Toda <img> que agregues debe incluir onerror="this.onerror=null;this.src=\'https://picsum.photos/600/400\'" para degradar sin romper.',
     'No uses markdown ni bloques de codigo. Nunca devuelvas el HTML completo. Si el pedido no requiere cambios, devuelve operations vacio.'
   ].join('\n');
 
@@ -3357,29 +3357,13 @@
       return { intent, assets: intent.explicitUrls.map((url) => ({ url, explicit: true })), context };
     }
 
-    let normalized = { query: '', assets: [] };
-    try {
-      const webModel = reasonModel('program_asset_search', 'google/gemini-2.5-flash-lite');
-      const raw = await reasonChat({ model: webModel, system: PROGRAM_ASSET_SEARCH_PROMPT, messages: [{ role: 'user', content: 'PAGINA Y FOTOS PEDIDAS:\n' + String(text || '') }], maxTokens: 1600, temperature: 0.1, plugins: [{ id: 'web', engine: 'exa', max_results: 8, include_domains: ['commons.wikimedia.org', 'upload.wikimedia.org'] }], reasonStage: false }, signal);
-      normalized = normalizeProgramAssets(raw);
-    } catch (_) {}
-
-    let assets = normalized.assets.slice();
-    if (assets.length < 3 && !(signal && signal.aborted)) {
-      try {
-        const fallback = await searchCommonsProgramPhotos(normalized.query || clipText(text, 240), signal);
-        const seen = new Set(assets.map((item) => item.url));
-        fallback.forEach((item) => { if (!seen.has(item.url) && assets.length < 6) { seen.add(item.url); assets.push(item); } });
-      } catch (_) {}
-    }
-    if (!assets.length) throw new Error('No encontre fotografias web verificables para integrar. Intenta describir el tipo de foto con mas detalle.');
-    state.programProtectedUrls = new Set(assets.map((item) => String(item && item.url || '')).filter(Boolean));
-    const lines = assets.map((item, i) => {
-      const credit = [item.author, item.license].filter(Boolean).join(' · ');
-      return (i + 1) + '. URL: ' + item.url + '\n   ALT: ' + (item.alt || 'Fotografia relacionada') + (item.source ? '\n   FUENTE: ' + item.source : '') + (credit ? '\n   CREDITO: ' + credit : '');
-    });
-    const context = 'RECURSOS VISUALES OBLIGATORIOS (fotografias web reales ya verificadas):\n' + lines.join('\n') + '\nUsa estas URLs exactas en <img>; agrega loading="lazy", alt descriptivo y atribucion discreta cuando haya credito. No uses SVG, data:image ni placeholders.';
-    return { intent, assets, context };
+    // Sin URLs del usuario: ya NO buscamos en sonar/Wikimedia. Esa busqueda estaba restringida a
+    // Commons y, para temas comunes (p.ej. "jugadores"), traia fotos irrelevantes o ninguna, y la
+    // pagina salia sin imagenes. Ahora el constructor coloca imagenes tematicas por palabra clave
+    // (loremflickr, ver PROGRAM_CODER_PROMPT) que SIEMPRE cargan y coinciden con el tema. Sin
+    // recursos obligatorios; nunca bloquea ni descarta la pagina.
+    state.programProtectedUrls = new Set();
+    return { intent, assets: [], context: '' };
   }
 
   function programVisualAssetsApplied(doc, resolved) {
@@ -3944,7 +3928,7 @@
     // URLs obligatorias (las que dio el usuario o los assets verificados) NO se reemplazan.
     const protect = (state.programProtectedUrls instanceof Set) ? state.programProtectedUrls : new Set();
     const urls = new Set();
-    const add = (u) => { const s = String(u || '').trim(); if (/^https?:\/\//i.test(s) && !/picsum\.photos/i.test(s) && !protect.has(s)) urls.add(s); };
+    const add = (u) => { const s = String(u || '').trim(); if (/^https?:\/\//i.test(s) && !/picsum\.photos|loremflickr\.com/i.test(s) && !protect.has(s)) urls.add(s); };
     let m;
     const imgRx = /<img\b[^>]*\bsrc\s*=\s*["']([^"']+)["']/gi;
     while ((m = imgRx.exec(html))) add(m[1]);
