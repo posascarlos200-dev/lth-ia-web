@@ -3845,7 +3845,7 @@
       + '<p class="cp-note">Mady puede buscar fotos reales del tema, verificar que carguen y dejarte revisarlas/cambiarlas antes de construir. O puede dejar que la IA constructora elija las imágenes ella misma.</p>'
       + '<div class="pg-opts">'
       + '<button type="button" class="pg-opt" data-img-consent="yes"><span class="pg-opt-copy"><span class="pg-opt-label">Sí, busca fotos reales</span><span class="pg-opt-desc">Te muestro las fotos para revisarlas y cambiarlas antes de construir.</span></span><span class="pg-rec">Recomendada</span></button>'
-      + '<button type="button" class="pg-opt" data-img-consent="no"><span class="pg-opt-copy"><span class="pg-opt-label">No, que las ponga la IA</span><span class="pg-opt-desc">La IA constructora elige y coloca las imágenes ella misma.</span></span></button>'
+      + '<button type="button" class="pg-opt" data-img-consent="no"><span class="pg-opt-copy"><span class="pg-opt-label">No (que Mady lo haga automático)</span><span class="pg-opt-desc">Mady programadora elige imágenes genéricas sin revisión. Útil si deseas rapidez.</span></span></button>'
       + '</div></div>';
     const yes = el.programBody.querySelector('[data-img-consent="yes"]');
     const no = el.programBody.querySelector('[data-img-consent="no"]');
