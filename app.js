@@ -3312,7 +3312,7 @@
     const normalized = normalizeForSearch(text);
     const explicitUrls = extractProgramMediaUrls(text);
     const mentionsVisual = /\b(foto|fotos|fotografia|fotografias|imagen|imagenes|logo|logotipo|banner|portada|fondo)\b/.test(normalized);
-    const requestsVisual = /\b(agrega|agregar|anade|anadir|integra|integrar|incluye|incluir|inserta|insertar|pon|poner|usa|usar|cambia|cambiar|reemplaza|reemplazar|quiero|necesito)\b/.test(normalized);
+    const requestsVisual = /\b(agrega|agregar|anade|anadir|integra|integrar|incluye|incluir|inserta|insertar|pon|poner|usa|usar|cambia|cambiar|reemplaza|reemplazar|quiero|necesito|dame|hazme|haz|hagamos|crea|crear|crame|genera|generar|disena|disenar|monta|montar|construye|construir|con)\b/.test(normalized);
     return { active: mentionsVisual && (requestsVisual || explicitUrls.length > 0), needsSearch: mentionsVisual && requestsVisual && explicitUrls.length === 0, explicitUrls };
   }
 
@@ -3820,13 +3820,50 @@
     const r = el.programBody.querySelector('#pgRetry'); if (r) r.addEventListener('click', () => { if (state.editFlow && state.editFlow.active) editWizardNextStep(); else programNextStep(); });
   }
 
+  // "Buen prompt" = detallado (5+ lineas o 300+ caracteres). Si lo es, no hacen falta preguntas:
+  // pasa directo a la IA. Si es corto/vago, el orquestador pregunta primero.
+  function isDetailedPrompt(text) {
+    const s = String(text || '');
+    const lines = s.split('\n').filter((l) => l.trim()).length;
+    return lines >= 5 || s.trim().length >= 300;
+  }
+
+  // Paso previo a construir: si la pagina lleva fotos, pregunta si el usuario quiere que Mady
+  // busque fotos reales (preview) o que la IA constructora las ponga. Si no lleva fotos, construye.
+  function proceedToBuild(convo, request, improved, history) {
+    if (detectProgramMediaIntent(String(request || '') + ' ' + String(improved || '')).active) {
+      return renderImageConsent(convo, request, improved, history);
+    }
+    closeProgramModal();
+    return directProgramBuild(convo, request, improved, history);
+  }
+
+  function renderImageConsent(convo, request, improved, history) {
+    openProgramModal();
+    if (!el.programBody) { closeProgramModal(); return directProgramBuild(convo, request, improved, history); }
+    el.programBody.innerHTML = '<div class="pg-step"><div class="pg-q">¿Quieres que Mady busque e integre fotos reales?</div>'
+      + '<p class="cp-note">Mady puede buscar fotos reales del tema, verificar que carguen y dejarte revisarlas/cambiarlas antes de construir. O puede dejar que la IA constructora elija las imágenes ella misma.</p>'
+      + '<div class="pg-opts">'
+      + '<button type="button" class="pg-opt" data-img-consent="yes"><span class="pg-opt-copy"><span class="pg-opt-label">Sí, busca fotos reales</span><span class="pg-opt-desc">Te muestro las fotos para revisarlas y cambiarlas antes de construir.</span></span><span class="pg-rec">Recomendada</span></button>'
+      + '<button type="button" class="pg-opt" data-img-consent="no"><span class="pg-opt-copy"><span class="pg-opt-label">No, que las ponga la IA</span><span class="pg-opt-desc">La IA constructora elige y coloca las imágenes ella misma.</span></span></button>'
+      + '</div></div>';
+    const yes = el.programBody.querySelector('[data-img-consent="yes"]');
+    const no = el.programBody.querySelector('[data-img-consent="no"]');
+    if (yes) yes.addEventListener('click', () => openProgramImagePreview(convo, request, improved, history));
+    if (no) no.addEventListener('click', () => { closeProgramModal(); directProgramBuild(convo, request, improved, history); });
+  }
+
   async function openProgramWizard(request, convo, seed) {
     if (!canUsePremium()) { showProModal('reasoning'); return; }
     if (convo && convo.mode !== 'program') { convo.mode = 'program'; try { saveConvos(); } catch (_) {} syncComposerMode(); }
-    state.program = { active: true, convo: convo, request: String(request || '').trim(), answers: [], plan: '', busy: false, lastStep: null, lastAskSig: '' };
-    // Desvio desde Razonar: el brief mejorado entra como contexto inicial.
+    const req = String(request || '').trim();
     const s = String(seed || '').trim();
-    if (s && s !== state.program.request) state.program.answers.push('Contexto: ' + s.slice(0, 400));
+    const improved = (s && s !== req) ? (req + '\n\nContexto: ' + s.slice(0, 400)) : req;
+    // Buen prompt detallado (5+ lineas): sin preguntas, directo a construir (con consentimiento
+    // de fotos si aplica). Solo los prompts cortos/vagos pasan por el asistente de preguntas.
+    if (isDetailedPrompt(req)) return proceedToBuild(convo, req, improved, []);
+    state.program = { active: true, convo: convo, request: req, answers: [], plan: '', busy: false, lastStep: null, lastAskSig: '' };
+    if (s && s !== req) state.program.answers.push('Contexto: ' + s.slice(0, 400));
     openProgramModal();
     await programNextStep();
   }
@@ -4349,10 +4386,14 @@
     const convo = ed.convo || activeConvo() || ensureActiveConvo(change);
     const currentDoc = String(ed.doc);
     state.programEdit = null;
-    // Antes de tocar la pagina, el cambio pasa por el asistente interactivo (Gemini Flash):
-    // si es ambiguo te pregunta/recomienda con tarjetas; cuando la idea queda clara, manda a
-    // la IA editora una instruccion exacta (evita el "no puedo hacer ese cambio, se especifico").
-    startEditWizard(String(change || '').trim(), convo, currentDoc);
+    const ch = String(change || '').trim();
+    // Buen prompt de edicion (5+ lineas): directo al editor, sin preguntas (ve toda la pagina).
+    // Corto/ambiguo: el asistente interactivo (Gemini) pregunta/recomienda primero.
+    if (isDetailedPrompt(ch)) {
+      closeProgramModal();
+      return executeProgramEdit(ch, currentDoc, convo, ch, '', { scope: 'full', locator: '' });
+    }
+    startEditWizard(ch, convo, currentDoc);
   }
 
   // Abre el asistente interactivo de edicion. Reusa el modal y las tarjetas del asistente
@@ -4594,11 +4635,8 @@
     const brief = (p.plan || p.request) + (p.answers.length ? '\n\nDecisiones del usuario:\n- ' + p.answers.join('\n- ') : '');
     state.program.active = false;
     const history = buildCloudMessages(convo, 'reasoning');
-    // Si la pagina llevara fotos, primero el preview para confirmarlas (el modal sigue abierto);
-    // si no, build directo.
-    if (detectProgramMediaIntent(p.request + ' ' + brief).active) return openProgramImagePreview(convo, p.request, brief, history);
-    closeProgramModal();
-    return directProgramBuild(convo, p.request, brief, history);
+    // Tras el asistente: consentimiento de fotos (si aplica) y construir.
+    return proceedToBuild(convo, p.request, brief, history);
   }
 
   function persistProgram() { try { localStorage.setItem(PROGRAM_KEY, state.programMode ? '1' : '0'); } catch (_) {} }
