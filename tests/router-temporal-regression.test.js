@@ -321,4 +321,59 @@ assert.equal(typeof api.closePreviewFrame, 'function');
   assert.equal(api.programVisualAssetsApplied('<img src="' + logoUrl + '">', resolved), true);
   assert.equal(api.programVisualAssetsApplied('<img src="otra.png">', resolved), false);
 }
+
+// Regla de longitud: prompt corto -> preguntar (false); 5+ lineas o 300+ chars -> directo (true).
+{
+  assert.equal(api.isDetailedPrompt('una tienda de ropa'), false, 'prompt corto = no detallado');
+  assert.equal(api.isDetailedPrompt('linea1\nlinea2\nlinea3\nlinea4'), false, '4 lineas aun no detallado');
+  assert.equal(api.isDetailedPrompt('l1\nl2\nl3\nl4\nl5'), true, '5 lineas = detallado');
+  assert.equal(api.isDetailedPrompt('x'.repeat(305)), true, '300+ chars = detallado');
+  assert.equal(api.isDetailedPrompt(''), false, 'vacio = no detallado');
+}
+
+// hardenProgramImages: normaliza loremflickr a UN keyword generico (nombres propios dan 500).
+{
+  assert.equal(
+    api.hardenProgramImages('<img src="https://loremflickr.com/600/450/soccer,messi?lock=1">'),
+    '<img src="https://loremflickr.com/600/450/soccer?lock=1">',
+    'reduce a un keyword y conserva el lock numerico'
+  );
+  assert.equal(
+    api.hardenProgramImages('url(https://loremflickr.com/640/480/football,barcelona)'),
+    'url(https://loremflickr.com/640/480/football)',
+    'quita la segunda palabra sin lock'
+  );
+  const untouched = '<img src="https://upload.wikimedia.org/x/pele.jpg"> y picsum https://picsum.photos/600/400';
+  assert.equal(api.hardenProgramImages(untouched), untouched, 'no toca URLs que no son loremflickr');
+}
+
+// docImageUrlSet: extrae solo URLs de imagen (incl. arrays JS), ignora lo demas.
+{
+  const doc = 'const data=[{img:"https://upload.wikimedia.org/x/pele.jpg"},{img:"https://images.unsplash.com/photo-1?w=600"}];'
+    + '<link href="https://fonts.googleapis.com/css2?x">'
+    + '<img src="https://picsum.photos/seed/a/600/450">';
+  const set = api.docImageUrlSet(doc);
+  assert.ok(set instanceof Set);
+  assert.ok(set.has('https://upload.wikimedia.org/x/pele.jpg'), 'incluye wikimedia del array JS');
+  assert.ok(set.has('https://images.unsplash.com/photo-1?w=600'), 'incluye unsplash');
+  assert.ok(set.has('https://picsum.photos/seed/a/600/450'), 'incluye picsum');
+  assert.ok(![...set].some((u) => /fonts\.googleapis/.test(u)), 'ignora la fuente (no es imagen)');
+}
+
+// programThemeKeyword: tema en espanol -> keyword generico en ingles (respaldo loremflickr).
+{
+  assert.equal(api.programThemeKeyword('los mejores jugadores de futbol'), 'soccer');
+  assert.equal(api.programThemeKeyword('recetas de comida mexicana'), 'food');
+  assert.equal(api.programThemeKeyword('algo totalmente desconocido xyz'), 'nature', 'default seguro');
+}
+
+// ensureProgramVisualAssets: inyecta los assets obligatorios en las <img> cuando faltan.
+{
+  const resolved = { intent: { active: true, explicitUrls: [] }, assets: [{ url: 'https://upload.wikimedia.org/real1.jpg' }] };
+  const doc = '<img src="https://inventada.example/rota.jpg" alt="x">';
+  const out = api.ensureProgramVisualAssets(doc, resolved);
+  assert.ok(out.indexOf('https://upload.wikimedia.org/real1.jpg') >= 0, 'inyecta el asset obligatorio si no estaba');
+  const already = '<img src="https://upload.wikimedia.org/real1.jpg">';
+  assert.equal(api.ensureProgramVisualAssets(already, resolved), already, 'no toca si el asset ya esta');
+}
 console.log('router-temporal-regression: OK');

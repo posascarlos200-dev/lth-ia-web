@@ -370,14 +370,6 @@
     return String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/"/g, '&quot;');
   }
 
-  // El visor carga la pagina como data: URL (no srcdoc). Asi el DOCUMENTO de la pagina
-  // generada es la propia data: URL: cualquier navegacion a una ruta absoluta de la app
-  // (href="/" o location.href="/login") resuelve contra la data: URL -> falla sin cargar
-  // nada (NUNCA el login de LTH IA). Los #hash siguen funcionando (misma data: URL).
-  function previewDataUrl(html) {
-    return 'data:text/html;charset=utf-8,' + encodeURIComponent(String(html == null ? '' : html));
-  }
-
   // Markdown ligero y seguro (escapa primero, luego aplica formato).
   function renderMarkdown(src, opts) {
     let text = String(src || '');
@@ -1783,7 +1775,7 @@
     ]).catch(() => {});
   }
 
-  window.LTH_IA_TEST_API = { normalizeBrain, extractBrainFromUserMessage, buildBrainContextBlock, detectCrisisIntent, detectFreeSkillIntent, buildFreeSkillSystem, buildFreeSkillClarification, normalizeResearchQuery, detectFreeResearchIntent, buildFreeResearchContextBlock, buildDeviceMemoryRecallBlock, mergeConvoCollections, serializeConvoForCache, extractEntities, detectBrainConflicts, mergeBrain, parseDuckDuckGoResults, detectLiveWebIntent, buildPreviewDoc, withPreviewShim, closePreviewFrame, applyConversationState, buildCategoryGuidance, buildTemporalSystemBlock, composeSystemWithMemory, ensureConvoBrain, reasonStageHtml, CODE_STRUCTURE_PROMPT, CODE_CSS_PROMPT, CODE_POLISH_PROMPT, ORCHESTRATOR_PROMPT, PROGRAM_WIZARD_PROMPT, PROGRAM_CODER_PROMPT, PROGRAM_PATCH_PROMPT, PROGRAM_ASSET_SEARCH_PROMPT, applyProgramPatch, programStepSignature, formatProgramChoice, buildProgramFallbackPlan, looksTrivial, looksLikeNewProgramProject, buildProgramEditOutline, extractFencedCode, assembleProgramDoc, splitProgramDocParts, extractProgramMediaUrls, detectProgramMediaIntent, usableProgramPhotoUrl, normalizeProgramAssets, programVisualAssetsApplied };
+  window.LTH_IA_TEST_API = { normalizeBrain, extractBrainFromUserMessage, buildBrainContextBlock, detectCrisisIntent, detectFreeSkillIntent, buildFreeSkillSystem, buildFreeSkillClarification, normalizeResearchQuery, detectFreeResearchIntent, buildFreeResearchContextBlock, buildDeviceMemoryRecallBlock, mergeConvoCollections, serializeConvoForCache, extractEntities, detectBrainConflicts, mergeBrain, parseDuckDuckGoResults, detectLiveWebIntent, buildPreviewDoc, withPreviewShim, closePreviewFrame, applyConversationState, buildCategoryGuidance, buildTemporalSystemBlock, composeSystemWithMemory, ensureConvoBrain, reasonStageHtml, CODE_STRUCTURE_PROMPT, CODE_CSS_PROMPT, CODE_POLISH_PROMPT, ORCHESTRATOR_PROMPT, PROGRAM_WIZARD_PROMPT, PROGRAM_CODER_PROMPT, PROGRAM_PATCH_PROMPT, PROGRAM_ASSET_SEARCH_PROMPT, applyProgramPatch, programStepSignature, formatProgramChoice, buildProgramFallbackPlan, looksTrivial, looksLikeNewProgramProject, buildProgramEditOutline, extractFencedCode, assembleProgramDoc, splitProgramDocParts, extractProgramMediaUrls, detectProgramMediaIntent, usableProgramPhotoUrl, normalizeProgramAssets, programVisualAssetsApplied, isDetailedPrompt, hardenProgramImages, docImageUrlSet, programThemeKeyword, ensureProgramVisualAssets };
 
   async function loadConvos() {
     state.convos = loadCachedConvos();
@@ -4251,46 +4243,6 @@
     return { doc: current, fixed: 0 };
   }
 
-  // Reconoce que URLs de imagen SI cargan y reemplaza las rotas por un fallback determinista
-  // (picsum siempre responde). Cubre <img src> y url(...) de CSS. Solo prueba http(s) externas;
-  // respeta data:, internas y picsum. El onerror del HTML es la segunda red de seguridad.
-  async function validateProgramImages(doc, signal, bub) {
-    const html = String(doc || '');
-    if (!html || typeof Image === 'undefined') return html;
-    // URLs obligatorias (las que dio el usuario o los assets verificados) NO se reemplazan.
-    const protect = (state.programProtectedUrls instanceof Set) ? state.programProtectedUrls : new Set();
-    const urls = new Set();
-    const add = (u) => { const s = String(u || '').trim(); if (/^https?:\/\//i.test(s) && !/loremflickr\.com|placehold\.co|picsum\.photos/i.test(s) && !protect.has(s)) urls.add(s); };
-    let m;
-    const imgRx = /<img\b[^>]*\bsrc\s*=\s*["']([^"']+)["']/gi;
-    while ((m = imgRx.exec(html))) add(m[1]);
-    const cssRx = /url\(\s*["']?([^"')]+)["']?\s*\)/gi;
-    while ((m = cssRx.exec(html))) add(m[1]);
-    const list = [...urls].slice(0, 40);
-    if (!list.length) return html;
-    if (bub) bub.innerHTML = '<span class="gen-img-loading">Verificando imágenes<span class="dots"><i>.</i><i>.</i><i>.</i></span></span>';
-    const check = (url) => new Promise((resolve) => {
-      const img = new Image();
-      let done = false;
-      const finish = (ok) => { if (done) return; done = true; img.onload = null; img.onerror = null; resolve({ url: url, ok: ok }); };
-      const t = setTimeout(() => finish(false), 6000);
-      img.onload = () => { clearTimeout(t); finish(true); };
-      img.onerror = () => { clearTimeout(t); finish(false); };
-      try { img.src = url; } catch (_) { clearTimeout(t); finish(false); }
-    });
-    const results = await Promise.all(list.map(check));
-    if (signal && signal.aborted) return html;
-    let out = html;
-    let seed = 0;
-    results.forEach((r) => {
-      if (r.ok) return;
-      const w = Number((r.url.match(/[?&](?:w|width)=(\d+)/i) || [])[1]) || 800;
-      // Respaldo a un servicio que SIEMPRE responde (picsum llega a estar caido).
-      const fallback = 'https://placehold.co/' + w + 'x' + Math.round(w * 0.66) + '?text=Foto+' + (seed++);
-      out = out.split(r.url).join(fallback);
-    });
-    return out;
-  }
 
   // URLs de imagen externas presentes en un documento (para detectar si una edicion toco fotos).
   function docImageUrlSet(doc) {
@@ -4620,14 +4572,6 @@
     return m;
   }
 
-  async function buildProgramPage(convo, request) {
-    if (!convo || !String(request || '').trim() || state.busy) return;
-    if (!canUsePremium()) { showProModal('reasoning'); return; }
-    convo.mode = 'program';
-    // Si la pagina llevara fotos, primero el preview para confirmarlas; si no, build directo.
-    if (detectProgramMediaIntent(request).active) return openProgramImagePreview(convo, request, request, []);
-    return directProgramBuild(convo, request, request, []);
-  }
   async function confirmProgramPlan() {
     const p = state.program;
     if (!p || !p.active || state.busy) return;
