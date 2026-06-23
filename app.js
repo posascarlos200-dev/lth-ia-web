@@ -163,14 +163,21 @@
     'Responde SOLO JSON valido: {"recomendacion":"1 frase breve para el usuario, o vacio","instruccion":"instruccion precisa para el editor, en imperativo, mencionando el elemento/seccion exacto y el resultado esperado"}.'
   ].join('\n');
 
-  // Arma la LISTA de fotos que llevara la pagina, ANTES de construir, para buscarlas y que el
-  // usuario las confirme. Gemini decide los items concretos (p.ej. los 10 jugadores por nombre).
+  // PLANIFICADOR DE IMAGENES (Gemini). Decide SEMANTICAMENTE si la pagina REQUIERE fotos reales
+  // (no por palabras clave) y, si si, lista cada foto con su query EN INGLES. Es el gate de
+  // intencion: lista vacia = no preguntar ni buscar; con items = mostrar el preview.
   const PROGRAM_IMAGE_LIST_PROMPT = [
-    'Eres el planificador de imagenes del modo Programar de Mady. A partir del pedido del usuario, devuelve la LISTA de fotos que la pagina necesitara, una por elemento concreto.',
-    'Si el pedido implica entidades especificas (p.ej. "los 10 mejores jugadores de futbol", "platillos mexicanos", "monumentos de Paris"), ENUMERALAS tu mismo con nombres reales y conocidos (Pele, Maradona, Messi...). Si son cosas genericas (un producto sin nombre, una seccion decorativa), describe el item igual.',
-    'Para cada item da: "name" (el nombre/etiqueta que aparecera en la pagina, p.ej. "Pele") y "query" (consulta de busqueda en INGLES o el nombre propio para encontrar su foto real, p.ej. "Pele footballer", "Eiffel Tower", "tacos al pastor").',
-    'Incluye solo los items que de verdad llevaran foto (max 16). No incluyas iconos ni fondos decorativos.',
-    'Devuelve SOLO JSON valido: {"items":[{"name":"Pele","query":"Pele footballer"},{"name":"Lionel Messi","query":"Lionel Messi"}, ...]}. Si la pagina no lleva fotos de cosas concretas, devuelve {"items":[]}.'
+    'Eres el PLANIFICADOR DE IMAGENES del modo Programar de Mady. Decides si la pagina pedida REQUIERE fotografias REALES y, si es asi, listas cada una. No te guies por palabras sueltas sino por el SIGNIFICADO del pedido.',
+    'DEVUELVE LISTA VACIA {"items":[]} cuando NO se necesitan fotos reales, por ejemplo:',
+    '- El usuario pide imagenes SIMULADAS, placeholders, dibujadas, hechas con CSS, SVG, iconos, gradientes o ilustraciones (ej: "imagen simulada con CSS o placeholder elegante", "usa placeholders").',
+    '- La pagina es una herramienta/utilidad o no muestra cosas reales (calculadora, formulario, dashboard, lista de tareas, landing abstracta).',
+    '- Los "productos" son genericos SIN identidad real (una tienda demo donde las tarjetas pueden ser cajas/placeholders y el usuario no pidio fotos reales).',
+    'DEVUELVE ITEMS cuando la pagina muestra cosas, personas, animales o lugares REALES y especificos que se ven mejor con foto real, INCLUSO si el usuario no escribio la palabra "foto":',
+    '- Sujetos implicitos: "una web sobre una ardilla" -> [{"name":"Ardilla","query":"squirrel"}]; "pagina del Real Madrid" -> escudo/estadio/jugadores reales.',
+    '- Si el pedido nombra o implica entidades concretas (personas, animales, lugares, monumentos, platillos, razas, modelos), ENUMERALAS tu mismo con sus nombres reales y conocidos (Pele, Messi, Eiffel Tower...).',
+    'Para cada item: "name" = la etiqueta tal como saldra en la pagina, en el idioma del usuario (ej: "Auriculares", "Pele"); "query" = consulta de busqueda SIEMPRE EN INGLES y especifica para encontrar la foto correcta (auriculares->"headphones", zapatos->"shoes", ardilla->"squirrel"); para personas/lugares usa el nombre propio ("Lionel Messi", "Eiffel Tower"). NUNCA pongas la query en espanol (ej. "auriculares" en ingles trae fotos equivocadas).',
+    'Maximo 16 items. No incluyas iconos, logos ni fondos decorativos.',
+    'Devuelve SOLO JSON valido: {"items":[{"name":"Auriculares","query":"headphones"}, ...]} o {"items":[]} si NO se necesitan fotos reales.'
   ].join('\n');
 
   // Asistente INTERACTIVO de edicion (Gemini Flash): antes de tocar la pagina, si el cambio
@@ -3648,11 +3655,10 @@
     return cands.filter((u) => working.has(u));
   }
 
-  // Gemini arma la lista de fotos (nombre + query) y buscamos cada una validada.
-  async function prepareProgramImageItems(request, improved, convo, signal, bub) {
-    if (bub) bub.innerHTML = '<span class="gen-img-loading">Buscando las fotos en internet<span class="dots"><i>.</i><i>.</i><i>.</i></span></span>';
+  // DECISION SEMANTICA de imagenes (Gemini): devuelve la lista de fotos que la pagina REQUIERE
+  // (nombre + query en ingles), o [] si NO necesita fotos reales (placeholders/CSS/utilidad).
+  async function listProgramImageItems(request, improved, convo, signal) {
     await fetchReasonStatus();
-    let listed = [];
     try {
       const raw = await reasonChat({
         model: reasonModel('edit_orchestrator', 'google/gemini-2.5-flash'),
@@ -3661,10 +3667,15 @@
         maxTokens: 900, temperature: 0.2, reasonStage: false
       }, signal);
       const parsed = parseReasonJson(raw) || {};
-      listed = Array.isArray(parsed.items) ? parsed.items.slice(0, 16) : [];
-    } catch (_) {}
+      const items = Array.isArray(parsed.items) ? parsed.items.slice(0, 16) : [];
+      return items.filter((it) => it && String(it.name || '').trim());
+    } catch (_) { return []; }
+  }
+
+  // Busca + valida la foto de cada item ya listado.
+  async function searchProgramImageItems(listed, signal, bub) {
     const out = [];
-    for (let i = 0; i < listed.length; i += 1) {
+    for (let i = 0; i < (listed || []).length; i += 1) {
       if (signal && signal.aborted) break;
       const it = listed[i] || {};
       const name = String(it.name || '').trim();
@@ -3677,14 +3688,18 @@
     return out;
   }
 
-  async function openProgramImagePreview(convo, request, improved, history) {
+  async function openProgramImagePreview(convo, request, improved, history, listed) {
     openProgramModal();
+    if (el.programBody) el.programBody.innerHTML = '<span class="gen-img-loading">Buscando las fotos en internet<span class="dots"><i>.</i><i>.</i><i>.</i></span></span>';
     setBusy(true); state.abort = new AbortController();
     let items = [];
-    try { items = await prepareProgramImageItems(request, improved, convo, state.abort.signal, el.programBody); } catch (_) {}
+    try {
+      const list = (listed && listed.length) ? listed : await listProgramImageItems(request, improved, convo, state.abort.signal);
+      items = await searchProgramImageItems(list, state.abort.signal, el.programBody);
+    } catch (_) {}
     setBusy(false); state.abort = null;
     if (!items.length) {
-      // No hay fotos de entidades concretas (o no se encontraron): construir directo.
+      // No se encontraron fotos validas: construir directo (la IA pone las suyas).
       closeProgramModal();
       return directProgramBuild(convo, request, improved, history);
     }
@@ -3737,17 +3752,18 @@
   }
 
   // Construccion + entrega compartida por ambos caminos (directo y tras el asistente).
-  async function directProgramBuild(convo, request, improved, history, confirmedImages) {
+  async function directProgramBuild(convo, request, improved, history, confirmedImages, noImages) {
     if (!convo || state.busy) return;
     const built = bubbleEl('ai', reasonStageHtml('codigo'));
     const bub = built.bub;
     el.messages.appendChild(built.wrap); scrollDown();
     setBusy(true); state.abort = new AbortController();
     try {
-      const out = await buildCodePipeline(request, improved, convo, history || [], bub, state.abort.signal, true, confirmedImages || null);
+      const out = await buildCodePipeline(request, improved, convo, history || [], bub, state.abort.signal, true, confirmedImages || null, !!noImages);
       const doc = String(out || '').trim();
       if (!doc || !/<html[\s>]/i.test(doc)) throw new Error('La IA no devolvio un HTML completo.');
-      await finishProgramDoc(convo, bub, doc, 'Página lista ✅ — estructura, estilos e interacciones en un solo archivo. Usa **Vista previa**, **Editar** o **Descargar** abajo.', request, 'Pagina construida (Programar)', confirmedImages ? { confirmedImages: true } : undefined);
+      const finishOpts = confirmedImages ? { confirmedImages: true } : (noImages ? { skipImages: true } : undefined);
+      await finishProgramDoc(convo, bub, doc, 'Página lista ✅ — estructura, estilos e interacciones en un solo archivo. Usa **Vista previa**, **Editar** o **Descargar** abajo.', request, 'Pagina construida (Programar)', finishOpts);
       void maybeUpdateConvoBrain(convo);
     } catch (e) {
       bub.innerHTML = renderMarkdown('No se pudo construir: ' + ((e && e.message) || 'error') + '.');
@@ -3756,7 +3772,7 @@
     }
   }
 
-  async function buildCodePipeline(text, improved, convo, history, bub, signal, billed, confirmedImages) {
+  async function buildCodePipeline(text, improved, convo, history, bub, signal, billed, confirmedImages, noImages) {
     await fetchReasonStatus();
     const codeModel = reasonModel('spec_codigo', 'deepseek/deepseek-v4-pro');
     const programModel = reasonModel('program_coder', codeModel);
@@ -3770,6 +3786,10 @@
         + confirmedImages.map((c) => '- ' + c.name + ': ' + c.url).join('\n');
       state.programVisualPool = confirmedImages.map((c) => c.url);
       state.programProtectedUrls = new Set(confirmedImages.map((c) => c.url));
+    } else if (noImages) {
+      // Gemini decidio que la pagina NO requiere fotos reales (placeholders/CSS/utilidad): no
+      // buscamos nada; la IA constructora pone lo que pidio el usuario.
+      visualContext = '';
     } else {
       if (bub && detectProgramMediaIntent(requestText).active) {
         bub.innerHTML = '<span class="gen-img-loading">Buscando fotografías reales<span class="dots"><i>.</i><i>.</i><i>.</i></span></span>';
@@ -3794,8 +3814,8 @@
     }, 'codigo', bub, signal, (acc) => /<\/html\s*>/i.test(extractHtmlDoc(acc)));
     const doc = extractHtmlDoc(raw);
     const assembled = assembleProgramDoc(doc, '', '');
-    // Con fotos confirmadas el doc ya es confiable; si no, inyectamos las obligatorias que falten.
-    if (confirmedImages && confirmedImages.length) return assembled;
+    // Con fotos confirmadas o sin imagenes el doc ya es final; si no, inyectamos las obligatorias.
+    if ((confirmedImages && confirmedImages.length) || noImages) return assembled;
     return ensureProgramVisualAssets(assembled, visualAssets);
   }
   /* ─────────── Herramienta "Programar": asistente interactivo + build ─────────── */
@@ -3820,17 +3840,25 @@
     return lines >= 5 || s.trim().length >= 300;
   }
 
-  // Paso previo a construir: si la pagina lleva fotos, pregunta si el usuario quiere que Mady
-  // busque fotos reales (preview) o que la IA constructora las ponga. Si no lleva fotos, construye.
-  function proceedToBuild(convo, request, improved, history) {
-    if (detectProgramMediaIntent(String(request || '') + ' ' + String(improved || '')).active) {
-      return renderImageConsent(convo, request, improved, history);
+  // Paso previo a construir. La decision de "¿requiere fotos reales?" la toma GEMINI (semantica),
+  // no palabras clave: asi NO pregunta cuando son placeholders/CSS/utilidad, y SI pregunta con
+  // sujetos implicitos (ardilla, jugadores...). Lista vacia = build directo sin imagenes.
+  async function proceedToBuild(convo, request, improved, history) {
+    openProgramModal();
+    if (el.programBody) el.programBody.innerHTML = '<div class="pg-busy"><span class="reason-orb"></span> Analizando si la página lleva fotos…</div>';
+    setBusy(true); state.abort = new AbortController();
+    let listed = [];
+    try { listed = await listProgramImageItems(request, improved, convo, state.abort.signal); } catch (_) {}
+    setBusy(false); state.abort = null;
+    if (!listed.length) {
+      // No requiere fotos reales: build directo, sin preguntar ni buscar imagenes.
+      closeProgramModal();
+      return directProgramBuild(convo, request, improved, history, null, true);
     }
-    closeProgramModal();
-    return directProgramBuild(convo, request, improved, history);
+    renderImageConsent(convo, request, improved, history, listed);
   }
 
-  function renderImageConsent(convo, request, improved, history) {
+  function renderImageConsent(convo, request, improved, history, listed) {
     openProgramModal();
     if (!el.programBody) { closeProgramModal(); return directProgramBuild(convo, request, improved, history); }
     el.programBody.innerHTML = '<div class="pg-step"><div class="pg-q">¿Quieres que Mady busque e integre fotos reales?</div>'
@@ -3841,7 +3869,7 @@
       + '</div></div>';
     const yes = el.programBody.querySelector('[data-img-consent="yes"]');
     const no = el.programBody.querySelector('[data-img-consent="no"]');
-    if (yes) yes.addEventListener('click', () => openProgramImagePreview(convo, request, improved, history));
+    if (yes) yes.addEventListener('click', () => openProgramImagePreview(convo, request, improved, history, listed));
     if (no) no.addEventListener('click', () => { closeProgramModal(); directProgramBuild(convo, request, improved, history); });
   }
 
