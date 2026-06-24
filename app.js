@@ -154,6 +154,20 @@
     'No uses markdown ni bloques de codigo. Nunca devuelvas el HTML completo. Si el pedido no requiere cambios, devuelve operations vacio.'
   ].join('\n');
 
+  // EDITOR POR RECONSTRUCCION (cambios ARQUITECTONICOS / de gran alcance). Cuando el cambio no
+  // es localizado sino estructural (rediseno total, reordenar el layout, rehacer la navegacion,
+  // agregar/rehacer varias secciones a la vez), el parche quirurgico se queda corto: aqui la IA
+  // regenera el DOCUMENTO COMPLETO partiendo de la pagina actual, conservando lo que no cambia.
+  const PROGRAM_EDIT_REBUILD_PROMPT = [
+    'Eres la UNICA IA editora del modo Programar de Mady. Recibes una pagina existente (un solo HTML autocontenido) y un cambio de GRAN ALCANCE o ARQUITECTONICO. Devuelves el DOCUMENTO HTML COMPLETO ya con el cambio aplicado.',
+    'Este chat es UN SOLO PROYECTO: evoluciona la MISMA pagina; no empieces otra distinta ni cambies de tema. Si el usuario pide otro proyecto, devuelve la pagina actual sin cambios.',
+    'APLICA TODOS los cambios pedidos. El pedido puede traer VARIAS tareas (numeradas 1), 2), 3)...): resuelvelas TODAS, no ignores ninguna. PRESERVA con fidelidad TODO lo que el cambio NO toca: contenido real, secciones, textos, estilos y scripts que ya funcionan. No borres funcionalidad existente ni vacies secciones al reescribirlas; reusa el contenido actual salvo lo que deba cambiar.',
+    'El documento empieza con <!DOCTYPE html>, con TODO el CSS dentro de <style> y TODO el JS dentro de <script>, en un solo archivo. Mantenlo responsive y con accesibilidad basica.',
+    'NAVEGACION DE UNA SOLA PAGINA (obligatoria): cada enlace del menu apunta con #hash a una seccion real que EXISTE; cada seccion lleva su id. Nunca uses href="/", "/login", "/home", index.html ni rutas relativas para navegar. Todo boton que no envie un formulario es <button type="button">; para ir a una seccion usa onclick con scrollIntoView, NUNCA location.href ni window.location.',
+    'IMAGENES: conserva EXACTAS las URLs de imagen que ya estan en la pagina (no las cambies por SVG, data:image, iconos ni placeholders). Si agregas fotos nuevas sin URL provista, usa https://loremflickr.com/ANCHO/ALTO/PALABRA con UNA palabra generica EN INGLES (sin nombres propios ni comas) y agrega a cada <img> onerror="this.onerror=null;this.src=\'https://placehold.co/600x450?text=Foto\'".',
+    'Devuelve SOLO un bloque ```html con el documento completo. No agregues explicaciones fuera del bloque.'
+  ].join('\n');
+
   // Orquestador de EDICION (modelo rapido, p.ej. Gemini Flash). Mejora el pedido del usuario
   // y lo convierte en una instruccion precisa para el agente editor — SIN ampliar el alcance.
   const EDIT_ORCHESTRATOR_PROMPT = [
@@ -194,13 +208,15 @@
     '- Si el cambio es grande o ambiguo (p.ej. "agregar rastreo de envio al comprar"), usa las preguntas para acotarlo: que datos muestra, en que seccion/flujo va, como se ve y cuando aparece. No lo des por entendido.',
     '- No amplies el alcance mas alla de lo que el usuario pidio.',
     '- Devuelve phase "ready" SOLO despues de que el usuario respondio al menos una pregunta, o cuando remaining_questions sea 0.',
-    'ALCANCE (importante para ahorrar): decides si el cambio es minimo o una integracion.',
-    '- scope "region": SOLO para cambios MINIMOS y localizados (editar texto, color, tamano, mover o ajustar UN elemento/seccion que YA existe). En ese caso pon en "locator" el id, la .clase o el nombre de seccion EXACTO (tomado de page_outline) donde ocurre el cambio.',
-    '- scope "full": cuando sea una INTEGRACION o toque varias partes (agregar una seccion/funcion/boton nuevo, boton flotante, rediseno, o algo que necesite HTML+CSS+JS en lugares distintos). En la duda, usa "full" (que el modelo pesado vea toda la pagina).',
+    'ALCANCE (importante para acertar Y ahorrar): clasifica el cambio en uno de TRES niveles.',
+    '- scope "region": cambios MINIMOS y localizados (editar texto, color, tamano, mover o ajustar UN elemento/seccion que YA existe). Pon en "locator" el id, la .clase o el nombre de seccion EXACTO (tomado de page_outline) donde ocurre el cambio.',
+    '- scope "full": cambios de tamano MEDIO que tocan varias partes pero NO rehacen la pagina (agregar UNA seccion/funcion/boton, boton flotante, o ajustes en HTML+CSS+JS en lugares distintos). El editor parchea quirurgicamente sobre la pagina completa. locator vacio.',
+    '- scope "rebuild": cambios ARQUITECTONICOS o de GRAN ALCANCE (rediseno total, reestructurar el layout, rehacer el sistema de navegacion, cambiar el enfoque de la pagina, o agregar/rehacer MUCHAS secciones a la vez). El editor REGENERA el documento completo conservando lo que no cambia. locator vacio.',
+    'Elige el alcance MINIMO que cumpla el pedido: no uses "rebuild" para algo que un parche puntual resuelve (gasta mas), pero SI usa "rebuild" cuando el cambio es estructural y un parche se quedaria corto. NUNCA respondas que un cambio "no se puede": si es grande, es "rebuild".',
     'Devuelve SOLO JSON valido, sin texto fuera del JSON. Dos formatos:',
     'Para preguntar: { "phase":"ask", "question":"texto breve", "options":[{"label":"opcion concreta","value":"valor claro","description":"por que conviene","recommended":true},{"label":"...","value":"...","description":"..."}], "allow_custom": true }',
-    'Para finalizar: { "phase":"ready", "instruccion":"instruccion imperativa precisa con TODAS las tareas pedidas, numeradas si son varias: 1) elemento/seccion exacto, que cambia y como queda; 2) ...", "recomendacion":"1 frase breve para el usuario, o vacio", "scope":"region|full", "locator":"id/.clase/seccion exacta si scope=region; vacio si scope=full" }',
-    'Si hay MAS DE UNA tarea, usa scope "full" (toca varias partes) y locator vacio.',
+    'Para finalizar: { "phase":"ready", "instruccion":"instruccion imperativa precisa con TODAS las tareas pedidas, numeradas si son varias: 1) elemento/seccion exacto, que cambia y como queda; 2) ...", "recomendacion":"1 frase breve para el usuario, o vacio", "scope":"region|full|rebuild", "locator":"id/.clase/seccion exacta si scope=region; vacio en los demas" }',
+    'Si hay MAS DE UNA tarea localizada, usa scope "full" y locator vacio. Si las tareas implican reestructurar la pagina o son de gran alcance, usa "rebuild".',
     'Maximo 3 opciones por pregunta, distintas y concretas (no "si/no" vagas).'
   ].join('\n');
 
@@ -893,6 +909,9 @@
     // Modo del chat: una vez que se usa Programar/Razonar/Crear, el chat queda dedicado a
     // ese modo (no se mezcla). 'auto' = chat normal.
     convo.mode = ['program', 'reason', 'create'].includes(convo.mode) ? convo.mode : 'auto';
+    // localOnly: chat que el usuario eligio conservar SOLO en este dispositivo (no sube a la nube
+    // ni cuenta para la cuota del plan). Se preserva al serializar/persistir.
+    convo.localOnly = !!convo.localOnly;
     return convo;
   }
 
@@ -1892,6 +1911,8 @@
   async function syncPushOne(convo) {
     if (!convo) return;
     convo = normalizeConvo(convo);
+    // Chat marcado como "solo local": nunca se sube a la nube (no cuenta para la cuota).
+    if (convo.localOnly) return;
     const token = await ensureToken();
     if (!token) return;
     const row = {
@@ -2932,6 +2953,163 @@
     el.proModal.hidden = false;
   }
   function closeProModal() { if (el.proModal) el.proModal.hidden = true; }
+
+  /* ─────────── Cuota de chats en la nube (tope por plan) ───────────
+   * El servidor (RPC lth_chat_quota_status) ya marca los chats SOBRANTES mas antiguos por
+   * actividad con purge_at = now()+24h y un cron los borra. Aqui solo avisamos al usuario al
+   * entrar y le damos resolver: borrar otro chat para liberar espacio, o guardar el/los
+   * marcados SOLO en este dispositivo (se quitan de la nube al instante y dejan de contar). */
+  function ensureQuotaStyles() {
+    if (document.getElementById('cqStyles')) return;
+    const s = document.createElement('style');
+    s.id = 'cqStyles';
+    s.textContent =
+      '.cq-overlay{position:fixed;inset:0;background:rgba(2,6,10,.74);backdrop-filter:blur(4px);z-index:10000;display:flex;align-items:center;justify-content:center;padding:18px}'
+      + '.cq-card{background:#0b1722;border:1px solid rgba(120,220,200,.18);border-radius:18px;max-width:440px;width:100%;padding:22px;color:#eaf6f2;box-shadow:0 20px 60px rgba(0,0,0,.55)}'
+      + '.cq-card h3{margin:0 0 6px;font-size:18px;display:flex;align-items:center;gap:8px}'
+      + '.cq-sub{font-size:13px;opacity:.82;margin:0 0 14px;line-height:1.45}'
+      + '.cq-list{list-style:none;margin:0 0 16px;padding:0;display:flex;flex-direction:column;gap:8px;max-height:240px;overflow:auto}'
+      + '.cq-item{display:flex;align-items:center;justify-content:space-between;gap:10px;background:rgba(255,255,255,.04);border:1px solid rgba(255,255,255,.07);border-radius:12px;padding:10px 12px}'
+      + '.cq-it-main{min-width:0}.cq-t{font-size:14px;font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}'
+      + '.cq-when{font-size:11px;opacity:.6}'
+      + '.cq-mini{background:rgba(120,220,200,.14);color:#bff3e6;border:1px solid rgba(120,220,200,.24);padding:7px 10px;font-size:12px;border-radius:9px;cursor:pointer;flex:none;font-weight:600}'
+      + '.cq-mini.danger{background:rgba(255,120,120,.14);color:#ffd7d7;border-color:rgba(255,120,120,.28)}'
+      + '.cq-actions{display:flex;flex-direction:column;gap:8px}'
+      + '.cq-btn{border:0;border-radius:11px;padding:11px 12px;font-size:14px;font-weight:700;cursor:pointer}'
+      + '.cq-primary{background:linear-gradient(135deg,#2bd4a8,#1aa4cf);color:#04121a}'
+      + '.cq-ghost{background:transparent;color:#cfe8e2;border:1px solid rgba(255,255,255,.16)}'
+      + '.cq-note{font-size:12px;line-height:1.45;margin:12px 0 0;padding:10px 12px;border-radius:10px;background:rgba(120,220,200,.10);border:1px solid rgba(120,220,200,.18);color:#cdeee6}';
+    document.head.appendChild(s);
+  }
+
+  async function fetchChatQuota() {
+    const token = await ensureToken().catch(() => null);
+    if (!token) return null;
+    try {
+      const res = await fetch(SB_URL + '/rest/v1/rpc/lth_chat_quota_status', {
+        method: 'POST',
+        headers: { apikey: SB_KEY, Authorization: 'Bearer ' + token, 'Content-Type': 'application/json' },
+        body: '{}'
+      });
+      if (!res.ok) return null;
+      return await res.json().catch(() => null);
+    } catch (_) { return null; }
+  }
+
+  // Borra SOLO la copia en la nube de un chat (no el dispositivo, no tombstone): se usa al
+  // "guardar localmente", para que deje de contar pero siga viviendo en este dispositivo.
+  async function deleteCloudConvoRow(id) {
+    const token = await ensureToken().catch(() => null);
+    if (!token) return;
+    const headers = { apikey: SB_KEY, Authorization: 'Bearer ' + token, Prefer: 'return=minimal' };
+    const eid = encodeURIComponent(String(id || ''));
+    await Promise.allSettled([
+      fetch(REST_URL + '?id=eq.' + eid, { method: 'DELETE', headers }),
+      fetch(PROGRAM_REST_URL + '?conversation_id=eq.' + eid, { method: 'DELETE', headers }),
+      fetch(MEDIA_REST_URL + '?conversation_id=eq.' + eid, { method: 'DELETE', headers })
+    ]).catch(() => {});
+  }
+
+  async function saveChatLocally(id) {
+    const convo = state.convos.find((c) => c.id === id);
+    if (convo) { convo.localOnly = true; convo.updated = Date.now(); }
+    saveConvos();
+    await deleteCloudConvoRow(id);   // deja de contar para la cuota al instante
+    renderConvoList();
+  }
+
+  async function cloudQuotaCheck() {
+    const q = await fetchChatQuota();
+    if (!q || !Array.isArray(q.flagged) || !q.flagged.length) return;
+    showChatQuotaModal(q);
+  }
+
+  let _cqEl = null;
+  function closeChatQuotaModal() { if (_cqEl) { _cqEl.remove(); _cqEl = null; } }
+  function cqFmtLeft(purgeAt) {
+    const ms = new Date(purgeAt).getTime() - Date.now();
+    if (!isFinite(ms) || ms <= 0) return 'pronto';
+    const h = Math.floor(ms / 3600000);
+    const m = Math.floor((ms % 3600000) / 60000);
+    return h > 0 ? ('~' + h + 'h') : ('~' + Math.max(1, m) + ' min');
+  }
+
+  function showChatQuotaModal(q) {
+    ensureQuotaStyles();
+    closeChatQuotaModal();
+    _cqEl = document.createElement('div');
+    _cqEl.className = 'cq-overlay';
+    _cqEl.innerHTML = '<div class="cq-card" role="dialog" aria-modal="true"></div>';
+    document.body.appendChild(_cqEl);
+    renderQuotaWarn(q);
+  }
+
+  // Re-consulta el estado al servidor y re-pinta; cierra si ya no hay marcados.
+  async function refreshQuotaModal() {
+    const q = await fetchChatQuota();
+    if (!q || !Array.isArray(q.flagged) || !q.flagged.length) { closeChatQuotaModal(); return; }
+    if (_cqEl) renderQuotaWarn(q);
+  }
+
+  function renderQuotaWarn(q) {
+    if (!_cqEl) return;
+    const card = _cqEl.querySelector('.cq-card');
+    const flagged = q.flagged || [];
+    const planLabel = q.plan ? String(q.plan).charAt(0).toUpperCase() + String(q.plan).slice(1) : '';
+    const rows = flagged.map((f) =>
+      '<li class="cq-item"><div class="cq-it-main"><div class="cq-t">' + escapeHtml(f.title || 'Chat') + '</div>'
+      + '<div class="cq-when">se borra ' + cqFmtLeft(f.purge_at) + '</div></div>'
+      + '<button class="cq-mini" data-cq-savelocal="' + escapeHtml(f.id) + '">💾 Guardar local</button></li>').join('');
+    card.innerHTML =
+      '<h3>⚠ Superaste tu límite (' + (q.limit != null ? q.limit : '') + ')</h3>'
+      + '<p class="cq-sub">Tu plan <b>' + escapeHtml(planLabel) + '</b> permite <b>' + (q.limit != null ? q.limit : '') + '</b> chats en la nube y tienes <b>' + (q.count != null ? q.count : '') + '</b>. '
+      + 'Estos <b>' + flagged.length + '</b> se eliminarán de la nube si no haces nada:</p>'
+      + '<ul class="cq-list">' + rows + '</ul>'
+      + '<div class="cq-actions">'
+      + '<button class="cq-btn cq-primary" data-cq-freeup="1">Borrar otro chat para liberar espacio</button>'
+      + '<button class="cq-btn cq-ghost" data-cq-dismiss="1">Entendido</button>'
+      + '</div>';
+    card.querySelectorAll('[data-cq-savelocal]').forEach((b) => b.addEventListener('click', async () => {
+      b.disabled = true;
+      await saveChatLocally(b.getAttribute('data-cq-savelocal'));
+      card.insertAdjacentHTML('beforeend', '<p class="cq-note">💾 Has guardado localmente este chat. Si entras desde tu PC u otro dispositivo no se verá.</p>');
+      setTimeout(refreshQuotaModal, 1200);
+    }));
+    const free = card.querySelector('[data-cq-freeup]');
+    if (free) free.addEventListener('click', () => renderQuotaPicker(q));
+    const dis = card.querySelector('[data-cq-dismiss]');
+    if (dis) dis.addEventListener('click', closeChatQuotaModal);
+  }
+
+  function renderQuotaPicker(q) {
+    if (!_cqEl) return;
+    const card = _cqEl.querySelector('.cq-card');
+    const flaggedIds = new Set((q.flagged || []).map((f) => String(f.id)));
+    // Chats "seguros" en la nube (no marcados, no locales) que se pueden borrar para liberar.
+    const safe = state.convos.filter((c) => c && !c.localOnly && !flaggedIds.has(String(c.id)));
+    const need = (q.count != null && q.limit != null) ? Math.max(0, q.count - q.limit) : (q.flagged || []).length;
+    const rows = safe.length
+      ? safe.map((c) =>
+          '<li class="cq-item"><div class="cq-it-main"><div class="cq-t">' + escapeHtml(c.title || 'Chat') + '</div></div>'
+          + '<button class="cq-mini danger" data-cq-del="' + escapeHtml(c.id) + '">🗑 Borrar</button></li>').join('')
+      : '<li class="cq-sub">No hay otros chats en la nube para borrar. Usa “Guardar local” o deja que se eliminen.</li>';
+    card.innerHTML =
+      '<h3>Liberar espacio</h3>'
+      + '<p class="cq-sub">Borra los chats que ya no uses. Necesitas liberar <b>' + need + '</b> espacio(s) para conservar los marcados.</p>'
+      + '<ul class="cq-list">' + rows + '</ul>'
+      + '<div class="cq-actions"><button class="cq-btn cq-ghost" data-cq-back="1">← Volver</button></div>';
+    card.querySelectorAll('[data-cq-del]').forEach((b) => b.addEventListener('click', async () => {
+      b.disabled = true;
+      deleteConvo(b.getAttribute('data-cq-del'));   // borra en dispositivo + nube + tombstone
+      setTimeout(async () => {
+        const fresh = await fetchChatQuota();
+        if (!fresh || !Array.isArray(fresh.flagged) || !fresh.flagged.length) { closeChatQuotaModal(); return; }
+        renderQuotaPicker(fresh);
+      }, 800);
+    }));
+    const back = card.querySelector('[data-cq-back]');
+    if (back) back.addEventListener('click', () => renderQuotaWarn(q));
+  }
 
   // Tema claro / oscuro (por defecto oscuro). Aplica a toda la app y se recuerda.
   function applyTheme(theme) {
@@ -4161,15 +4339,18 @@
     const skipped = [];
     const summary = String(patch.summary || '').trim();
     if (!operations.length) return { doc: current, changed: false, summary: summary, operationCount: 0, skipped: skipped };
-    const maxSearch = Math.min(6000, Math.max(1200, Math.floor(current.length * 0.18)));
-    const maxContent = Math.max(8000, Math.floor(current.length * 0.45));
-    const maxTotalSearch = Math.max(2400, Math.floor(current.length * 0.35));
-    const maxTotalContent = Math.max(12000, Math.floor(current.length * 0.65));
+    // Caps generosos: un parche puede ser grande si la tarea lo es. Los cambios que de plano
+    // reescribirian todo el documento (search/content con <!doctype>/<html>) NO se fuerzan aqui:
+    // se omiten y el llamador los reenvia al canal de RECONSTRUCCION (rebuildProgramEdit).
+    const maxSearch = Math.min(12000, Math.max(1600, Math.floor(current.length * 0.30)));
+    const maxContent = Math.max(16000, Math.floor(current.length * 0.75));
+    const maxTotalSearch = Math.max(4000, Math.floor(current.length * 0.55));
+    const maxTotalContent = Math.max(24000, Math.floor(current.length * 1.10));
     let next = current;
     let applied = 0;
     let totalSearch = 0;
     let totalContent = 0;
-    operations.slice(0, 24).forEach((operation, index) => {
+    operations.slice(0, 40).forEach((operation, index) => {
       const type = String(operation && operation.type || 'replace').toLowerCase();
       const search = String(operation && operation.search || '');
       const content = String(operation && (operation.content != null ? operation.content : operation.replace) || '');
@@ -4189,7 +4370,7 @@
       else next = next.slice(0, at.index) + content + next.slice(at.index + at.length);
       applied++;
     });
-    if (operations.length > 24) skipped.push((operations.length - 24) + ' cambio(s) extra omitido(s)');
+    if (operations.length > 40) skipped.push((operations.length - 40) + ' cambio(s) extra omitido(s)');
     return { doc: next, changed: next !== current, summary: summary, operationCount: applied, skipped: skipped };
   }
 
@@ -4487,6 +4668,32 @@
   // Ejecuta el parche con la instruccion ya precisada por el asistente. La IA EDITA sobre el
   // codigo (lee el HTML completo como contexto pero solo emite el DELTA). Streaming + parche
   // tolerante: nunca reconstruye el documento; aplica lo valido y reporta lo omitido.
+  // EDICION POR RECONSTRUCCION: para cambios arquitectonicos/grandes (o como respaldo cuando el
+  // parche quirurgico no logra cambio). La IA regenera el documento HTML COMPLETO partiendo de la
+  // pagina actual, con el MISMO motor de streaming + auto-continuacion del constructor (hasta
+  // </html>). Conserva lo que no cambia. Devuelve el doc nuevo o '' si no logro un documento valido.
+  async function rebuildProgramEdit(change, currentDoc, convo, brief, bub, signal) {
+    const codeModel = reasonModel('spec_codigo', 'deepseek/deepseek-v4-pro');
+    const programModel = reasonModel('program_coder', codeModel);
+    const instruction = String(brief || change || '').trim();
+    const userMsg = 'CAMBIO PEDIDO (del usuario): ' + change
+      + (instruction && instruction !== change ? '\n\nINSTRUCCION PRECISA (del orquestador, prioriza esto): ' + instruction : '')
+      + '\n\nPAGINA ACTUAL COMPLETA (parte de aqui; aplica el cambio y conserva fielmente todo lo demas):\n' + currentDoc;
+    const raw = await streamProgramAgent({
+      model: programModel,
+      system: composeSystemWithMemory(PROGRAM_EDIT_REBUILD_PROMPT, convo, instruction || change),
+      messages: [{ role: 'user', content: userMsg }],
+      // Sin limite propio: el edge lo acota al max_tokens del modelo; la continuacion completa el resto.
+      maxTokens: 60000,
+      temperature: 0.2,
+      reasonStage: false,
+      stageLabel: 'Programar · reestructurando la página'
+    }, 'codigo', bub, signal, (acc) => /<\/html\s*>/i.test(extractHtmlDoc(acc)));
+    const doc = extractHtmlDoc(raw);
+    if (!doc || !/<\/html\s*>/i.test(doc)) return '';
+    return assembleProgramDoc(doc, '', '');
+  }
+
   async function executeProgramEdit(change, currentDoc, convo, editBrief, editRecommendation, scopeOpts) {
     if (!currentDoc || state.busy) return;
     convo = convo || activeConvo() || ensureActiveConvo(change);
@@ -4533,6 +4740,35 @@
       // grande, recortamos la zona relevante para ahorrar tokens; si es integracion (scope=full),
       // el modelo pesado ve toda la pagina. Red de seguridad: si el recorte no alcanza, reintenta
       // con el documento completo (nunca deja la edicion a medias).
+      const recPrefix = editRecommendation ? ('💡 _' + editRecommendation + '_\n\n') : '';
+      // Cierra un resultado de RECONSTRUCCION (documento completo regenerado). Devuelve true si
+      // hubo cambio real; false si el rebuild salio vacio o identico (para caer al siguiente plan).
+      const finishRebuilt = async (rebuilt, viaFallback) => {
+        if (!rebuilt || rebuilt.trim() === currentDoc.trim()) return false;
+        rebuilt = ensureProgramVisualAssets(rebuilt, visualAssets);
+        const before = docImageUrlSet(currentDoc);
+        let addedImages = false;
+        docImageUrlSet(rebuilt).forEach((u) => { if (!before.has(u)) addedImages = true; });
+        const what = brief || String(change).trim();
+        const note = viaFallback
+          ? recPrefix + 'Cambio aplicado ✅ (reestructuración: el cambio era demasiado grande para un parche puntual): ' + what + '. Conservé el resto de la página. Ábrela para revisarla.'
+          : recPrefix + 'Cambio aplicado ✅ (reestructuración): ' + what + '. Regeneré la página aplicando el cambio y conservando lo que no cambiaba. Ábrela para revisarla.';
+        await finishProgramDoc(convo, bub, rebuilt, note, 'Edicion: ' + change, 'Edicion arquitectonica (Programar)', { skipImages: !addedImages });
+        return true;
+      };
+
+      // Cambio ARQUITECTONICO (el orquestador pidio "rebuild"): vamos directo a regenerar el
+      // documento completo, sin gastar un pase de parche quirurgico que se quedaria corto.
+      const wantRebuild = !!(scopeOpts && scopeOpts.scope === 'rebuild');
+      if (wantRebuild) {
+        bub.innerHTML = reasonStageHtml('codigo');
+        const rebuilt = await rebuildProgramEdit(change, currentDoc, convo, brief, bub, signal);
+        if (await finishRebuilt(rebuilt, false)) return;
+        if (signal.aborted) return;
+        // Si la reconstruccion no produjo cambio, caemos al parche quirurgico como respaldo.
+      }
+
+      // Parche quirurgico: cambios minimos (scope=region, sobre el recorte) y medianos (full).
       bub.innerHTML = reasonStageHtml('codigo');
       const REGION_MIN_DOC = 8000;
       const region = (scopeOpts && scopeOpts.scope === 'region' && currentDoc.length > REGION_MIN_DOC)
@@ -4542,7 +4778,6 @@
       if (region && (!patched || !patched.changed) && !signal.aborted) {
         patched = await patchOnce(currentDoc, false);
       }
-      const recPrefix = editRecommendation ? ('💡 _' + editRecommendation + '_\n\n') : '';
       if (patched && patched.changed) {
         const summary = patched.summary || String(change).trim();
         const skippedNote = (patched.skipped && patched.skipped.length)
@@ -4556,7 +4791,16 @@
         await finishProgramDoc(convo, bub, patched.doc, recPrefix + 'Cambio aplicado ✅: ' + summary + '. Se tocaron ' + patched.operationCount + ' fragmento(s); el resto quedó intacto.' + skippedNote + ' Abre la página para revisarla.', 'Edicion: ' + change, 'Edicion incremental (Programar)', { skipAutoFix: true, skipImages: !addedImages });
         return;
       }
-      throw new Error('La IA no produjo un parche puntual valido. La pagina original se conservo intacta; intenta pedir un cambio mas especifico.');
+      // El parche no logro cambio (ancla no ubicada, o el cambio era demasiado grande para un
+      // parche): en vez de fallar, RECONSTRUIMOS el documento completo. Solo si no veniamos ya de
+      // un rebuild fallido (evita repetir el mismo pase).
+      if (!wantRebuild && !signal.aborted) {
+        bub.innerHTML = reasonStageHtml('codigo');
+        const rebuilt = await rebuildProgramEdit(change, currentDoc, convo, brief, bub, signal);
+        if (await finishRebuilt(rebuilt, true)) return;
+      }
+      if (signal.aborted) return;
+      throw new Error('No logré aplicar el cambio ni reconstruyendo la página. La página original se conservó intacta; intenta describir el cambio con otras palabras.');
     } catch (e) {
       bub.innerHTML = renderMarkdown('No se pudo aplicar el cambio: ' + ((e && e.message) || 'error') + '. Intenta describirlo con otras palabras.');
     } finally {
@@ -5388,7 +5632,8 @@
     el.input.focus();
 
     await fetchStatus();
-    syncPull();
+    await syncPull();
+    cloudQuotaCheck();
   }
 
   function logout() {
