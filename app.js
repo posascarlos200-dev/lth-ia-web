@@ -3941,7 +3941,7 @@
       const doc = String(out || '').trim();
       if (!doc || !/<html[\s>]/i.test(doc)) throw new Error('La IA no devolvio un HTML completo.');
       const finishOpts = confirmedImages ? { confirmedImages: true } : (noImages ? { skipImages: true } : undefined);
-      await finishProgramDoc(convo, bub, doc, 'Página lista ✅ — estructura, estilos e interacciones en un solo archivo. Usa **Vista previa**, **Editar** o **Descargar** abajo.', request, 'Pagina construida (Programar)', finishOpts);
+      await finishProgramDoc(convo, bub, doc, 'Página lista ✅ — estructura, estilos e interacciones en un solo archivo. Usa **Vista previa**, **Editar** o **Descargar** abajo.', request, 'Pagina construida (LTH-code)', finishOpts);
       void maybeUpdateConvoBrain(convo);
     } catch (e) {
       bub.innerHTML = renderMarkdown('No se pudo construir: ' + ((e && e.message) || 'error') + '.');
@@ -3988,7 +3988,7 @@
       maxTokens: 60000,
       temperature: 0.2,
       reasonStage: stage,
-      stageLabel: 'Programar · pagina completa'
+      stageLabel: 'LTH-code · pagina completa'
     }, 'codigo', bub, signal, (acc) => /<\/html\s*>/i.test(extractHtmlDoc(acc)));
     const doc = extractHtmlDoc(raw);
     const assembled = assembleProgramDoc(doc, '', '');
@@ -4316,7 +4316,7 @@
       return;
     }
     if (looksLikeNewProgramProject(text)) {
-      const msg = 'Este chat ya contiene un proyecto de **Programar**. Para evitar mezclar o sobrescribir páginas, abre **Nuevo chat** para crear otro proyecto. Aquí solo puedo continuar editando la página actual.';
+      const msg = 'Este chat ya contiene un proyecto de **LTH-code**. Para evitar mezclar o sobrescribir páginas, abre **Nuevo chat** para crear otro proyecto. Aquí solo puedo continuar editando la página actual.';
       convo.messages.push({ id: uid(), role: 'assistant', content: msg, ts: Date.now() });
       convo.updated = Date.now();
       saveConvos(); renderMessages(); renderConvoList(); syncPushOne(convo);
@@ -4537,7 +4537,7 @@
     if (!prev) return;
     const built = bubbleEl('ai', '');
     el.messages.appendChild(built.wrap);
-    pushProgramResult(convo, built.bub, prev, 'Restauré la versión anterior ✅. Volví la página al estado previo a tu último cambio.', 'Revertir a versión anterior', 'Revertir (Programar)', { skipHistory: true });
+    pushProgramResult(convo, built.bub, prev, 'Restauré la versión anterior ✅. Volví la página al estado previo a tu último cambio.', 'Revertir a versión anterior', 'Revertir (LTH-code)', { skipHistory: true });
     scrollDown();
   }
 
@@ -4687,7 +4687,7 @@
       maxTokens: 60000,
       temperature: 0.2,
       reasonStage: false,
-      stageLabel: 'Programar · reestructurando la página'
+      stageLabel: 'LTH-code · reestructurando la página'
     }, 'codigo', bub, signal, (acc) => /<\/html\s*>/i.test(extractHtmlDoc(acc)));
     const doc = extractHtmlDoc(raw);
     if (!doc || !/<\/html\s*>/i.test(doc)) return '';
@@ -4753,7 +4753,7 @@
         const note = viaFallback
           ? recPrefix + 'Cambio aplicado ✅ (reestructuración: el cambio era demasiado grande para un parche puntual): ' + what + '. Conservé el resto de la página. Ábrela para revisarla.'
           : recPrefix + 'Cambio aplicado ✅ (reestructuración): ' + what + '. Regeneré la página aplicando el cambio y conservando lo que no cambiaba. Ábrela para revisarla.';
-        await finishProgramDoc(convo, bub, rebuilt, note, 'Edicion: ' + change, 'Edicion arquitectonica (Programar)', { skipImages: !addedImages });
+        await finishProgramDoc(convo, bub, rebuilt, note, 'Edicion: ' + change, 'Edicion arquitectonica (LTH-code)', { skipImages: !addedImages });
         return true;
       };
 
@@ -4788,7 +4788,7 @@
         const before = docImageUrlSet(currentDoc);
         let addedImages = false;
         docImageUrlSet(patched.doc).forEach((u) => { if (!before.has(u)) addedImages = true; });
-        await finishProgramDoc(convo, bub, patched.doc, recPrefix + 'Cambio aplicado ✅: ' + summary + '. Se tocaron ' + patched.operationCount + ' fragmento(s); el resto quedó intacto.' + skippedNote + ' Abre la página para revisarla.', 'Edicion: ' + change, 'Edicion incremental (Programar)', { skipAutoFix: true, skipImages: !addedImages });
+        await finishProgramDoc(convo, bub, patched.doc, recPrefix + 'Cambio aplicado ✅: ' + summary + '. Se tocaron ' + patched.operationCount + ' fragmento(s); el resto quedó intacto.' + skippedNote + ' Abre la página para revisarla.', 'Edicion: ' + change, 'Edicion incremental (LTH-code)', { skipAutoFix: true, skipImages: !addedImages });
         return;
       }
       // El parche no logro cambio (ancla no ubicada, o el cambio era demasiado grande para un
@@ -4994,7 +4994,7 @@
       saveConvos(); syncComposerMode();
       const doc = String(await buildCodePipeline(text, improved, convo, [], bub, signal, true) || '').trim();
       if (!doc || !/<html[\s>]/i.test(doc)) throw new Error('La IA no devolvio un HTML completo.');
-      await finishProgramDoc(convo, bub, doc, 'Pagina lista ✅ — creada por una sola IA y guardada como un unico HTML. Abrela para verla a pantalla completa o pide un cambio puntual.', text, 'Pagina construida (Programar)');
+      await finishProgramDoc(convo, bub, doc, 'Pagina lista ✅ — creada por una sola IA y guardada como un unico HTML. Abrela para verla a pantalla completa o pide un cambio puntual.', text, 'Pagina construida (LTH-code)');
       return;
     }
 
@@ -5270,7 +5270,7 @@
       if (state.programMode) {
         if (state.reasoning) { state.reasoning = false; persistReason(); renderReasonBtn(); }
         if (state.createMode) { state.createMode = false; renderCreateBtn(); }
-        setComposerHint('Modo Programar: describe tu idea; te hare hasta 3 preguntas utiles antes de crear el HTML.');
+        setComposerHint('Modo LTH-code: describe tu idea; te hare hasta 3 preguntas utiles antes de crear el HTML.');
       }
     });
     if (el.programClose) el.programClose.addEventListener('click', closeProgramModal);
