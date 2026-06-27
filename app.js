@@ -236,7 +236,6 @@
   const REASON_KEY = 'lth_ia_web_reason_v1';
   const PROGRAM_KEY = 'lth_ia_web_program_v1';
   const THEME_KEY = 'lth_ia_web_theme_v1';
-  const SIDEBAR_KEY = 'lth_ia_web_sidebar_v1';
   const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
   /* ───────────────────────── Estado ───────────────────────── */
@@ -5196,19 +5195,19 @@
   function isDesktopLayout() {
     try { return window.matchMedia('(min-width: 880px)').matches; } catch (_) { return false; }
   }
-  function setSidebarCollapsed(collapsed, persist) {
+  function setSidebarCollapsed(collapsed) {
     if (!el.appScreen) return;
     el.appScreen.classList.toggle('sidebar-collapsed', !!collapsed);
     if (el.menuBtn) {
       el.menuBtn.setAttribute('aria-pressed', collapsed ? 'true' : 'false');
       el.menuBtn.setAttribute('title', collapsed ? 'Mostrar conversaciones' : 'Ocultar conversaciones');
     }
-    if (persist) { try { localStorage.setItem(SIDEBAR_KEY, collapsed ? '1' : '0'); } catch (_) {} }
   }
   function restoreSidebarState() {
-    let collapsed = false;
-    try { collapsed = localStorage.getItem(SIDEBAR_KEY) === '1'; } catch (_) {}
-    setSidebarCollapsed(collapsed, false);
+    // La barra lateral SIEMPRE arranca cerrada (colapsada) en cada carga, en PC.
+    // Durante la sesión el usuario puede abrirla con el botón ☰; al recargar
+    // vuelve a empezar cerrada.
+    setSidebarCollapsed(true);
   }
 
   /* ── Aviso "estás en PC: descarga LTH OS OUP" ── */
@@ -5291,7 +5290,7 @@
   function bindApp() {
     el.menuBtn.addEventListener('click', () => {
       if (isDesktopLayout()) {
-        setSidebarCollapsed(!el.appScreen.classList.contains('sidebar-collapsed'), true);
+        setSidebarCollapsed(!el.appScreen.classList.contains('sidebar-collapsed'));
         return;
       }
       if (el.drawer.hidden) { renderConvoList(); openDrawer(); } else closeDrawer();

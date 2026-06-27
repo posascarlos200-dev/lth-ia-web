@@ -800,60 +800,52 @@ a.vc-src:active, a.vc-src:hover { border-color: var(--cyan); color: var(--text-b
   .composer-hint { width: min(100%, 880px); }
 }
 
+/* ════════ MODO CLARO — paleta CREMA cálida (estilo Claude light) ════════
+   Fondo crema, texto marrón oscuro para máximo contraste/legibilidad, y
+   acentos azul/violeta conservados. La barra lateral también es crema
+   (nunca oscura) para integrarse con el resto. */
 body.light {
-  --bg: #eef0f8;
-  --bg-2: #e6e9f5;
-  --panel: rgba(255, 255, 255, 0.94);
-  --panel-solid: #ffffff;
-  --line: rgba(110, 88, 230, 0.20);
-  --line-strong: rgba(110, 80, 230, 0.36);
+  --bg: #f4eee2;
+  --bg-2: #ece3d2;
+  --panel: rgba(255, 253, 247, 0.96);   /* burbuja IA / tarjetas: crema casi blanco */
+  --panel-solid: #faf5ea;               /* crema sólido: modales, menús, drawer móvil */
+  --line: rgba(96, 78, 46, 0.18);       /* bordes taupe cálido */
+  --line-strong: rgba(96, 78, 46, 0.34);
   --cyan: #2e78ff;
   --cyan-2: #1f5fe0;
   --cyan-soft: #6a4dff;
   --violet: #6a4dff;
   --violet-2: #5a3de0;
-  --text: #2b3450;
-  --text-dim: rgba(74, 84, 120, 0.78);
-  --text-bright: #141b32;
-  --field: rgba(22, 30, 70, 0.06);
-  --user: linear-gradient(180deg, #e8ecff, #dae3ff);
+  --text: #473a28;                      /* marrón oscuro cálido: buen contraste sobre crema */
+  --text-dim: rgba(90, 74, 50, 0.74);
+  --text-bright: #2b2114;               /* casi negro cálido para títulos/énfasis */
+  --field: rgba(82, 65, 36, 0.07);
+  --user: linear-gradient(180deg, #ece1cc, #e2d5b9);  /* burbuja usuario: crema tostado */
 }
-/* Superficies que estaban hardcodeadas en oscuro */
-body.light .topbar { background: linear-gradient(180deg, rgba(255,255,255,.97), rgba(255,255,255,.72)); }
-body.light .usage-strip { background: linear-gradient(180deg, rgba(255,255,255,.85), rgba(255,255,255,.5)); }
-body.light .composer { background: linear-gradient(0deg, rgba(255,255,255,.97), rgba(255,255,255,.5)); }
-body.light .auth-tabs { background: rgba(22,30,70,.05); }
+/* Superficies que estaban hardcodeadas en oscuro -> crema cálido */
+body.light .topbar { background: linear-gradient(180deg, rgba(250,245,234,.96), rgba(250,245,234,.66)); }
+body.light .usage-strip { background: linear-gradient(180deg, rgba(248,242,229,.82), rgba(248,242,229,.45)); }
+body.light .composer { background: linear-gradient(0deg, rgba(250,245,234,.97), rgba(250,245,234,.45)); }
+body.light .auth-tabs { background: rgba(82,65,36,.06); }
 body.light .composer-inner,
 body.light .field input,
-body.light #input { background: #fff; }
+body.light #input { background: #fffdf7; }
 body.light .us-track,
 body.light .cp-bar .bar,
 body.light .vc-bar,
 body.light .switch { background: var(--field); }
 body.light .gen-img { background: var(--field); }
-body.light .bubble code { background: rgba(22,30,70,.07); color: var(--violet-2); }
-body.light .bubble pre { background: rgba(22,30,70,.06); }
-body.light .bubble pre code { color: #2b3450; }
-body.light .scrim { background: rgba(20,28,60,.30); }
+body.light .bubble code { background: rgba(82,65,36,.10); color: var(--violet-2); }
+body.light .bubble pre { background: rgba(82,65,36,.08); }
+body.light .bubble pre code { color: #473a28; }
+body.light .scrim { background: rgba(55,42,18,.28); }
+/* Barra lateral en claro: crema diferenciada (un punto más tostada que el chat),
+   NUNCA oscura. Anula el fondo oscuro que el layout de PC pone por defecto. */
 @media (min-width: 880px) {
   body.light .app-screen .drawer,
   body.light .app-screen .drawer[hidden] {
-    --text: #d6dcff;
-    --text-dim: rgba(185, 190, 235, 0.72);
-    --text-bright: #eef2ff;
-    --line: rgba(120, 150, 255, 0.16);
-    --line-strong: rgba(120, 150, 255, 0.34);
-    --field: rgba(0, 0, 0, 0.34);
-    color: var(--text);
-  }
-  body.light .drawer-head strong,
-  body.light .user-meta strong,
-  body.light .convo-item .ci-title {
-    color: var(--text-bright);
-  }
-  body.light .user-meta span,
-  body.light .convo-item .ci-sub {
-    color: var(--text-dim);
+    background: linear-gradient(180deg, #efe7d5, #e7ddc7);
+    border-right: 1px solid rgba(96, 78, 46, 0.18);
   }
 }
 /* El fondo animado neon se suaviza en claro */
