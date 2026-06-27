@@ -820,9 +820,8 @@ body.light {
   --text-dim: rgba(82, 66, 124, 0.76);
   --text-bright: #241a40;               /* casi negro violeta para títulos/énfasis */
   --field: rgba(96, 72, 168, 0.10);
-  /* TUS mensajes en AMARILLO crema (Mady queda en lila) para que se distingan
-     de un vistazo: morado + amarillo = contraste complementario. */
-  --user: linear-gradient(180deg, #f6e6a2, #efd884);
+  /* TUS mensajes en AZUL (Mady va en amarillo) para distinguirse de un vistazo. */
+  --user: linear-gradient(180deg, #c6def9, #a9caf2);
 }
 /* Superficies que estaban hardcodeadas en oscuro -> crema lila con cuerpo */
 body.light .topbar { background: linear-gradient(180deg, rgba(240,234,251,.97), rgba(240,234,251,.72)); }
@@ -840,10 +839,10 @@ body.light .gen-img { background: var(--field); }
 body.light .bubble code { background: rgba(96,72,168,.11); color: var(--violet-2); }
 body.light .bubble pre { background: rgba(96,72,168,.08); }
 body.light .bubble pre code { color: #3a2f5c; }
-/* Tus burbujas (amarillo): borde ámbar cálido y texto oscuro para contraste. */
-body.light .msg.user .bubble { border-color: rgba(188,150,32,.5); color: #3a2e0a; }
-/* Burbujas de Mady: celeste pastel (se distingue del amarillo del usuario). */
-body.light .msg.ai .bubble { background: linear-gradient(180deg, #dcecfb, #cce3f8); border-color: rgba(70,140,210,.32); color: #16324f; }
+/* Tus burbujas (azul): borde azul y texto navy para contraste. */
+body.light .msg.user .bubble { border-color: rgba(70,130,205,.5); color: #15314f; }
+/* Burbujas de Mady: amarillo crema (se distingue del azul del usuario). */
+body.light .msg.ai .bubble { background: linear-gradient(180deg, #f6e6a2, #efd884); border-color: rgba(188,150,32,.42); color: #3a2e0a; }
 body.light .scrim { background: rgba(40,28,78,.30); }
 /* Acentos diseñados para fondo NEGRO (verde menta, cian, amarillo, azul claro):
    en claro se oscurecen para que el texto contraste sobre los contenedores lila. */
