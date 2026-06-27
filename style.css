@@ -807,10 +807,10 @@ a.vc-src:active, a.vc-src:hover { border-color: var(--cyan); color: var(--text-b
 body.light {
   --bg: #f0ecf9;
   --bg-2: #e6def4;
-  --panel: rgba(253, 251, 255, 0.96);   /* burbuja IA / tarjetas: lila casi blanco */
-  --panel-solid: #faf7ff;               /* lila sólido: modales, menús, drawer móvil */
-  --line: rgba(108, 80, 200, 0.20);     /* bordes violeta suave */
-  --line-strong: rgba(108, 80, 200, 0.36);
+  --panel: #ece5f7;                     /* burbuja IA / tarjetas: lila crema con cuerpo */
+  --panel-solid: #efe9fa;               /* lila sólido: modales, menús, drawer móvil */
+  --line: rgba(108, 80, 200, 0.24);     /* bordes violeta suave */
+  --line-strong: rgba(108, 80, 200, 0.40);
   --cyan: #2e78ff;
   --cyan-2: #1f5fe0;
   --cyan-soft: #6a4dff;
@@ -819,17 +819,17 @@ body.light {
   --text: #3a2f5c;                      /* índigo oscuro: buen contraste sobre lila */
   --text-dim: rgba(82, 66, 124, 0.76);
   --text-bright: #241a40;               /* casi negro violeta para títulos/énfasis */
-  --field: rgba(96, 72, 168, 0.07);
-  --user: linear-gradient(180deg, #e7ddf6, #dacdf0);  /* burbuja usuario: lila tostado */
+  --field: rgba(96, 72, 168, 0.10);
+  --user: linear-gradient(180deg, #ddd0f2, #cdbcee);  /* burbuja usuario: lila más intenso */
 }
-/* Superficies que estaban hardcodeadas en oscuro -> crema lila */
-body.light .topbar { background: linear-gradient(180deg, rgba(250,248,255,.96), rgba(250,248,255,.66)); }
-body.light .usage-strip { background: linear-gradient(180deg, rgba(248,245,254,.82), rgba(248,245,254,.45)); }
-body.light .composer { background: linear-gradient(0deg, rgba(250,248,255,.97), rgba(250,248,255,.45)); }
-body.light .auth-tabs { background: rgba(96,72,168,.06); }
+/* Superficies que estaban hardcodeadas en oscuro -> crema lila con cuerpo */
+body.light .topbar { background: linear-gradient(180deg, rgba(240,234,251,.97), rgba(240,234,251,.72)); }
+body.light .usage-strip { background: linear-gradient(180deg, rgba(236,229,248,.86), rgba(236,229,248,.5)); }
+body.light .composer { background: linear-gradient(0deg, rgba(240,234,251,.98), rgba(240,234,251,.5)); }
+body.light .auth-tabs { background: rgba(96,72,168,.08); }
 body.light .composer-inner,
 body.light .field input,
-body.light #input { background: #fdfbff; }
+body.light #input { background: #f6f1fd; }
 body.light .us-track,
 body.light .cp-bar .bar,
 body.light .vc-bar,
@@ -839,6 +839,22 @@ body.light .bubble code { background: rgba(96,72,168,.11); color: var(--violet-2
 body.light .bubble pre { background: rgba(96,72,168,.08); }
 body.light .bubble pre code { color: #3a2f5c; }
 body.light .scrim { background: rgba(40,28,78,.30); }
+/* Acentos diseñados para fondo NEGRO (verde menta, cian, amarillo, azul claro):
+   en claro se oscurecen para que el texto contraste sobre los contenedores lila. */
+body.light .engine-badge.on { color: #0a8f63; border-color: rgba(16,150,108,.42); background: rgba(16,150,108,.13); box-shadow: none; }
+body.light .engine-badge.off { color: #936400; border-color: rgba(180,130,20,.42); background: rgba(200,150,40,.14); }
+body.light .engine-status.ok { color: #2f63d8; }
+body.light .engine-status.warn { color: #936400; background: rgba(200,150,40,.10); border-color: rgba(180,130,20,.3); }
+body.light .fb-btn.up.on { color: #0a8f63; border-color: rgba(16,150,108,.42); background: rgba(16,150,108,.13); }
+body.light .fb-btn.down.on { color: #cf2f4e; border-color: rgba(207,47,78,.42); background: rgba(207,47,78,.11); }
+body.light .mode-chip-create.on { color: #8a6400; background: rgba(255,200,40,.22); border-color: rgba(200,150,30,.6); }
+body.light .vc-warn { color: #936400; }
+body.light .convo-item.is-program { background: rgba(16,150,108,.08); border-color: rgba(16,150,108,.30); }
+body.light .convo-item.is-program.on { background: rgba(16,150,108,.16); border-color: rgba(16,150,108,.55); }
+body.light .reason-live { color: var(--violet-2); }
+body.light .reason-label { background: linear-gradient(90deg,#5a3de0,#2f63d8,#5a3de0); background-size: 200% 100%; -webkit-background-clip: text; background-clip: text; color: transparent; }
+body.light .pg-live-writing { color: var(--violet-2); }
+body.light .pg-live-part { color: var(--violet-2); border-color: rgba(108,80,200,.4); background: rgba(108,80,200,.1); }
 /* Barra lateral en claro: lila diferenciada (un punto más saturada que el chat),
    NUNCA oscura. Anula el fondo oscuro que el layout de PC pone por defecto. */
 @media (min-width: 880px) {
