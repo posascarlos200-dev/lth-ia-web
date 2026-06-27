@@ -24,8 +24,13 @@
   --radius: 16px;
   --safe-top: env(safe-area-inset-top, 0px);
   --safe-bot: env(safe-area-inset-bottom, 0px);
-  --font-mono: 'Share Tech Mono', ui-monospace, 'Cascadia Code', Consolas, monospace;
-  --font-display: 'Orbitron', var(--font-mono);
+  /* Tipografia estilo Claude (alternativas gratuitas a Styrene/Tiempos):
+     sans 'Inter' para la interfaz, serif 'Source Serif 4' para mensajes y
+     titulos, mono 'Fira Code' (con ligaduras) para el codigo. */
+  --font-sans: 'Inter', system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+  --font-serif: 'Source Serif 4', Georgia, 'Times New Roman', serif;
+  --font-mono: 'Fira Code', ui-monospace, 'Cascadia Code', 'Cascadia Mono', Consolas, monospace;
+  --font-display: var(--font-serif);
 }
 
 * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
@@ -33,7 +38,7 @@ html, body {
   margin: 0; height: 100%;
   background: var(--bg);
   color: var(--text);
-  font-family: var(--font-mono);
+  font-family: var(--font-sans);
   overscroll-behavior: none;
 }
 body { overflow: hidden; }
@@ -276,11 +281,14 @@ input, textarea { font-family: inherit; }
 .msg .av { width: 30px; height: 30px; flex: none; border-radius: 9px; display: grid; place-items: center; font-size: 12px; font-family: var(--font-display); }
 .msg.ai .av { color: #001226; background: var(--grad); box-shadow: 0 0 14px rgba(74,163,255,.3); }
 .msg.user .av { color: var(--cyan); background: rgba(74,163,255,.08); border: 1px solid var(--line-strong); }
-.bubble { padding: 12px 14px; border-radius: 14px; font-size: 14.5px; line-height: 1.6; max-width: 82%; word-wrap: break-word; overflow-wrap: anywhere; }
+/* Conversaciones en serif (el look de las respuestas de Claude). */
+.bubble { font-family: var(--font-serif); padding: 12px 14px; border-radius: 14px; font-size: 15px; line-height: 1.62; max-width: 82%; word-wrap: break-word; overflow-wrap: anywhere; }
 .msg.ai .bubble { background: var(--panel); border: 1px solid var(--line); border-top-left-radius: 4px; }
 .msg.user .bubble { background: var(--user); border: 1px solid var(--line-strong); border-top-right-radius: 4px; color: var(--text-bright); }
 .bubble p { margin: 0 0 9px; } .bubble p:last-child { margin-bottom: 0; }
 .bubble strong { color: var(--text-bright); }
+/* El codigo SIEMPRE en monospace (antes heredaba la mono global del body). */
+.bubble code, .bubble pre, .bubble pre code { font-family: var(--font-mono); font-feature-settings: 'liga' 1, 'calt' 1; }
 .bubble code { background: rgba(0,0,0,.45); border: 1px solid var(--line); border-radius: 5px; padding: 1px 5px; font-size: 12.5px; color: var(--cyan); }
 .bubble pre { background: rgba(0,0,0,.5); border: 1px solid var(--line); border-radius: 10px; padding: 12px; overflow-x: auto; margin: 8px 0; }
 .bubble pre code { background: none; border: 0; padding: 0; color: #bcd6ff; }
@@ -950,3 +958,18 @@ body.light .bg-scan { display: none; }
 /* Chips cuando el chat ya esta dedicado a un modo */
 .mode-chip:disabled, .model-picker-btn:disabled, .model-picker-btn.locked { opacity: .38; cursor: not-allowed; pointer-events: none; }
 .mode-chip.mode-locked-on { pointer-events: none; } /* el chip del modo activo: se ve "on" pero no se puede togglear */
+
+/* ════════════════════════════════════════════════
+   Ajuste de tracking para titulos serif. La antigua display (Orbitron)
+   usaba tracking muy ancho que no le sienta a una serif tipo Tiempos.
+   Va al final para ganar la cascada sobre los letter-spacing previos.
+   ════════════════════════════════════════════════ */
+.brand-title { letter-spacing: .5px; }
+.welcome h2,
+.tt-text strong,
+.drawer-head strong,
+.settings-head strong,
+.invite-panel h2,
+.pin-form h2,
+.os-promo-title,
+.pro-title { letter-spacing: .2px; }
