@@ -2098,8 +2098,10 @@
 
   function renderMessages() {
     const c = activeConvo();
+    const emptyChat = !c || !c.messages.length;
+    if (el.appScreen) el.appScreen.classList.toggle('is-empty-chat', emptyChat);
     el.messages.innerHTML = '';
-    if (!c || !c.messages.length) {
+    if (emptyChat) {
       el.messages.appendChild(el.welcome);
       el.welcome.hidden = false;
       renderDesktopRail();
