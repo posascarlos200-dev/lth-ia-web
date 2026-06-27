@@ -1955,6 +1955,7 @@
   function renderCredits() {
     const c = state.credits;
     el.modelLabel.textContent = currentModelLabel();
+    if (!c) renderDesktopRail();
     if (!c) { el.planTag.textContent = '—'; el.usageVal.textContent = '—'; el.usageFill.style.width = '0%'; return; }
     const plan = String(c.plan || 'free');
     el.planTag.textContent = plan;
@@ -1990,6 +1991,51 @@
     if (inCooldown) note = 'Llegaste al limite de la ventana actual. Se reactiva ' + fmtTime(c.cooldown_until) + '.';
     else if (plan === 'free') note = 'Plan free: chat de texto. Pasa a Pro para mas modelos e imagenes.';
     el.cpNote.textContent = note;
+    renderDesktopRail();
+  }
+
+  function renderDesktopRail() {
+    if (!el.desktopRail) return;
+    const convo = activeConvo();
+    if (el.desktopAssistantMeta) {
+      el.desktopAssistantMeta.textContent = convo && convo.messages.length
+        ? 'Chat activo: ' + clipText(convo.title || 'Chat', 34)
+        : 'LTH IA lista para ayudarte';
+    }
+    if (el.desktopPlanTag) el.desktopPlanTag.textContent = (el.planTag && el.planTag.textContent) || 'â€”';
+    if (el.desktopUsageVal) el.desktopUsageVal.textContent = (el.usageVal && el.usageVal.textContent) || 'â€”';
+    if (el.desktopUsageLabel) el.desktopUsageLabel.textContent = (el.usageLabel && el.usageLabel.textContent) || 'Uso actual';
+    if (el.desktopPlanTag && /Ã|â/.test(el.desktopPlanTag.textContent)) el.desktopPlanTag.textContent = '--';
+    if (el.desktopUsageVal && /Ã|â/.test(el.desktopUsageVal.textContent)) el.desktopUsageVal.textContent = '--';
+    if (el.desktopUsageFill && el.usageFill) {
+      el.desktopUsageFill.style.width = el.usageFill.style.width || '0%';
+      el.desktopUsageFill.className = el.usageFill.className || '';
+    }
+
+    let badge = 'Chat normal';
+    let tone = '';
+    let text = convo && convo.messages.length
+      ? 'Continua la conversacion actual o escribe algo nuevo en el panel principal.'
+      : 'Mady responde en su flujo normal, lista para conversar o ayudarte con tareas.';
+    const mode = (convo && convo.mode) || (state.programMode ? 'program' : (state.reasoning ? 'reason' : (state.createMode ? 'create' : 'auto')));
+    if (mode === 'reason') {
+      badge = 'Razonar';
+      tone = ' is-reason';
+      text = 'La respuesta se prepara con razonamiento reforzado y verificacion final antes de entregarse.';
+    } else if (mode === 'program') {
+      badge = 'LTH-code';
+      tone = ' is-program';
+      text = 'Este chat queda dedicado a construir o editar una pagina completa en un solo flujo.';
+    } else if (mode === 'create') {
+      badge = 'Crear algo';
+      tone = ' is-create';
+      text = 'Mady genera una pagina o mini-app lista para abrir en vista previa desde la propia conversacion.';
+    }
+    if (el.desktopModeBadge) {
+      el.desktopModeBadge.className = 'desk-mode-badge' + tone;
+      el.desktopModeBadge.textContent = badge;
+    }
+    if (el.desktopModeText) el.desktopModeText.textContent = text;
   }
 
   function fmtTime(v) {
@@ -2016,7 +2062,11 @@
 
   function renderConvoList() {
     if (!el.convoList) return;
-    if (!state.convos.length) { el.convoList.innerHTML = '<div style="padding:18px;color:var(--text-dim);font-size:12px;text-align:center;">Sin conversaciones todavia.</div>'; return; }
+    if (!state.convos.length) {
+      el.convoList.innerHTML = '<div style="padding:18px;color:var(--text-dim);font-size:12px;text-align:center;">Sin conversaciones todavia.</div>';
+      renderDesktopRail();
+      return;
+    }
     el.convoList.innerHTML = '';
     for (const c of state.convos) {
       const last = c.messages[c.messages.length - 1];
@@ -2033,6 +2083,7 @@
       });
       el.convoList.appendChild(item);
     }
+    renderDesktopRail();
   }
 
   function bubbleEl(role, html, extraClass) {
@@ -2048,7 +2099,12 @@
   function renderMessages() {
     const c = activeConvo();
     el.messages.innerHTML = '';
-    if (!c || !c.messages.length) { el.messages.appendChild(el.welcome); el.welcome.hidden = false; return; }
+    if (!c || !c.messages.length) {
+      el.messages.appendChild(el.welcome);
+      el.welcome.hidden = false;
+      renderDesktopRail();
+      return;
+    }
     // La Vista previa SOLO va en la revision mas reciente con programDoc. Si una version vieja
     // resucitara por sync/merge, NO debe pintar una preview vieja encima de la nueva.
     let lastDocIdx = -1;
@@ -2074,6 +2130,7 @@
       el.messages.appendChild(node.wrap);
     }
     scrollDown();
+    renderDesktopRail();
   }
 
   function scrollDown() { requestAnimationFrame(() => { el.messages.scrollTop = el.messages.scrollHeight; }); }
@@ -2915,6 +2972,16 @@
     if (composerHintTimer) clearTimeout(composerHintTimer);
     composerHintTimer = setTimeout(() => { if (el.composerHint) el.composerHint.textContent = original; }, 4000);
   }
+  function bindSuggestionButtons(root) {
+    if (!root) return;
+    root.querySelectorAll('button').forEach((b) => {
+      b.addEventListener('click', () => {
+        el.input.value = b.textContent.replace(/â€¦$/, '').replace(/…$/, '');
+        autoGrow();
+        el.input.focus();
+      });
+    });
+  }
   function renderModelBar() {
     const plan = String((state.credits && state.credits.plan) || 'free').toLowerCase();
     const free = plan === 'free';
@@ -3148,6 +3215,7 @@
     apply(el.programBtn, mode === 'program', state.programMode);
     apply(el.createBtn, mode === 'create', state.createMode);
     if (el.modelPickerBtn) { el.modelPickerBtn.disabled = lock; el.modelPickerBtn.classList.toggle('locked', lock); }
+    renderDesktopRail();
   }
 
   // Instrucciones inyectadas cuando "Crear algo" esta activo: forzar HTML autocontenido.
@@ -5280,6 +5348,7 @@
       setTimeout(() => { el.proBuyBtn.textContent = 'Comprar plan Pro'; el.proBuyBtn.disabled = false; }, 2200);
     });
     el.input.addEventListener('input', autoGrow);
+    bindSuggestionButtons(el.desktopSuggestions);
     el.input.addEventListener('keydown', (e) => {
       if (e.key === 'Enter' && !e.shiftKey && !e.isComposing) { e.preventDefault(); el.composer.requestSubmit(); }
     });
@@ -5642,6 +5711,10 @@
     el.engineToggle = $('#engineToggle'); el.engineStatus = $('#engineStatus'); el.engineDot = $('#engineDot');
     el.userName = $('#userName'); el.userEmail = $('#userEmail'); el.userAvatar = $('#userAvatar');
     el.messages = $('#messages'); el.welcome = $('#welcome'); el.suggestions = $('#suggestions');
+    el.desktopRail = $('#desktopRail'); el.desktopAssistantMeta = $('#desktopAssistantMeta');
+    el.desktopPlanTag = $('#desktopPlanTag'); el.desktopUsageVal = $('#desktopUsageVal'); el.desktopUsageLabel = $('#desktopUsageLabel');
+    el.desktopUsageFill = $('#desktopUsageFill'); el.desktopModeBadge = $('#desktopModeBadge'); el.desktopModeText = $('#desktopModeText');
+    el.desktopSuggestions = $('#desktopSuggestions');
     // Visualizador: toggle de la vista previa de codigo (delegado).
     if (el.messages && !el.messages._previewBound) {
       el.messages._previewBound = true;

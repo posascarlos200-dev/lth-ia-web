@@ -211,6 +211,54 @@
       </div>
     </div>
 
+    <aside id="desktopRail" class="desktop-rail" aria-label="Panel de escritorio">
+      <section class="desk-panel desk-panel-assistant">
+        <div class="desk-panel-head">
+          <span class="desk-kicker">Asistente</span>
+          <span class="desk-signal" aria-hidden="true"></span>
+        </div>
+        <div class="desk-assistant-row">
+          <div class="desk-avatar-wrap">
+            <img src="./icon.png" alt="" width="42" height="42" />
+          </div>
+          <div class="desk-assistant-copy">
+            <strong>Mady</strong>
+            <span id="desktopAssistantMeta">LTH IA lista para ayudarte</span>
+          </div>
+        </div>
+      </section>
+
+      <section class="desk-panel desk-panel-usage">
+        <div class="desk-panel-head">
+          <span class="desk-kicker">Resumen</span>
+          <span id="desktopPlanTag" class="desk-plan-tag">free</span>
+        </div>
+        <div class="desk-usage-value" id="desktopUsageVal">—</div>
+        <div class="desk-usage-copy" id="desktopUsageLabel">Uso actual</div>
+        <div class="desk-track"><i id="desktopUsageFill"></i></div>
+      </section>
+
+      <section class="desk-panel desk-panel-mode">
+        <div class="desk-panel-head">
+          <span class="desk-kicker">Modo activo</span>
+        </div>
+        <div id="desktopModeBadge" class="desk-mode-badge">Chat normal</div>
+        <p id="desktopModeText" class="desk-mode-text">Mady responde en su flujo normal, lista para conversar o ayudarte con tareas.</p>
+      </section>
+
+      <section class="desk-panel desk-panel-actions">
+        <div class="desk-panel-head">
+          <span class="desk-kicker">Ideas rápidas</span>
+        </div>
+        <div class="desk-suggest" id="desktopSuggestions">
+          <button type="button">Explícame qué es LTH OS</button>
+          <button type="button">Dame ideas para mi negocio</button>
+          <button type="button">Resume este texto: …</button>
+          <button type="button">Ayúdame a escribir un mensaje</button>
+        </div>
+      </section>
+    </aside>
+
     <!-- Composer -->
     <form id="composer" class="composer">
       <div class="composer-modes">
