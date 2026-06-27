@@ -4135,9 +4135,20 @@
     el.messages.appendChild(built.wrap); scrollDown();
     setBusy(true); state.abort = new AbortController();
     try {
-      const out = await buildCodePipeline(request, improved, convo, history || [], bub, state.abort.signal, true, confirmedImages || null, !!noImages);
-      const doc = String(out || '').trim();
-      if (!doc || !/<html[\s>]/i.test(doc)) throw new Error('La IA no devolvio un HTML completo.');
+      // Tolerancia: un fallo transitorio del proveedor (error de stream o HTML vacío) no debe
+      // dejar al usuario sin nada. Reintentamos una vez antes de rendirnos.
+      let doc = '';
+      let lastErr = '';
+      for (let attempt = 0; attempt < 2; attempt += 1) {
+        if (state.abort && state.abort.signal.aborted) return;
+        try {
+          const out = await buildCodePipeline(request, improved, convo, history || [], bub, state.abort.signal, true, confirmedImages || null, !!noImages);
+          doc = String(out || '').trim();
+        } catch (e) { lastErr = (e && e.message) || ''; doc = ''; }
+        if (doc && /<html[\s>]/i.test(doc)) break;
+        if (attempt < 1 && !(state.abort && state.abort.signal.aborted)) { bub.innerHTML = reasonStageHtml('codigo'); await sleep(800); }
+      }
+      if (!doc || !/<html[\s>]/i.test(doc)) throw new Error(lastErr || 'La IA no devolvio un HTML completo.');
       const finishOpts = confirmedImages ? { confirmedImages: true } : (noImages ? { skipImages: true } : undefined);
       await finishProgramDoc(convo, bub, doc, 'Página lista ✅ — estructura, estilos e interacciones en un solo archivo. Usa **Vista previa**, **Editar** o **Descargar** abajo.', request, 'Pagina construida (LTH-code)', finishOpts);
       void maybeUpdateConvoBrain(convo);
@@ -4264,14 +4275,16 @@
     await programNextStep();
   }
 
-  async function programOrchestrate() {
+  async function programOrchestrate(strict) {
     const p = state.program;
     await fetchReasonStatus();
     const codeModel = reasonModel('spec_codigo', 'deepseek/deepseek-v4-pro');
+    const userMsg = JSON.stringify({ request: p.request, answers: p.answers, max_questions: 3, remaining_questions: Math.max(0, 3 - p.answers.length) }, null, 2)
+      + (strict ? '\n\nIMPORTANTE: responde EXCLUSIVAMENTE con el objeto JSON pedido (empezando con { y terminando con }). Nada de texto, explicaciones ni bloques de código alrededor.' : '');
     const raw = await reasonChat({
       model: reasonModel('program_coder', codeModel),
       system: composeSystemWithMemory(PROGRAM_WIZARD_PROMPT, p.convo, p.request),
-      messages: [{ role: 'user', content: JSON.stringify({ request: p.request, answers: p.answers, max_questions: 3, remaining_questions: Math.max(0, 3 - p.answers.length) }, null, 2) }],
+      messages: [{ role: 'user', content: userMsg }],
       maxTokens: 1800, temperature: 0.25, reasonStage: false
     }, null);
     return parseReasonJson(raw);
@@ -4281,10 +4294,19 @@
     const p = state.program;
     if (!p || !p.active) return;
     setProgramBusy();
-    let step;
-    try { step = await programOrchestrate(); }
-    catch (e) { renderProgramError(e && e.message); return; }
-    if (!step || !step.phase) { renderProgramError(); return; }
+    // Tolerancia: el modelo a veces devuelve vacío o texto sin JSON válido. En vez de
+    // quedarnos atascados en "No se pudo continuar", reintentamos (forzando JSON en los
+    // reintentos) antes de rendirnos.
+    let step = null;
+    let lastErr = '';
+    for (let attempt = 0; attempt < 3; attempt += 1) {
+      if (!p.active) return;
+      try { step = await programOrchestrate(attempt > 0); }
+      catch (e) { lastErr = (e && e.message) || ''; step = null; }
+      if (step && step.phase) break;
+      if (attempt < 2) await sleep(700);
+    }
+    if (!step || !step.phase) { renderProgramError(lastErr || 'La IA no devolvió una respuesta válida. Vuelve a intentar en un momento.'); return; }
     if (step.phase === 'plan' && String(step.plan || '').trim()) {
       p.plan = String(step.plan).trim();
       p.lastStep = null;
