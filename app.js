@@ -339,10 +339,73 @@
     return injected + d;
   }
 
+  // Resaltado de sintaxis HTML estilo VS Code para el visor de codigo. Recibe el
+  // documento crudo y devuelve HTML ESCAPADO con <span class="hl-*"> por token.
+  function highlightHtml(src) {
+    src = String(src == null ? '' : src);
+    const esc = (s) => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+    const attrs = (s) => {
+      let out = '';
+      const re = /([a-zA-Z_:][\w:.\-]*)|(=)|("[^"]*"|'[^']*')|(\s+)|([^\s=<>]+)/g;
+      let m;
+      while ((m = re.exec(s))) {
+        if (m[1]) out += '<span class="hl-attr">' + esc(m[1]) + '</span>';
+        else if (m[2]) out += '<span class="hl-punct">=</span>';
+        else if (m[3]) out += '<span class="hl-str">' + esc(m[3]) + '</span>';
+        else if (m[4]) out += esc(m[4]);
+        else out += esc(m[5]);
+      }
+      return out;
+    };
+    let out = '';
+    let i = 0;
+    const n = src.length;
+    while (i < n) {
+      const lt = src.indexOf('<', i);
+      if (lt === -1) { out += '<span class="hl-text">' + esc(src.slice(i)) + '</span>'; break; }
+      if (lt > i) out += '<span class="hl-text">' + esc(src.slice(i, lt)) + '</span>';
+      if (src.startsWith('<!--', lt)) {
+        const e = src.indexOf('-->', lt + 4);
+        const stop = e === -1 ? n : e + 3;
+        out += '<span class="hl-comment">' + esc(src.slice(lt, stop)) + '</span>';
+        i = stop; continue;
+      }
+      if (src.startsWith('<!', lt)) {
+        const e = src.indexOf('>', lt);
+        const stop = e === -1 ? n : e + 1;
+        out += '<span class="hl-doctype">' + esc(src.slice(lt, stop)) + '</span>';
+        i = stop; continue;
+      }
+      const gt = src.indexOf('>', lt);
+      const stop = gt === -1 ? n : gt + 1;
+      const tag = src.slice(lt, stop);
+      const m = tag.match(/^<(\/?)([a-zA-Z][\w-]*)([\s\S]*?)(\/?)>$/);
+      if (m) {
+        out += '<span class="hl-punct">&lt;' + m[1] + '</span>'
+          + '<span class="hl-tag">' + esc(m[2]) + '</span>'
+          + attrs(m[3])
+          + '<span class="hl-punct">' + m[4] + '&gt;</span>';
+        i = stop;
+        // El contenido de <script>/<style> se muestra como texto plano del editor.
+        const tname = m[2].toLowerCase();
+        if (!m[1] && !m[4] && (tname === 'script' || tname === 'style')) {
+          const close = src.toLowerCase().indexOf('</' + tname, i);
+          const cstop = close === -1 ? n : close;
+          if (cstop > i) out += '<span class="hl-text">' + esc(src.slice(i, cstop)) + '</span>';
+          i = cstop;
+        }
+        continue;
+      }
+      out += '<span class="hl-text">' + esc(tag) + '</span>';
+      i = stop;
+    }
+    return out;
+  }
+
   // Bloque de Vista previa (iframe + barra de acciones) a partir de un documento HTML.
   function buildPreviewBlockHtml(doc) {
     if (!doc || !String(doc).trim()) return '';
-    const code = escapeHtml(String(doc));
+    const code = highlightHtml(String(doc));
     return '<div class="code-preview">'
       + '<div class="code-preview-launch">'
       + '<button class="code-preview-btn" type="button" data-preview-toggle="1">'

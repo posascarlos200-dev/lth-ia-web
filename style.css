@@ -290,8 +290,9 @@ input, textarea { font-family: inherit; }
 /* El codigo SIEMPRE en monospace (antes heredaba la mono global del body). */
 .bubble code, .bubble pre, .bubble pre code { font-family: var(--font-mono); font-feature-settings: 'liga' 1, 'calt' 1; }
 .bubble code { background: rgba(0,0,0,.45); border: 1px solid var(--line); border-radius: 5px; padding: 1px 5px; font-size: 12.5px; color: var(--cyan); }
-.bubble pre { background: rgba(0,0,0,.5); border: 1px solid var(--line); border-radius: 10px; padding: 12px; overflow-x: auto; margin: 8px 0; }
-.bubble pre code { background: none; border: 0; padding: 0; color: #bcd6ff; }
+/* Bloques de codigo: editor oscuro estilo VS Code en AMBOS temas. */
+.bubble pre { background: #1e1e1e; border: 1px solid #3a3a3a; border-radius: 10px; padding: 12px; overflow-x: auto; margin: 8px 0; }
+.bubble pre code { background: none; border: 0; padding: 0; color: #d4d4d4; }
 .bubble ul, .bubble ol { margin: 6px 0; padding-left: 20px; } .bubble li { margin: 3px 0; }
 .bubble a { color: var(--cyan-2); }
 /* Imagenes generadas */
@@ -836,16 +837,15 @@ body.light .cp-bar .bar,
 body.light .vc-bar,
 body.light .switch { background: var(--field); }
 body.light .gen-img { background: var(--field); }
-body.light .bubble code { background: rgba(96,72,168,.11); color: var(--violet-2); }
-body.light .bubble pre { background: rgba(96,72,168,.08); }
-body.light .bubble pre code { color: #3a2f5c; }
+body.light .bubble code:not(pre code) { background: rgba(96,72,168,.11); color: var(--violet-2); }
+/* (Los bloques .bubble pre se quedan en editor oscuro VS Code también en claro.) */
 /* Tus burbujas (azul): borde azul y texto navy para contraste. */
 body.light .msg.user .bubble { border-color: rgba(70,130,205,.5); color: #15314f; }
 /* Burbujas de Mady: morado medio (se distingue del azul del usuario); texto
    muy oscuro para que se lea bien dentro. */
 body.light .msg.ai .bubble { background: linear-gradient(180deg, #d6c4f0, #c3a9ea); border-color: rgba(120,86,205,.42); color: #271a48; }
 body.light .msg.ai .bubble strong { color: #1c1238; }
-body.light .msg.ai .bubble code { background: rgba(40,22,90,.12); color: #34206e; }
+body.light .msg.ai .bubble code:not(pre code) { background: rgba(40,22,90,.12); color: #34206e; }
 body.light .msg.ai .bubble a { color: #15348f; }
 body.light .scrim { background: rgba(40,28,78,.30); }
 /* Acentos diseñados para fondo NEGRO (verde menta, cian, amarillo, azul claro):
@@ -864,6 +864,18 @@ body.light .reason-live { color: var(--violet-2); }
 body.light .reason-label { background: linear-gradient(90deg,#5a3de0,#2f63d8,#5a3de0); background-size: 200% 100%; -webkit-background-clip: text; background-clip: text; color: transparent; }
 body.light .pg-live-writing { color: var(--violet-2); }
 body.light .pg-live-part { color: var(--violet-2); border-color: rgba(108,80,200,.4); background: rgba(108,80,200,.1); }
+/* "Pensando opciones…" del flujo de editar: era verde crema (invisible sobre el
+   modal lila claro). Lo hacemos legible. */
+body.light .pg-busy { color: #176b4f; }
+/* Botones de código (Abrir página / Código): el violeta translúcido se perdía
+   sobre la burbuja morada de Mady en claro. Los hacemos sólidos y visibles. */
+body.light .code-preview-btn { background: linear-gradient(135deg,#5b86f0,#7d5cf0); color:#fff; border-color: rgba(90,70,200,.55); box-shadow: 0 6px 18px -10px rgba(90,70,200,.7); }
+body.light .code-preview-btn .cpl-label { color:#fff; }
+body.light .code-preview-btn .cpl-sub { color: rgba(255,255,255,.8); }
+body.light .code-preview-btn .cpl-go { color: rgba(255,255,255,.85); }
+body.light .code-preview-codebtn { background:#ffffff; color:#4a32c0; border-color: rgba(108,80,200,.55); }
+body.light .code-preview-codebtn:hover { background:#f3eefc; border-color: rgba(108,80,200,.75); }
+body.light .code-preview-codebtn .cpc-ic { color:#6a4dff; }
 /* Barra lateral en claro: lila diferenciada (un punto más saturada que el chat),
    NUNCA oscura. Anula el fondo oscuro que el layout de PC pone por defecto. */
 @media (min-width: 880px) {
@@ -909,10 +921,20 @@ body.light .bg-scan { display: none; }
 .code-preview-codebtn{display:inline-flex;align-items:center;gap:6px;font-size:12px;font-weight:600;color:#d6cfff;background:rgba(120,90,255,.12);border:1px solid rgba(122,100,255,.38);border-radius:14px;padding:8px 14px;cursor:pointer;transition:.15s}
 .code-preview-codebtn:hover{background:rgba(120,90,255,.22);border-color:rgba(140,120,255,.62)}
 .code-preview-codebtn .cpc-ic{font-family:var(--font-mono);font-weight:700;color:#b9a8ff}
-.code-preview-code{margin-top:8px;border:1px solid rgba(122,100,255,.3);border-radius:12px;overflow:hidden;background:#060b16}
+.code-preview-code{margin-top:8px;border:1px solid #3a3a3a;border-radius:12px;overflow:hidden;background:#1e1e1e}
+.code-preview-code .code-preview-bar{background:#252526;border-bottom-color:#3a3a3a}
 .code-preview-code[hidden]{display:none}
-.code-preview-pre{margin:0;max-height:420px;overflow:auto;padding:14px 16px;background:#060b16}
-.code-preview-pre code{font-family:var(--font-mono);font-size:12px;line-height:1.6;color:#cfe0ff;white-space:pre}
+.code-preview-pre{margin:0;max-height:420px;overflow:auto;padding:14px 16px;background:#1e1e1e}
+.code-preview-pre code{font-family:var(--font-mono);font-size:12px;line-height:1.6;color:#d4d4d4;white-space:pre}
+/* Resaltado de sintaxis estilo VS Code Dark+ (el visor de codigo es oscuro en
+   ambos temas, como un editor de verdad). */
+.hl-text{color:#d4d4d4}
+.hl-tag{color:#569cd6}
+.hl-attr{color:#9cdcfe}
+.hl-str{color:#ce9178}
+.hl-comment{color:#6a9955}
+.hl-punct{color:#808080}
+.hl-doctype{color:#569cd6}
 .code-preview-frame{margin-top:8px;border:1px solid rgba(120,180,255,.28);border-radius:12px;overflow:hidden;background:#fff}
 .code-preview-frame[hidden]{display:none}
 .code-preview-frame.is-fullscreen-preview{position:fixed;inset:0;z-index:10000;margin:0;border:0;border-radius:0;display:grid;grid-template-rows:auto minmax(0,1fr);width:100vw;height:100dvh;max-width:none;background:#fff;overscroll-behavior:none}
