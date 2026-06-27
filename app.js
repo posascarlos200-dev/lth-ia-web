@@ -170,13 +170,6 @@
 
   // Orquestador de EDICION (modelo rapido, p.ej. Gemini Flash). Mejora el pedido del usuario
   // y lo convierte en una instruccion precisa para el agente editor — SIN ampliar el alcance.
-  const EDIT_ORCHESTRATOR_PROMPT = [
-    'Eres el ORQUESTADOR de edicion de Mady (modelo rapido). Recibes el pedido de cambio del usuario sobre una pagina web YA existente, y el HTML actual como contexto.',
-    'Tu trabajo: entender que quiere y convertirlo en UNA instruccion de edicion clara y especifica para el agente editor, para que entienda mejor y acierte. NO amplies el alcance: solo lo que el usuario pidio, bien precisado (que elemento o seccion exacta, que cambia y como debe quedar). Apoyate en el HTML real (nombres de clases, ids, secciones que existen).',
-    'Puedes agregar UNA recomendacion breve de mejora coherente con el pedido (opcional). Nunca propongas rehacer la pagina ni cambios no pedidos.',
-    'Responde SOLO JSON valido: {"recomendacion":"1 frase breve para el usuario, o vacio","instruccion":"instruccion precisa para el editor, en imperativo, mencionando el elemento/seccion exacto y el resultado esperado"}.'
-  ].join('\n');
-
   // PLANIFICADOR DE IMAGENES (Gemini). Decide SEMANTICAMENTE si la pagina REQUIERE fotos reales
   // (no por palabras clave) y, si si, lista cada foto con su query EN INGLES. Es el gate de
   // intencion: lista vacia = no preguntar ni buscar; con items = mostrar el preview.
@@ -194,30 +187,17 @@
     'Devuelve SOLO JSON valido: {"items":[{"name":"Auriculares","query":"headphones"}, ...]} o {"items":[]} si NO se necesitan fotos reales.'
   ].join('\n');
 
-  // Asistente INTERACTIVO de edicion (Gemini Flash): antes de tocar la pagina, si el cambio
-  // es ambiguo pregunta/recomienda con tarjetas (como el asistente de inicio); cuando la idea
-  // queda clara, entrega una instruccion EXACTA para que la IA editora no falle ni pida "se mas
-  // especifico". Si el cambio ya es claro, NO pregunta: pasa directo a "ready".
-  const EDIT_WIZARD_PROMPT = [
-    'Eres el ORQUESTADOR de edicion de Mady (Gemini Flash), en su fase breve de preparacion ANTES de tocar una pagina web YA existente.',
-    'Recibes un JSON: { change: pedido de cambio del usuario, answers: respuestas ya confirmadas, page_outline: mapa compacto (ids/clases/secciones reales) de la pagina, max_questions, remaining_questions }.',
-    'Objetivo: convertir el cambio en una instruccion de edicion PRECISA, UBICABLE y SEGURA para el agente editor, de modo que nunca tenga que responder "no puedo hacer ese cambio, se mas especifico".',
-    'VARIAS TAREAS (clave): el pedido del usuario PUEDE contener VARIOS cambios distintos en un mismo mensaje (p.ej. "ajusta los banners Y que al voltear la tarjeta no se vean los numeros de la primera cara"). Identifica TODAS las tareas y NO descartes ninguna. Tus preguntas pueden enfocar el detalle de cualquiera, pero la "instruccion" final SIEMPRE debe cubrir TODAS las tareas pedidas, numeradas (1), 2), 3)...), cada una precisa. NUNCA entregues una instruccion que solo resuelve la primera tarea.',
-    'COMPORTAMIENTO OBLIGATORIO: SIEMPRE haz al menos UNA pregunta o recomendacion (phase "ask") ANTES de editar, aunque el cambio parezca claro. El usuario quiere que siempre le preguntes para mejorar y confirmar; nunca edites en la primera pasada sin preguntar.',
-    '- Cada pregunta lleva 2-3 opciones concretas; la PRIMERA es tu recomendacion profesional. Apoyate en page_outline para nombrar secciones/ids reales. Se permite respuesta libre del usuario.',
-    '- Si el cambio es grande o ambiguo (p.ej. "agregar rastreo de envio al comprar"), usa las preguntas para acotarlo: que datos muestra, en que seccion/flujo va, como se ve y cuando aparece. No lo des por entendido.',
-    '- No amplies el alcance mas alla de lo que el usuario pidio.',
-    '- Devuelve phase "ready" SOLO despues de que el usuario respondio al menos una pregunta, o cuando remaining_questions sea 0.',
-    'ALCANCE (importante para acertar Y ahorrar): clasifica el cambio en uno de TRES niveles.',
-    '- scope "region": cambios MINIMOS y localizados (editar texto, color, tamano, mover o ajustar UN elemento/seccion que YA existe). Pon en "locator" el id, la .clase o el nombre de seccion EXACTO (tomado de page_outline) donde ocurre el cambio.',
-    '- scope "full": cambios de tamano MEDIO que tocan varias partes pero NO rehacen la pagina (agregar UNA seccion/funcion/boton, boton flotante, o ajustes en HTML+CSS+JS en lugares distintos). El editor parchea quirurgicamente sobre la pagina completa. locator vacio.',
-    '- scope "rebuild": cambios ARQUITECTONICOS o de GRAN ALCANCE (rediseno total, reestructurar el layout, rehacer el sistema de navegacion, cambiar el enfoque de la pagina, o agregar/rehacer MUCHAS secciones a la vez). El editor REGENERA el documento completo conservando lo que no cambia. locator vacio.',
-    'Elige el alcance MINIMO que cumpla el pedido: no uses "rebuild" para algo que un parche puntual resuelve (gasta mas), pero SI usa "rebuild" cuando el cambio es estructural y un parche se quedaria corto. NUNCA respondas que un cambio "no se puede": si es grande, es "rebuild".',
-    'Devuelve SOLO JSON valido, sin texto fuera del JSON. Dos formatos:',
-    'Para preguntar: { "phase":"ask", "question":"texto breve", "options":[{"label":"opcion concreta","value":"valor claro","description":"por que conviene","recommended":true},{"label":"...","value":"...","description":"..."}], "allow_custom": true }',
-    'Para finalizar: { "phase":"ready", "instruccion":"instruccion imperativa precisa con TODAS las tareas pedidas, numeradas si son varias: 1) elemento/seccion exacto, que cambia y como queda; 2) ...", "recomendacion":"1 frase breve para el usuario, o vacio", "scope":"region|full|rebuild", "locator":"id/.clase/seccion exacta si scope=region; vacio en los demas" }',
-    'Si hay MAS DE UNA tarea localizada, usa scope "full" y locator vacio. Si las tareas implican reestructurar la pagina o son de gran alcance, usa "rebuild".',
-    'Maximo 3 opciones por pregunta, distintas y concretas (no "si/no" vagas).'
+  // CEREBRO de edicion (Fase 2): modelo fuerte que VE EL CODIGO REAL. En system ya tiene el
+  // PLAN VIVO y la MEMORIA DE INTENTOS. Diagnostica los arreglos, no solo precisa el texto.
+  const EDIT_BRAIN_PROMPT = [
+    'Eres el CEREBRO de edicion de LTH-code (modelo fuerte). Editas o ARREGLAS una pagina web YA existente. En tu system tienes el PLAN VIVO (lo que el usuario quiere AHORA) y la MEMORIA DE INTENTOS (lo ya probado: NO lo repitas).',
+    'Recibes un JSON: { mode: "edit"|"fix", change, answers, asked: preguntas que YA hiciste (NO repitas), code: el codigo real (o la parte relevante: CSS+JS completos + esqueleto del body), page_outline, max_questions, remaining_questions }.',
+    'SI mode="fix" (algo no funciona / no se ve / sale en blanco): DIAGNOSTICA leyendo el CODIGO REAL. Razona las causas EVIDENTES y PROBABLES de EXACTAMENTE lo que el usuario describe (ej.: contenedor con alto/ancho 0, display:none, position/overflow que oculta, z-index, animacion o transform mal, error/typo de JS, selector que no coincide, ruta/recurso roto, CSS que no aplica). DESCARTA lo que ya este en la memoria de intentos y ataca una causa DISTINTA si el fallo persiste. Elige la(s) causa(s) mas probable(s) y entrega una instruccion de reparacion PRECISA y LOCALIZADA. NO reconstruyas la pagina salvo que el codigo este realmente roto/corrupto.',
+    'SI mode="edit" (cambio de intencion): convierte el cambio en una instruccion precisa y ubicable, respetando el PLAN VIVO (si el pedido contradice algo anterior, MANDA lo nuevo).',
+    'PREGUNTAS: pregunta SOLO si hay una ambiguedad real que te impida acertar. Cada pregunta debe ser ESPECIFICA y NUEVA: nunca repitas una de "asked", ni preguntes algo que el usuario ya respondio o ya dijo en "change", ni cosas que no van con lo que pidio. Si el codigo te deja claro que hacer, NO preguntes: ve directo a "ready". En mode="fix" prioriza diagnosticar sobre preguntar.',
+    'Si el pedido trae VARIAS tareas en un mensaje, cubrelas TODAS, numeradas, en la instruccion (nunca solo la primera).',
+    'ALCANCE: "region" (cambio localizado: pon locator = id/.clase/seccion EXACTA del code/outline), "full" (varias partes: parche quirurgico sobre el doc completo, locator vacio), "rebuild" (SOLO arquitectonico o codigo muy danado, locator vacio). Elige el MINIMO que cumpla.',
+    'Devuelve SOLO JSON valido. Para preguntar: { "phase":"ask", "question":"texto breve", "options":[{"label":"opcion","value":"valor","description":"por que","recommended":true}], "allow_custom":true }. Para finalizar: { "phase":"ready", "diagnosis":["causa mas probable","otra causa", "..."], "instruccion":"imperativa, precisa, que ataque la(s) causa(s) y cubra todas las tareas", "recomendacion":"1 frase breve o vacio", "scope":"region|full|rebuild", "locator":"id/.clase/seccion si scope=region; vacio en los demas" }. En mode="edit" puedes dejar diagnosis vacio.'
   ].join('\n');
 
   const PROGRAM_ASSET_SEARCH_PROMPT = [
@@ -4525,6 +4505,26 @@
     return entries.join('\n').slice(0, 4200) || 'Documento HTML sin ids o clases descriptivas.';
   }
 
+  // Contexto de codigo para el CEREBRO de arreglo: si la pagina cabe, va completa; si es grande,
+  // entrega los <style> y <script> COMPLETOS (donde casi siempre vive el bug) + el esqueleto del
+  // body (etiquetas/ids/clases, recortando el texto largo). Acota tokens sin perder lo que importa.
+  function buildDiagnosticCode(doc, maxChars) {
+    const html = String(doc || '');
+    maxChars = maxChars || 14000;
+    if (html.length <= maxChars) return html;
+    let css = ''; let m; const sr = /<style\b[^>]*>[\s\S]*?<\/style>/gi;
+    while ((m = sr.exec(html))) css += m[0] + '\n';
+    let js = ''; const cr = /<script\b[^>]*>[\s\S]*?<\/script>/gi;
+    while ((m = cr.exec(html))) js += m[0] + '\n';
+    const bodyMatch = html.match(/<body[\s\S]*?<\/body>/i);
+    let body = bodyMatch ? bodyMatch[0] : html;
+    body = body.replace(/<(style|script)\b[\s\S]*?<\/\1>/gi, '')
+               .replace(/>([^<]{60,})</g, (mm, t) => '>' + t.slice(0, 60) + '…<');
+    let out = '<!-- Pagina grande: CSS y JS COMPLETOS + esqueleto del body (texto largo recortado). -->\n' + css + js + body;
+    if (out.length > maxChars) out = out.slice(0, maxChars) + '\n<!-- …recortado… -->';
+    return out;
+  }
+
   // Un chat de Programar equivale a un unico proyecto. Todo mensaje posterior se procesa
   // obligatoriamente como edicion de la revision mas reciente.
   async function programFollowup(convo, text) {
@@ -4787,7 +4787,7 @@
   // de inicio (renderProgramStep / submitProgramChoice), pero enrutado al flujo de edicion.
   function startEditWizard(change, convo, currentDoc) {
     if (!change || !currentDoc || state.busy) return;
-    state.editFlow = { active: true, change: change, convo: convo, currentDoc: currentDoc, answers: [], lastStep: null };
+    state.editFlow = { active: true, change: change, convo: convo, currentDoc: currentDoc, answers: [], asked: [], lastStep: null };
     openProgramModal();
     editWizardNextStep();
   }
@@ -4796,37 +4796,59 @@
     const f = state.editFlow;
     if (!f || !f.active) return;
     const currentDoc = f.currentDoc;
+    const mode = classifyEditKind(f.change); // 'fix' = algo no funciona; 'edit' = cambio de intencion
     setProgramBusy();
     let step;
     try {
       await fetchReasonStatus();
-      // Gemini Flash: recibe SOLO un mapa compacto (no todo el HTML) para ubicar el cambio.
-      const orchModel = reasonModel('edit_orchestrator', 'google/gemini-2.5-flash');
+      // CEREBRO fuerte (Fase 2). En "fix" VE EL CODIGO REAL (recortado por tokens) para diagnosticar;
+      // en "edit" basta el outline. El plan vivo + memoria de intentos ya van en el system.
+      const brainModel = reasonModel('edit_brain', 'anthropic/claude-sonnet-4.6');
+      const payload = {
+        mode: mode,
+        change: f.change,
+        answers: f.answers,
+        asked: f.asked,
+        page_outline: buildProgramEditOutline(currentDoc),
+        max_questions: 2,
+        remaining_questions: Math.max(0, 2 - f.answers.length)
+      };
+      if (mode === 'fix') payload.code = buildDiagnosticCode(currentDoc, 14000);
       const raw = await reasonChat({
-        model: orchModel,
-        system: composeSystemWithMemory(EDIT_WIZARD_PROMPT, f.convo, f.change),
-        messages: [{ role: 'user', content: JSON.stringify({ change: f.change, answers: f.answers, page_outline: buildProgramEditOutline(currentDoc), max_questions: 2, remaining_questions: Math.max(0, 2 - f.answers.length) }, null, 2) }],
-        maxTokens: 700, temperature: 0.25, reasonStage: false
+        model: brainModel,
+        system: composeSystemWithMemory(EDIT_BRAIN_PROMPT, f.convo, f.change),
+        messages: [{ role: 'user', content: JSON.stringify(payload, null, 2) }],
+        maxTokens: 1400, temperature: 0.2, reasonStage: false
       }, null);
       step = parseReasonJson(raw);
     } catch (e) {
-      // Si el asistente falla, no bloqueamos al usuario: editamos directo con el pedido literal.
+      // Si el cerebro falla, no bloqueamos: editamos directo con el pedido literal.
       finishEditWizard(f.change, '');
       return;
     }
     if (!step || !step.phase) { finishEditWizard(f.change, ''); return; }
     const phase = String(step.phase).toLowerCase();
-    // "ready" (o ya alcanzado el tope de preguntas) -> instruccion exacta y a editar.
-    if (phase !== 'ask' || f.answers.length >= 2) {
-      const brief = String((step && step.instruccion) || '').trim() || composeEditBrief(f);
-      const rec = String((step && step.recomendacion) || '').trim();
-      const scope = String((step && step.scope) || '').trim().toLowerCase();
-      const locator = String((step && step.locator) || '').trim();
-      finishEditWizard(brief, rec, scope, locator);
+    // Preguntar SOLO si hace falta y NO repetir: si el cerebro repite una pregunta ya hecha,
+    // ya no insistimos: pasamos a editar con lo que hay.
+    if (phase === 'ask' && f.answers.length < 2) {
+      const qsig = normalizeWhitespace(String(step.question || '')).toLowerCase();
+      if (qsig && f.asked.indexOf(qsig) >= 0) { finishEditWizard(composeEditBrief(f), ''); return; }
+      if (qsig) f.asked.push(qsig);
+      f.lastStep = step;
+      renderProgramStep(step);
       return;
     }
-    f.lastStep = step;
-    renderProgramStep(step);
+    // "ready": instruccion + diagnostico -> a reparar.
+    const diagnosis = Array.isArray(step.diagnosis) ? step.diagnosis.map((d) => String(d || '').trim()).filter(Boolean) : [];
+    let brief = String((step && step.instruccion) || '').trim() || composeEditBrief(f);
+    if (diagnosis.length) {
+      brief += '\n\nCAUSAS PROBABLES (diagnóstico sobre el código real; atácalas en orden y NO repitas lo ya intentado):\n'
+        + diagnosis.slice(0, 5).map((d, i) => (i + 1) + ') ' + d).join('\n');
+    }
+    const rec = String((step && step.recomendacion) || '').trim();
+    const scope = String((step && step.scope) || '').trim().toLowerCase();
+    const locator = String((step && step.locator) || '').trim();
+    finishEditWizard(brief, rec, scope, locator);
   }
 
   // Si la IA no devolvio instruccion, armamos el brief uniendo el pedido y las respuestas.
