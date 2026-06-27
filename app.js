@@ -4278,11 +4278,11 @@
   async function programOrchestrate(strict) {
     const p = state.program;
     await fetchReasonStatus();
-    const codeModel = reasonModel('spec_codigo', 'deepseek/deepseek-v4-pro');
     const userMsg = JSON.stringify({ request: p.request, answers: p.answers, max_questions: 3, remaining_questions: Math.max(0, 3 - p.answers.length) }, null, 2)
       + (strict ? '\n\nIMPORTANTE: responde EXCLUSIVAMENTE con el objeto JSON pedido (empezando con { y terminando con }). Nada de texto, explicaciones ni bloques de código alrededor.' : '');
     const raw = await reasonChat({
-      model: reasonModel('program_coder', codeModel),
+      // Asistente de preguntas: modelo bueno en JSON estricto (separado del constructor).
+      model: reasonModel('program_wizard', 'z-ai/glm-5.2'),
       system: composeSystemWithMemory(PROGRAM_WIZARD_PROMPT, p.convo, p.request),
       messages: [{ role: 'user', content: userMsg }],
       maxTokens: 1800, temperature: 0.25, reasonStage: false
