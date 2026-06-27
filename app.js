@@ -386,12 +386,12 @@
           + attrs(m[3])
           + '<span class="hl-punct">' + m[4] + '&gt;</span>';
         i = stop;
-        // El contenido de <script>/<style> se muestra como texto plano del editor.
+        // El contenido de <script>/<style> se colorea como JS/CSS.
         const tname = m[2].toLowerCase();
         if (!m[1] && !m[4] && (tname === 'script' || tname === 'style')) {
           const close = src.toLowerCase().indexOf('</' + tname, i);
           const cstop = close === -1 ? n : close;
-          if (cstop > i) out += '<span class="hl-text">' + esc(src.slice(i, cstop)) + '</span>';
+          if (cstop > i) out += tname === 'style' ? highlightCss(src.slice(i, cstop)) : highlightJs(src.slice(i, cstop));
           i = cstop;
         }
         continue;
@@ -400,6 +400,67 @@
       i = stop;
     }
     return out;
+  }
+
+  const HL_ESC = (s) => String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+  const HL_SPAN = (cls, txt) => '<span class="' + cls + '">' + HL_ESC(txt) + '</span>';
+  const JS_KEYWORDS = new Set(['var', 'let', 'const', 'function', 'return', 'if', 'else', 'for', 'while', 'do', 'switch', 'case', 'break', 'continue', 'new', 'class', 'extends', 'super', 'this', 'typeof', 'instanceof', 'in', 'of', 'try', 'catch', 'finally', 'throw', 'await', 'async', 'yield', 'delete', 'void', 'null', 'true', 'false', 'undefined', 'import', 'export', 'from', 'as', 'default', 'static', 'get', 'set']);
+
+  // Resaltado JS estilo VS Code (comentarios, strings, números, keywords, funciones).
+  function highlightJs(src) {
+    src = String(src == null ? '' : src);
+    let out = '';
+    const re = /(\/\/[^\n]*|\/\*[\s\S]*?\*\/)|("(?:[^"\\]|\\.)*"|'(?:[^'\\]|\\.)*'|`(?:[^`\\]|\\.)*`)|(\b\d[\w.]*\b)|([A-Za-z_$][\w$]*)|(\s+)|([^\s])/g;
+    let m;
+    while ((m = re.exec(src))) {
+      if (m[1]) out += HL_SPAN('hl-comment', m[1]);
+      else if (m[2]) out += HL_SPAN('hl-str', m[2]);
+      else if (m[3]) out += HL_SPAN('hl-num', m[3]);
+      else if (m[4]) {
+        if (JS_KEYWORDS.has(m[4])) out += HL_SPAN('hl-kw', m[4]);
+        else if (src[re.lastIndex] === '(') out += HL_SPAN('hl-fn', m[4]);
+        else out += HL_SPAN('hl-attr', m[4]);
+      } else if (m[5]) out += HL_ESC(m[5]);
+      else out += HL_SPAN('hl-punct', m[6]);
+    }
+    return out;
+  }
+
+  // Resaltado CSS estilo VS Code (selectores, propiedades, valores, números/colores).
+  function highlightCss(src) {
+    src = String(src == null ? '' : src);
+    let out = '', depth = 0;
+    const re = /(\/\*[\s\S]*?\*\/)|("(?:[^"\\]|\\.)*"|'(?:[^'\\]|\\.)*')|(#[0-9a-fA-F]{3,8}\b|\b\d[\d.]*(?:px|em|rem|%|vh|vw|vmin|vmax|s|ms|deg|fr|pt|ex|ch)?\b)|(@[\w-]+)|(-?[A-Za-z_][\w-]*)|(\s+)|([{}();,:])|([^\s])/g;
+    let m;
+    while ((m = re.exec(src))) {
+      if (m[1]) out += HL_SPAN('hl-comment', m[1]);
+      else if (m[2]) out += HL_SPAN('hl-str', m[2]);
+      else if (m[3]) out += HL_SPAN('hl-num', m[3]);
+      else if (m[4]) out += HL_SPAN('hl-kw', m[4]);
+      else if (m[5]) {
+        if (depth > 0 && /^\s*:/.test(src.slice(re.lastIndex))) out += HL_SPAN('hl-prop', m[5]);
+        else if (depth > 0) out += HL_SPAN('hl-text', m[5]);
+        else out += HL_SPAN('hl-sel', m[5]);
+      } else if (m[6]) out += HL_ESC(m[6]);
+      else if (m[7]) {
+        if (m[7] === '{') depth++;
+        else if (m[7] === '}') depth = Math.max(0, depth - 1);
+        out += HL_SPAN('hl-punct', m[7]);
+      } else out += HL_SPAN('hl-punct', m[8]);
+    }
+    return out;
+  }
+
+  // Elige el resaltador según el lenguaje del bloque (o lo deduce).
+  function highlightCode(code, lang) {
+    code = String(code == null ? '' : code);
+    lang = String(lang || '').toLowerCase();
+    if (lang === 'html' || lang === 'xml' || lang === 'svg' || lang === 'vue') return highlightHtml(code);
+    if (lang === 'css' || lang === 'scss' || lang === 'less' || lang === 'sass') return highlightCss(code);
+    if (['js', 'javascript', 'jsx', 'ts', 'typescript', 'tsx', 'json', 'mjs'].indexOf(lang) >= 0) return highlightJs(code);
+    if (!lang && /^\s*<(?:!doctype|html|div|section|head|body|span|p\b|a\b|ul|ol|h[1-6]|main|nav|footer|header)/i.test(code)) return highlightHtml(code);
+    if (!lang && /[{};]\s*$|^\s*[.#@][\w-]+\s*\{/m.test(code) && /:\s*[^;]+;/.test(code)) return highlightCss(code);
+    return highlightJs(code); // genérico razonable (strings, números, comentarios, keywords)
   }
 
   // Bloque de Vista previa (iframe + barra de acciones) a partir de un documento HTML.
@@ -461,8 +522,8 @@
     let text = String(src || '');
     const blocks = [];
     // Bloques de codigo ```...```
-    text = text.replace(/```(\w+)?\n?([\s\S]*?)```/g, (_m, _lang, code) => {
-      blocks.push('<pre><code>' + escapeHtml(code.replace(/\n$/, '')) + '</code></pre>');
+    text = text.replace(/```(\w+)?\n?([\s\S]*?)```/g, (_m, lang, code) => {
+      blocks.push('<pre><code>' + highlightCode(code.replace(/\n$/, ''), lang) + '</code></pre>');
       return 'B' + (blocks.length - 1) + '';
     });
     text = escapeHtml(text);

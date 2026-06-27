@@ -935,6 +935,11 @@ body.light .bg-scan { display: none; }
 .hl-comment{color:#6a9955}
 .hl-punct{color:#808080}
 .hl-doctype{color:#569cd6}
+.hl-kw{color:#569cd6}
+.hl-num{color:#b5cea8}
+.hl-fn{color:#dcdcaa}
+.hl-prop{color:#9cdcfe}
+.hl-sel{color:#d7ba7d}
 .code-preview-frame{margin-top:8px;border:1px solid rgba(120,180,255,.28);border-radius:12px;overflow:hidden;background:#fff}
 .code-preview-frame[hidden]{display:none}
 .code-preview-frame.is-fullscreen-preview{position:fixed;inset:0;z-index:10000;margin:0;border:0;border-radius:0;display:grid;grid-template-rows:auto minmax(0,1fr);width:100vw;height:100dvh;max-width:none;background:#fff;overscroll-behavior:none}
