@@ -842,6 +842,8 @@ body.light .bubble pre { background: rgba(96,72,168,.08); }
 body.light .bubble pre code { color: #3a2f5c; }
 /* Tus burbujas (amarillo): borde ámbar cálido y texto oscuro para contraste. */
 body.light .msg.user .bubble { border-color: rgba(188,150,32,.5); color: #3a2e0a; }
+/* Burbujas de Mady: celeste pastel (se distingue del amarillo del usuario). */
+body.light .msg.ai .bubble { background: linear-gradient(180deg, #dcecfb, #cce3f8); border-color: rgba(70,140,210,.32); color: #16324f; }
 body.light .scrim { background: rgba(40,28,78,.30); }
 /* Acentos diseñados para fondo NEGRO (verde menta, cian, amarillo, azul claro):
    en claro se oscurecen para que el texto contraste sobre los contenedores lila. */
