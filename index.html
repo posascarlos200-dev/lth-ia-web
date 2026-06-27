@@ -214,21 +214,9 @@
     <!-- Composer -->
     <form id="composer" class="composer">
       <div class="composer-modes">
-        <div class="model-picker">
-          <button class="mode-chip model-picker-btn" id="modelPickerBtn" type="button" aria-haspopup="menu" aria-expanded="false" title="Elegir modelo">
-            <span class="mp-ico">◈</span><span id="modelPickerLabel">Auto</span><span class="mp-caret">▴</span>
-          </button>
-          <div class="model-menu" id="modelMenu" role="menu" hidden>
-            <button class="model-opt" data-model="free" type="button" role="menuitemradio" hidden><b>Mady Canont Free</b><span>Tu modelo del plan Free</span></button>
-            <button class="model-opt on" data-model="auto" type="button" role="menuitemradio"><b>Auto</b><span>Mady elige el mejor modelo</span></button>
-            <button class="model-opt" data-model="flashlite" type="button" role="menuitemradio"><b>Flash Lite</b><span>Rápido y económico</span></button>
-            <button class="model-opt" data-model="sonnet" type="button" role="menuitemradio"><b>Sonnet 4.6</b><span>Equilibrado · Pro</span></button>
-            <button class="model-opt" data-model="gpt55" type="button" role="menuitemradio"><b>GPT 5.5</b><span>Razonamiento fino · Pro</span></button>
-            <button class="model-opt" data-model="glm5" type="button" role="menuitemradio"><b>GLM 5</b><span>Fuerte y barato · Pro</span></button>
-            <button class="model-opt" data-model="opus" type="button" role="menuitemradio"><b>Opus 4.7</b><span>Lo más potente · Pro</span></button>
-            <button class="model-opt" data-model="fable" type="button" role="menuitemradio"><b>Fable 5</b><span>Proyectos grandes · Pro</span></button>
-            <button class="model-opt" data-model="image" type="button" role="menuitemradio"><b>Imagen</b><span>Generar imágenes · Pro</span></button>
-          </div>
+        <div class="model-badge" aria-label="Mady">
+          <span class="model-badge-mark" aria-hidden="true"></span>
+          <span id="modelPickerLabel">Mady</span>
         </div>
         <button id="reasonBtn" class="mode-chip mode-chip-reason" type="button" aria-pressed="false" title="Modo razonamiento (Pro): la IA principal clasifica y mejora tu pedido, el modelo experto responde y un juez lo verifica y pule"><span class="mode-dot mode-dot-reason" aria-hidden="true"></span><span>Razonar</span></button>
         <button id="programBtn" class="mode-chip mode-chip-program" type="button" aria-pressed="false" title="LTH-code (Pro): un asistente te guía paso a paso para definir tu página y la construye (estructura + CSS + pulido). Cobro por tokens."><span class="mode-dot mode-dot-code" aria-hidden="true"></span><span>LTH-code</span></button>

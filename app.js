@@ -1946,14 +1946,10 @@
     else if (mode === 'off') el.statusDot.classList.add('off');
   }
 
-  // Etiqueta unica del modelo activo (header + selector). En pago el default es "Auto";
-  // nunca mostramos la marca "Mady Canont {Plan}" del servidor para planes de pago.
+  // La seleccion manual de modelos queda oculta en esta etapa: la UI solo muestra
+  // la marca del asistente, aunque internamente siga usando el router en auto/free.
   function currentModelLabel() {
-    const plan = String((state.credits && state.credits.plan) || 'free').toLowerCase();
-    const free = plan === 'free';
-    const id = free ? 'free' : (state.manualModel === 'free' ? 'auto' : state.manualModel);
-    const m = MANUAL_MODELS[id] || (free ? MANUAL_MODELS.free : MANUAL_MODELS.auto);
-    return m.label || 'LTH IA';
+    return 'LTH IA';
   }
 
   function renderCredits() {
@@ -2922,23 +2918,10 @@
   function renderModelBar() {
     const plan = String((state.credits && state.credits.plan) || 'free').toLowerCase();
     const free = plan === 'free';
-    // Modo automatico segun plan:
-    //  - Free: se llama "Mady Canont Free" (su unico modelo permitido).
-    //  - Pago: se llama "Auto" (el router elige el mejor modelo, incl. busqueda web via Sonar).
-    MANUAL_MODELS.free.label = 'Mady Canont Free';
     if (free) state.manualModel = 'free';
     else if (state.manualModel === 'free') state.manualModel = 'auto';
-    const cur = MANUAL_MODELS[state.manualModel] || (free ? MANUAL_MODELS.free : MANUAL_MODELS.auto);
-    if (el.modelPickerLabel) el.modelPickerLabel.textContent = cur.label;
-    if (el.modelLabel) el.modelLabel.textContent = cur.label;
-    if (el.modelMenu) {
-      el.modelMenu.querySelectorAll('[data-model]').forEach((b) => {
-        const id = b.getAttribute('data-model');
-        // 'free' (Mady Canont Free) solo en plan free; 'auto' (Auto) solo en planes de pago.
-        b.hidden = free ? (id !== 'free') : (id === 'free');
-        b.classList.toggle('on', id === state.manualModel);
-      });
-    }
+    if (el.modelPickerLabel) el.modelPickerLabel.textContent = 'Mady';
+    if (el.modelLabel) el.modelLabel.textContent = 'LTH IA';
   }
   // Banner de upsell a Plan Pro (cuando un usuario free toca algo premium).
   function showProModal(context) {
@@ -5296,29 +5279,6 @@
       el.proBuyBtn.disabled = true;
       setTimeout(() => { el.proBuyBtn.textContent = 'Comprar plan Pro'; el.proBuyBtn.disabled = false; }, 2200);
     });
-    if (el.modelPickerBtn) {
-      el.modelPickerBtn.addEventListener('click', (e) => {
-        e.stopPropagation();
-        if (el.modelMenu.hidden) openModelMenu(); else closeModelMenu();
-      });
-    }
-    if (el.modelMenu) {
-      el.modelMenu.addEventListener('click', (e) => {
-        const btn = e.target.closest('[data-model]');
-        if (!btn) return;
-        const id = btn.getAttribute('data-model');
-        const m = MANUAL_MODELS[id];
-        if (!m) return;
-        if (m.premium && !canUsePremium()) { closeModelMenu(); showProModal('model'); return; }
-        state.manualModel = id;
-        renderModelBar();
-        closeModelMenu();
-      });
-      document.addEventListener('click', (e) => {
-        if (el.modelMenu.hidden) return;
-        if (!el.modelMenu.contains(e.target) && e.target !== el.modelPickerBtn && !el.modelPickerBtn.contains(e.target)) closeModelMenu();
-      });
-    }
     el.input.addEventListener('input', autoGrow);
     el.input.addEventListener('keydown', (e) => {
       if (e.key === 'Enter' && !e.shiftKey && !e.isComposing) { e.preventDefault(); el.composer.requestSubmit(); }
