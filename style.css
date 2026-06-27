@@ -391,6 +391,56 @@ input, textarea { font-family: inherit; }
 .pro-buy:active { transform: scale(.98); }
 .pro-soon { font-size: 11.5px; color: var(--text-dim, #8aa0bd); margin: 9px 0 0; }
 
+/* ── Aviso de descarga de LTH OS OUP (solo PC) ── */
+.os-promo-card {
+  position: relative; width: min(92vw, 440px); margin: auto;
+  padding: 26px 24px 20px; border-radius: 22px; text-align: center;
+  border: 1px solid rgba(77, 163, 255, .42);
+  background:
+    radial-gradient(120% 90% at 50% -12%, rgba(77, 163, 255, .26), transparent 58%),
+    linear-gradient(180deg, #0a1626 0%, #07111d 100%);
+  box-shadow: 0 28px 80px rgba(0, 0, 0, .62), 0 0 60px rgba(46, 125, 255, .12);
+  animation: rise .3s cubic-bezier(.2, .9, .25, 1);
+}
+.os-promo-close { position: absolute; top: 12px; right: 12px; }
+.os-promo-mark {
+  width: 66px; height: 66px; margin: 2px auto 12px; display: grid; place-items: center;
+  border-radius: 19px; border: 1px solid var(--line-strong);
+  background: radial-gradient(circle at 50% 35%, rgba(77, 163, 255, .2), transparent 70%);
+  box-shadow: 0 0 36px rgba(74, 163, 255, .22);
+}
+.os-promo-badge {
+  display: inline-block; font-size: 10.5px; font-weight: 800; letter-spacing: 2px;
+  color: var(--cyan); background: rgba(74, 163, 255, .12);
+  border: 1px solid var(--line-strong); padding: 4px 12px; border-radius: 999px; margin-bottom: 10px;
+}
+.os-promo-badge span { color: var(--violet); margin-left: 2px; }
+.os-promo-title {
+  font-family: var(--font-display); font-weight: 700; font-size: 19px; letter-spacing: .5px;
+  margin: 2px 0 8px; color: var(--text-bright);
+}
+.os-promo-sub { font-size: 13px; line-height: 1.6; color: var(--text-dim); margin: 0 0 16px; }
+.os-promo-sub b { color: var(--cyan-soft); }
+.os-promo-feats { list-style: none; padding: 0; margin: 0 0 18px; text-align: left; display: grid; gap: 9px; }
+.os-promo-feats li { display: flex; gap: 10px; align-items: flex-start; font-size: 12.5px; color: var(--text); line-height: 1.45; }
+.os-promo-feats li span { flex: 0 0 auto; width: 20px; text-align: center; }
+.os-promo-feats li b { color: var(--text-bright); }
+.os-promo-dl {
+  display: block; width: 100%; padding: 14px; border: 0; border-radius: 14px;
+  font-size: 15px; font-weight: 800; letter-spacing: .3px; color: #001226;
+  background: var(--grad); box-shadow: 0 12px 30px rgba(74, 163, 255, .4);
+  text-decoration: none; text-align: center; transition: transform .12s, filter .2s;
+}
+.os-promo-dl:hover { filter: brightness(1.06); }
+.os-promo-dl:active { transform: scale(.98); }
+.os-promo-skip {
+  width: 100%; margin: 10px 0 0; padding: 11px; border: 1px solid var(--line);
+  background: transparent; color: var(--text-dim); border-radius: 12px;
+  font-size: 13px; font-weight: 600; transition: .15s;
+}
+.os-promo-skip:hover { color: var(--text-bright); border-color: var(--line-strong); }
+.os-promo-note { font-size: 11px; color: var(--text-dim); margin: 12px 0 0; line-height: 1.5; }
+
 .composer-modes { display: grid; grid-template-columns: auto repeat(3, minmax(0, 1fr)); gap: 7px; margin: 0 2px 7px; align-items: stretch; }
 
 .model-badge {

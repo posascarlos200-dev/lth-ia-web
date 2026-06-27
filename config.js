@@ -10,5 +10,8 @@ window.LTH_IA_CONFIG = {
   // Obligatoria antes de activar el registro por invitacion en produccion.
   TURNSTILE_SITE_KEY: '0x4AAAAAADnwKxSzdTYVhMv_',
   APP_NAME: 'LTH IA',
-  ASSISTANT_NAME: 'Mady'
+  ASSISTANT_NAME: 'Mady',
+  // Descarga de la app de escritorio LTH OS OUP (beta). /releases/latest siempre
+  // redirige a la version mas nueva publicada en el repo, sin tener que tocar esto.
+  LTH_OS_DOWNLOAD_URL: 'https://github.com/posascarlos200-dev/LTH-OS.Oup.1/releases/latest'
 };

@@ -5211,6 +5211,41 @@
     setSidebarCollapsed(collapsed, false);
   }
 
+  /* ── Aviso "estás en PC: descarga LTH OS OUP" ── */
+  // Detecta una computadora real (no movil/tablet): puntero fino, sin UA movil y
+  // pantalla ancha. Asi no molestamos a usuarios de telefono/tablet.
+  function isPcDevice() {
+    const ua = navigator.userAgent || '';
+    if (/Android|iPhone|iPod|iPad|Windows Phone|IEMobile|BlackBerry|Mobile|Tablet|Silk|Kindle|PlayBook/i.test(ua)) return false;
+    const mm = window.matchMedia;
+    const finePointer = mm ? mm('(pointer: fine)').matches : true;
+    const wide = mm ? mm('(min-width: 900px)').matches : true;
+    const touchOnly = (navigator.maxTouchPoints || 0) > 1 && !(mm && mm('(pointer: fine)').matches);
+    return finePointer && wide && !touchOnly;
+  }
+  function isWindowsDevice() {
+    const ua = navigator.userAgent || '';
+    const plat = navigator.platform || '';
+    return /Windows|Win64|Win32|WOW64/i.test(ua) || /Win/i.test(plat);
+  }
+  function showOsPromo() {
+    if (!el.osPromoModal || !isPcDevice()) return;
+    const url = String(CFG.LTH_OS_DOWNLOAD_URL || '');
+    if (!url) return; // sin URL configurada, no mostramos nada
+    if (el.osPromoDownload) {
+      el.osPromoDownload.href = url;
+      const win = isWindowsDevice();
+      el.osPromoDownload.textContent = win ? 'Descargar para Windows' : 'Ver la descarga (Windows)';
+      if (el.osPromoNote) {
+        el.osPromoNote.textContent = win
+          ? 'Versión beta · siempre la última desde GitHub'
+          : 'Versión beta · por ahora solo Windows · siempre la última desde GitHub';
+      }
+    }
+    el.osPromoModal.hidden = false;
+  }
+  function closeOsPromo() { if (el.osPromoModal) el.osPromoModal.hidden = true; }
+
   /* ─────────────────── Configuración ─────────────────── */
   function openSettings() {
     el.settingsModal.hidden = false;
@@ -5318,6 +5353,11 @@
     });
     if (el.proClose) el.proClose.addEventListener('click', closeProModal);
     if (el.proModal) el.proModal.addEventListener('click', (e) => { if (e.target === el.proModal) closeProModal(); });
+    if (el.osPromoClose) el.osPromoClose.addEventListener('click', closeOsPromo);
+    if (el.osPromoSkip) el.osPromoSkip.addEventListener('click', closeOsPromo);
+    if (el.osPromoModal) el.osPromoModal.addEventListener('click', (e) => { if (e.target === el.osPromoModal) closeOsPromo(); });
+    // Al pulsar Descargar (es un <a> real) cerramos el aviso; la descarga abre en otra pestaña.
+    if (el.osPromoDownload) el.osPromoDownload.addEventListener('click', () => setTimeout(closeOsPromo, 0));
     if (el.proBuyBtn) el.proBuyBtn.addEventListener('click', () => {
       // Compra aún bloqueada: por ahora solo marketing.
       el.proBuyBtn.textContent = 'Disponible muy pronto ✨';
@@ -5636,6 +5676,9 @@
     renderConvoList(); renderMessages(); syncComposerMode();
     el.input.focus();
 
+    // En PC, recomienda LTH OS OUP en cada entrada (el usuario puede omitirlo).
+    setTimeout(showOsPromo, 600);
+
     await fetchStatus();
     await syncPull();
     cloudQuotaCheck();
@@ -5751,6 +5794,8 @@
     el.programBtn = $('#programBtn'); el.programModal = $('#programModal'); el.programClose = $('#programClose'); el.programBody = $('#programBody');
     el.modelPickerBtn = $('#modelPickerBtn'); el.modelPickerLabel = $('#modelPickerLabel'); el.modelMenu = $('#modelMenu'); el.composerHint = $('#composerHint');
     el.proModal = $('#proModal'); el.proClose = $('#proClose'); el.proBuyBtn = $('#proBuyBtn'); el.proSub = $('#proSub');
+    el.osPromoModal = $('#osPromoModal'); el.osPromoClose = $('#osPromoClose'); el.osPromoSkip = $('#osPromoSkip');
+    el.osPromoDownload = $('#osPromoDownload'); el.osPromoNote = $('#osPromoNote'); el.osPromoTitle = null;
     el.themeSeg = $('#themeSeg');
     el.icSend = el.sendBtn.querySelector('.ic-send'); el.icStop = el.sendBtn.querySelector('.ic-stop');
   }
