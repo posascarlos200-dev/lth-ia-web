@@ -575,7 +575,7 @@ a.vc-src:active, a.vc-src:hover { border-color: var(--cyan); color: var(--text-b
     width: min(100vw, 1720px);
     max-width: none;
     margin: 0 auto;
-    grid-template-columns: 304px minmax(0, 1fr);
+    grid-template-columns: 272px minmax(0, 1fr);
     grid-template-areas:
       "side top"
       "side usage"
@@ -590,7 +590,7 @@ a.vc-src:active, a.vc-src:hover { border-color: var(--cyan); color: var(--text-b
     position: static; display: flex; width: auto; inset: auto;
     grid-row: 1 / -1; animation: none; box-shadow: none;
     border-right: 1px solid var(--line);
-    padding: calc(20px + var(--safe-top)) 18px calc(18px + var(--safe-bot));
+    padding: calc(18px + var(--safe-top)) 14px calc(14px + var(--safe-bot));
     background:
       linear-gradient(180deg, rgba(3,10,18,.98), rgba(3,10,18,.9)),
       radial-gradient(circle at top, rgba(77,163,255,.07), transparent 46%);
@@ -599,94 +599,108 @@ a.vc-src:active, a.vc-src:hover { border-color: var(--cyan); color: var(--text-b
   #scrim { display: none !important; }
   .dh-close { display: none; }
 
-  .drawer-head { padding: 2px 4px 16px; }
-  .drawer-head strong { font-size: 18px; letter-spacing: 1.2px; }
-  .mini-btn { padding: 8px 12px; font-size: 12px; }
-  .convo-list { gap: 10px; padding: 14px 2px; }
-  .convo-item { padding: 13px 14px; border-radius: 14px; }
-  .convo-item .ci-title { font-size: 14px; }
+  .drawer-head { padding: 2px 4px 14px; }
+  .drawer-head strong { font-size: 15px; letter-spacing: 1px; }
+  .mini-btn { padding: 7px 10px; font-size: 11px; }
+  .convo-list { gap: 8px; padding: 12px 2px; }
+  .convo-item { padding: 11px 12px; border-radius: 12px; }
+  .convo-item .ci-title { font-size: 13px; }
   .convo-item .ci-sub { font-size: 11px; }
-  .drawer-foot { margin-top: auto; padding-top: 16px; }
-  .user-meta strong { font-size: 13px; }
-  .user-meta span { max-width: 160px; }
+  .drawer-foot { margin-top: auto; padding-top: 14px; }
+  .user-meta strong { font-size: 12px; }
+  .user-meta span { max-width: 140px; }
 
   .topbar {
-    padding: 18px 20px 16px;
+    padding: 14px 16px 12px;
     background: linear-gradient(180deg, rgba(2,8,12,.98), rgba(2,8,12,.78));
   }
-  .tt-text strong { font-size: 18px; }
+  .tt-text strong { font-size: 16px; }
   .tt-text span { font-size: 11px; }
 
   .usage-strip {
-    padding: 12px 20px 14px;
+    padding: 10px 16px 12px;
     background: linear-gradient(180deg, rgba(2,10,14,.82), rgba(2,8,12,.45));
   }
   .us-main { max-width: none; }
 
   .messages {
-    padding: 22px 24px 18px;
+    padding: 18px 18px 14px;
     scrollbar-gutter: stable;
   }
   .messages > * {
-    width: min(100%, 1040px);
+    width: min(100%, 900px);
     max-width: none;
     margin-inline: 0 auto;
   }
-  .bubble { max-width: min(92%, 920px); font-size: 15px; line-height: 1.68; }
+  .bubble { max-width: min(88%, 760px); font-size: 14.5px; line-height: 1.62; }
   .welcome {
-    width: min(100%, 980px);
+    width: min(100%, 760px);
     max-width: none;
-    padding: 58px 0 28px;
+    padding: 30px 0 18px;
     text-align: left;
   }
-  .welcome-mark { margin: 0 0 18px; }
-  .welcome h2 { font-size: 34px; margin-bottom: 10px; }
-  .welcome p { max-width: 620px; font-size: 14px; margin-bottom: 24px; }
-  .suggest { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
-  .suggest button { min-height: 58px; font-size: 13.5px; }
+  .welcome-mark { width: 78px; height: 78px; margin: 0 0 14px; }
+  .welcome h2 { font-size: 26px; margin-bottom: 8px; }
+  .welcome p { max-width: 520px; font-size: 13px; margin-bottom: 18px; }
+  .suggest { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
+  .suggest button { min-height: 52px; font-size: 12.5px; padding: 11px 12px; }
 
   .composer {
     position: sticky;
     bottom: 0;
     z-index: 7;
-    padding: 14px 20px calc(16px + var(--safe-bot));
+    padding: 10px 16px calc(12px + var(--safe-bot));
     background:
       linear-gradient(180deg, rgba(2,8,12,0), rgba(2,8,12,.88) 20%, rgba(2,8,12,.98) 100%);
     backdrop-filter: blur(14px);
   }
   .composer-modes {
-    grid-template-columns: repeat(4, minmax(0, 1fr));
+    grid-template-columns: auto repeat(3, minmax(148px, 1fr));
     max-width: none;
-    margin: 0 0 10px;
+    margin: 0 0 8px;
   }
   .model-badge { justify-content: center; }
   .composer-inner, .composer-hint { max-width: none; margin-inline: 0; }
   .composer-inner {
-    border-radius: 20px;
-    padding: 9px 9px 9px 16px;
+    border-radius: 18px;
+    padding: 8px 8px 8px 14px;
     box-shadow: 0 -10px 28px rgba(0,0,0,.18), inset 0 0 0 1px rgba(255,255,255,.02);
   }
 }
 
 @media (min-width: 1200px) {
+  .app-screen { grid-template-columns: 280px minmax(0, 1fr); }
+  .messages > * { width: min(100%, 980px); }
+}
+
+@media (min-width: 1500px) {
   .app-screen {
-    grid-template-columns: 304px minmax(0, 1fr) 268px;
+    grid-template-columns: 280px minmax(0, 1fr) 232px;
     grid-template-areas:
       "side top util"
       "side usage util"
       "side msg util"
       "side composer util";
   }
-  .desktop-rail { display: flex; }
-  .messages > * { width: min(100%, 980px); }
-}
-
-@media (min-width: 1500px) {
-  .app-screen { grid-template-columns: 320px minmax(0, 1fr) 292px; }
-  .messages { padding-inline: 28px; }
-  .messages > * { width: min(100%, 1100px); }
-  .bubble { max-width: min(88%, 980px); }
-  .desktop-rail { padding-inline: 20px; }
+  .desktop-rail {
+    display: flex;
+    gap: 10px;
+    padding: 14px 12px 12px;
+  }
+  .desk-panel { padding: 12px; border-radius: 14px; }
+  .desk-panel-head { margin-bottom: 9px; }
+  .desk-assistant-copy strong { font-size: 16px; }
+  .desk-assistant-copy span { font-size: 11px; }
+  .desk-avatar-wrap { width: 48px; height: 48px; border-radius: 14px; }
+  .desk-usage-value { font-size: 18px; margin-bottom: 4px; }
+  .desk-usage-copy { font-size: 11px; margin-bottom: 9px; }
+  .desk-mode-badge { min-height: 30px; padding: 6px 10px; font-size: 11px; }
+  .desk-mode-text { margin-top: 8px; font-size: 11px; line-height: 1.55; }
+  .desk-suggest { gap: 7px; }
+  .desk-suggest button { padding: 9px 10px; font-size: 11.5px; border-radius: 11px; }
+  .messages { padding-inline: 20px; }
+  .messages > * { width: min(100%, 900px); }
+  .bubble { max-width: min(84%, 760px); }
 }
 
 /* ════════════════════════════════════════════════
