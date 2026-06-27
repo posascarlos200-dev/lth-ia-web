@@ -1033,6 +1033,8 @@
     // Modo del chat: una vez que se usa Programar/Razonar/Crear, el chat queda dedicado a
     // ese modo (no se mezcla). 'auto' = chat normal.
     convo.mode = ['program', 'reason', 'create'].includes(convo.mode) ? convo.mode : 'auto';
+    // Plan vivo de LTH-code: solo si ya existe (se crea perezosamente al construir/editar).
+    if (convo.programPlan) convo.programPlan = normalizeProgramPlan(convo.programPlan);
     // localOnly: chat que el usuario eligio conservar SOLO en este dispositivo (no sube a la nube
     // ni cuenta para la cuota del plan). Se preserva al serializar/persistir.
     convo.localOnly = !!convo.localOnly;
@@ -1043,6 +1045,89 @@
     if (!convo) return normalizeBrain();
     convo.brain = normalizeBrain(convo.brain, convo.memory && convo.memory.summary);
     return convo.brain;
+  }
+
+  /* ───────── LTH-code · "plan vivo" (la mente de la constructora) ─────────
+     Memoria estructurada por chat: la intención canónica de la página, que
+     EVOLUCIONA con cada edición (p. ej. azul -> rosa: la decisión más reciente
+     manda), más la memoria de intentos de arreglo (qué se tocó y cómo quedó)
+     para no repetir ni re-pensar desde cero, y los errores reales del preview. */
+  const PLAN_DECISIONS_MAX = 24;
+  const PLAN_ATTEMPTS_MAX = 16;
+  const PLAN_ISSUES_MAX = 12;
+
+  function normalizeProgramPlan(plan) {
+    const p = (plan && typeof plan === 'object') ? plan : {};
+    const decisions = (Array.isArray(p.decisions) ? p.decisions : [])
+      .map((d) => (d && typeof d === 'object' && d.text) ? { t: Number(d.t) || 0, kind: String(d.kind || 'edit'), text: clipText(d.text, 300) } : null)
+      .filter(Boolean).slice(-PLAN_DECISIONS_MAX);
+    const attempts = (Array.isArray(p.attempts) ? p.attempts : [])
+      .map((a) => (a && typeof a === 'object' && a.problem) ? { t: Number(a.t) || 0, problem: clipText(a.problem, 200), tried: clipText(a.tried, 240), result: clipText(a.result, 120) } : null)
+      .filter(Boolean).slice(-PLAN_ATTEMPTS_MAX);
+    const knownIssues = (Array.isArray(p.knownIssues) ? p.knownIssues : [])
+      .map((s) => clipText(s, 200)).filter(Boolean).slice(-PLAN_ISSUES_MAX);
+    return {
+      goal: clipText(p.goal, 300),
+      decisions: decisions,
+      attempts: attempts,
+      knownIssues: knownIssues,
+      created_at: Number(p.created_at) || Date.now(),
+      updated_at: Number(p.updated_at) || Date.now()
+    };
+  }
+
+  function ensureProgramPlan(convo) {
+    if (!convo) return normalizeProgramPlan();
+    convo.programPlan = normalizeProgramPlan(convo.programPlan);
+    return convo.programPlan;
+  }
+
+  // 'fix' = el usuario reporta que algo no funciona/no se ve; 'edit' = cambio de intención.
+  function classifyEditKind(text) {
+    const s = String(text || '').toLowerCase();
+    return /\b(no (se )?(ve|aparece|carga|funciona|sale|muestra)|no sirve|roto|rota|error|falla|fallo|bug|arregl|corrig|repara|se rompi|no anda|no responde|no hace|en blanco|vac[ií]o|no jala|no carga|sigue (igual|mal))\b/.test(s) ? 'fix' : 'edit';
+  }
+
+  function recordPlanDecision(convo, kind, text) {
+    const t = clipText(text, 300);
+    if (!convo || !t) return;
+    const plan = ensureProgramPlan(convo);
+    if (!plan.goal && kind === 'build') plan.goal = t;
+    plan.decisions.push({ t: Date.now(), kind: String(kind || 'edit'), text: t });
+    if (plan.decisions.length > PLAN_DECISIONS_MAX) plan.decisions = plan.decisions.slice(-PLAN_DECISIONS_MAX);
+    plan.updated_at = Date.now();
+    try { saveConvos(); } catch (_) {}
+  }
+
+  function recordPlanAttempt(convo, attempt) {
+    if (!convo || !attempt || !attempt.problem) return;
+    const plan = ensureProgramPlan(convo);
+    plan.attempts.push({ t: Date.now(), problem: clipText(attempt.problem, 200), tried: clipText(attempt.tried, 240), result: clipText(attempt.result, 120) });
+    if (plan.attempts.length > PLAN_ATTEMPTS_MAX) plan.attempts = plan.attempts.slice(-PLAN_ATTEMPTS_MAX);
+    plan.updated_at = Date.now();
+    try { saveConvos(); } catch (_) {}
+  }
+
+  // Bloque compacto que se inyecta al system de los agentes de LTH-code: la intención
+  // canónica ACTUAL (la decisión más reciente manda) + intentos previos (memoria).
+  function buildProgramPlanBlock(convo) {
+    const plan = convo && convo.programPlan;
+    if (!plan || (!plan.goal && !(plan.decisions || []).length)) return '';
+    const lines = ['PLAN VIVO DE LA PÁGINA (memoria de LTH-code). Es la verdad de lo que el usuario quiere AHORA; respétalo y consérvalo.'];
+    if (plan.goal) lines.push('Objetivo base: ' + plan.goal);
+    if (plan.decisions.length) {
+      lines.push('Decisiones en orden (la MÁS RECIENTE manda si contradice a una anterior sobre el mismo aspecto):');
+      plan.decisions.slice(-10).forEach((d, i) => lines.push((i + 1) + '. [' + (d.kind === 'fix' ? 'arreglo' : d.kind === 'build' ? 'inicial' : 'cambio') + '] ' + d.text));
+    }
+    if (plan.attempts.length) {
+      lines.push('Intentos de arreglo ya hechos (NO los repitas; si el fallo sigue, ataca una causa DISTINTA):');
+      plan.attempts.slice(-6).forEach((a) => lines.push('- Problema: ' + a.problem + (a.tried ? ' | Se tocó: ' + a.tried : '') + (a.result ? ' | Resultado: ' + a.result : '')));
+    }
+    if (plan.knownIssues.length) {
+      lines.push('Errores reales detectados en la vista previa (atácalos):');
+      plan.knownIssues.slice(-6).forEach((s) => lines.push('- ' + s));
+    }
+    return lines.join('\n');
   }
 
   function upsertLabeledEntry(list, label, value, maxItems, itemMax) {
@@ -1539,6 +1624,11 @@
     const deviceBlock = buildDeviceMemoryRecallBlock(convo, query);
     if (brainBlock) blocks.push(brainBlock);
     if (deviceBlock) blocks.push(deviceBlock);
+    // Plan vivo: la mente de la constructora (solo en chats de LTH-code).
+    if (convo && convo.mode === 'program') {
+      const planBlock = buildProgramPlanBlock(convo);
+      if (planBlock) blocks.push(planBlock);
+    }
     return blocks.length ? (baseSystem + '\n\n' + blocks.join('\n\n')) : baseSystem;
   }
 
@@ -4058,6 +4148,8 @@
   // Construccion + entrega compartida por ambos caminos (directo y tras el asistente).
   async function directProgramBuild(convo, request, improved, history, confirmedImages, noImages) {
     if (!convo || state.busy) return;
+    // Mente: registra la intención de construcción en el plan vivo.
+    recordPlanDecision(convo, 'build', improved && improved !== request ? (request + ' — ' + improved) : request);
     const built = bubbleEl('ai', reasonStageHtml('codigo'));
     const bub = built.bub;
     el.messages.appendChild(built.wrap); scrollDown();
@@ -4592,6 +4684,14 @@
 
   // Entrega un resultado de Programar pasando antes por la autoverificacion.
   async function finishProgramDoc(convo, bub, doc, note, request, label, opts) {
+    // Mente: si fue un arreglo, guarda en memoria qué se intentó (para no repetir luego).
+    const lbl = String(label || '');
+    if (/Edici[oó]n/i.test(lbl)) {
+      const ch = String(request || '').replace(/^Edici[oó]n:\s*/i, '').trim();
+      if (ch && classifyEditKind(ch) === 'fix') {
+        recordPlanAttempt(convo, { problem: ch, tried: 'edición ' + (/incremental/i.test(lbl) ? 'quirúrgica' : 'por reconstrucción'), result: 'cambio aplicado (pendiente de confirmar)' });
+      }
+    }
     let safeDoc = hardenProgramImages(String(doc || ''));
     const imgSignal = state.abort && state.abort.signal;
     // El procesamiento de imagenes (buscar la foto correcta + validar que carguen) hace llamadas
@@ -4823,6 +4923,9 @@
   async function executeProgramEdit(change, currentDoc, convo, editBrief, editRecommendation, scopeOpts) {
     if (!currentDoc || state.busy) return;
     convo = convo || activeConvo() || ensureActiveConvo(change);
+    // Mente: cada edición evoluciona el plan vivo (cambio de intención o arreglo).
+    const editKind = classifyEditKind(change);
+    recordPlanDecision(convo, editKind, change);
     const built = bubbleEl('ai', '<span class="gen-img-loading">Aplicando tu cambio<span class="dots"><i>.</i><i>.</i><i>.</i></span></span>');
     const bub = built.bub;
     el.messages.appendChild(built.wrap); scrollDown();
