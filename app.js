@@ -5800,6 +5800,16 @@
     }
 
     if ('serviceWorker' in navigator) {
+      // Auto-recarga cuando un SW nuevo toma el control (nueva version desplegada),
+      // para que el usuario no quede atascado en codigo viejo cacheado. Solo recarga
+      // si YA habia un SW controlando: en la 1a visita no hay recarga extra.
+      let swReloading = false;
+      const hadController = !!navigator.serviceWorker.controller;
+      navigator.serviceWorker.addEventListener('controllerchange', () => {
+        if (!hadController || swReloading) return;
+        swReloading = true;
+        window.location.reload();
+      });
       navigator.serviceWorker.register('./sw.js').catch(() => {});
     }
   }
