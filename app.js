@@ -4942,6 +4942,26 @@
   // parche quirurgico no logra cambio). La IA regenera el documento HTML COMPLETO partiendo de la
   // pagina actual, con el MISMO motor de streaming + auto-continuacion del constructor (hasta
   // </html>). Conserva lo que no cambia. Devuelve el doc nuevo o '' si no logro un documento valido.
+  // Un corte de red al leer el stream ("error reading a body from connection"), una sobrecarga
+  // del proveedor (429/5xx) o un timeout son TRANSITORIOS: conviene reintentar, no fallar.
+  function isTransientError(msg) {
+    return /reading a body|connection|network|fetch failed|terminated|ECONN|socket|stream|timeout|temporar|overload|rate.?limit|\b(429|500|502|503|504)\b/i.test(String(msg || ''));
+  }
+  async function retryTransient(fn, tries, signal) {
+    tries = tries || 2;
+    let lastErr;
+    for (let i = 0; i < tries; i += 1) {
+      if (signal && signal.aborted) break;
+      try { return await fn(); }
+      catch (e) {
+        lastErr = e;
+        if (i < tries - 1 && !(signal && signal.aborted) && isTransientError(e && e.message)) { await sleep(800 * (i + 1)); continue; }
+        throw e;
+      }
+    }
+    throw lastErr;
+  }
+
   async function rebuildProgramEdit(change, currentDoc, convo, brief, bub, signal) {
     const codeModel = reasonModel('spec_codigo', 'deepseek/deepseek-v4-pro');
     const programModel = reasonModel('program_coder', codeModel);
@@ -4949,7 +4969,7 @@
     const userMsg = 'CAMBIO PEDIDO (del usuario): ' + change
       + (instruction && instruction !== change ? '\n\nINSTRUCCION PRECISA (del orquestador, prioriza esto): ' + instruction : '')
       + '\n\nPAGINA ACTUAL COMPLETA (parte de aqui; aplica el cambio y conserva fielmente todo lo demas):\n' + currentDoc;
-    const raw = await streamProgramAgent({
+    const raw = await retryTransient(() => streamProgramAgent({
       model: programModel,
       system: composeSystemWithMemory(PROGRAM_EDIT_REBUILD_PROMPT, convo, instruction || change),
       messages: [{ role: 'user', content: userMsg }],
@@ -4958,7 +4978,7 @@
       temperature: 0.2,
       reasonStage: false,
       stageLabel: 'LTH-code · reestructurando la página'
-    }, 'codigo', bub, signal, (acc) => /<\/html\s*>/i.test(extractHtmlDoc(acc)));
+    }, 'codigo', bub, signal, (acc) => /<\/html\s*>/i.test(extractHtmlDoc(acc))), 2, signal);
     const doc = extractHtmlDoc(raw);
     if (!doc || !/<\/html\s*>/i.test(doc)) return '';
     return assembleProgramDoc(doc, '', '');
@@ -4989,13 +5009,13 @@
       const userMsg = 'CAMBIO PEDIDO (del usuario): ' + change
         + '\n\nINSTRUCCION PRECISA (del orquestador, prioriza esto): ' + brief
         + '\n\n' + intro + '\n' + contextHtml;
-      const raw = await streamEditPatch({
+      const raw = await retryTransient(() => streamEditPatch({
         model: programModel,
         system: composeSystemWithMemory(PROGRAM_PATCH_PROMPT, convo, brief),
         messages: [{ role: 'user', content: userMsg }],
         maxTokens: 16000,
         temperature: 0.05
-      }, bub, signal);
+      }, bub, signal), 2, signal);
       const result = applyProgramPatch(currentDoc, raw);
       // No descartamos un cambio bueno por las fotos: si faltan, las inyectamos por codigo.
       if (result.changed) result.doc = ensureProgramVisualAssets(result.doc, visualAssets);
