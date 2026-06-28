@@ -2049,7 +2049,7 @@
       const res = await fetch(REST_URL + '?select=id,title,messages,brain,source,updated_at&order=updated_at.desc&limit=80', {
         headers: { apikey: SB_KEY, Authorization: 'Bearer ' + token }
       });
-      if (!res.ok) return;
+      if (!res.ok) { console.warn('[sync] pull falló: HTTP ' + res.status, (await res.text().catch(() => '')).slice(0, 200)); return; }
       const rows = await res.json().catch(() => []);
       if (!Array.isArray(rows) || !rows.length) return;
       let changed = false;
@@ -2099,7 +2099,7 @@
         state.convos.sort((a, b) => (b.updated || 0) - (a.updated || 0));
         saveConvos(); renderConvoList(); if (activeConvo()) renderMessages();
       }
-    } catch (_) {}
+    } catch (e) { console.warn('[sync] pull error:', e && e.message); }
   }
 
   async function syncPushOne(convo) {
@@ -2124,12 +2124,13 @@
       updated_at: new Date().toISOString()
     };
     try {
-      await fetch(REST_URL + '?on_conflict=user_id,id', {
+      const res = await fetch(REST_URL + '?on_conflict=user_id,id', {
         method: 'POST',
         headers: { apikey: SB_KEY, Authorization: 'Bearer ' + token, 'Content-Type': 'application/json', Prefer: 'resolution=merge-duplicates,return=minimal' },
         body: JSON.stringify([row])
       });
-    } catch (_) {}
+      if (!res.ok) console.warn('[sync] push falló: HTTP ' + res.status, (await res.text().catch(() => '')).slice(0, 200));
+    } catch (e) { console.warn('[sync] push error:', e && e.message); }
   }
 
   /* ───────────────────────── Render ───────────────────────── */
