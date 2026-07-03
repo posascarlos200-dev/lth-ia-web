@@ -145,6 +145,9 @@
         </div>
         <span id="engineBadge" class="engine-badge" hidden></span>
       </div>
+      <button id="rewardsTop" class="icon-btn" type="button" aria-label="Recompensas" title="Recompensas">
+        <svg viewBox="0 0 24 24"><path d="M20 12v9H4v-9M2 7h20v5H2zM12 22V7M12 7c-1.5 0-4-.5-4-2.5S10.5 2 12 7zM12 7c1.5 0 4-.5 4-2.5S13.5 2 12 7z"/></svg>
+      </button>
       <button id="newChatTop" class="icon-btn" type="button" aria-label="Nuevo chat" title="Nuevo chat">
         <svg viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg>
       </button>
@@ -286,6 +289,35 @@
         </ul>
         <button id="proBuyBtn" class="pro-buy" type="button">Comprar plan Pro</button>
         <p class="pro-soon">Compra disponible muy pronto · ya casi 🚀</p>
+      </div>
+    </div>
+
+    <!-- Recompensas -->
+    <div id="rewardsModal" class="settings-modal" hidden>
+      <div class="settings-card rewards-card">
+        <div class="settings-head rw-head">
+          <strong><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 12v9H4v-9"/><path d="M2 7h20v5H2z"/><path d="M12 22V7"/><path d="M12 7c-1.5 0-4-.5-4-2.5S10.5 2 12 7z"/><path d="M12 7c1.5 0 4-.5 4-2.5S13.5 2 12 7z"/></svg> Recompensas</strong>
+          <button id="rewardsClose" class="us-more" type="button" aria-label="Cerrar">✕</button>
+        </div>
+        <div id="rewardsBody" class="rewards-body">
+          <p class="rw-muted">Cargando…</p>
+        </div>
+      </div>
+    </div>
+
+    <!-- ¿Qué salió mal? (al dar no me gusta) -->
+    <div id="dislikeModal" class="settings-modal" hidden>
+      <div class="settings-card dislike-card">
+        <div class="settings-head rw-head">
+          <strong><svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M22 14h-3.2V3H22zM2 13a2 2 0 0 1 2 2h5.1l-.9 4.3a1.6 1.6 0 0 0 1.6 1.9c.45 0 .87-.2 1.16-.55L16 14.6V3H6a2 2 0 0 0-1.95 1.55l-1.95 7A2 2 0 0 0 2 13z"/></svg> ¿Qué salió mal?</strong>
+          <button id="dislikeClose" class="us-more" type="button" aria-label="Cerrar">✕</button>
+        </div>
+        <p class="settings-note">Cuéntanos qué estuvo mal en la respuesta de Mady. Los primeros 10 «no me gusta» con texto de cada ventana entran al plan de recompensas: el admin los revisa y si valida 9 de 10 recibes saldo virtual.</p>
+        <textarea id="dislikeText" class="rw-textarea" rows="4" placeholder="Ej: me dio un dato incorrecto sobre…"></textarea>
+        <div class="rw-actions">
+          <button id="dislikeSend" class="rw-btn" type="button">Enviar</button>
+          <button id="dislikeSkip" class="rw-btn ghost" type="button">Omitir</button>
+        </div>
       </div>
     </div>
 

@@ -45,6 +45,11 @@
   const MEDIA_REST_URL = SB_URL + '/rest/v1/ia_media';
   const PROGRAM_REST_URL = SB_URL + '/rest/v1/program_artifacts';
   const FEEDBACK_REST_URL = SB_URL + '/rest/v1/ai_response_feedback';
+  // Plan de recompensas: estado (RPC), reportes de bug e ideas.
+  const REWARD_STATUS_RPC_URL = SB_URL + '/rest/v1/rpc/lth_reward_status';
+  const BUGS_REST_URL = SB_URL + '/rest/v1/bug_reports';
+  const BUG_MEDIA_REST_URL = SB_URL + '/rest/v1/bug_report_media';
+  const IDEAS_REST_URL = SB_URL + '/rest/v1/user_ideas';
   const IMAGE_MODEL = 'google/gemini-3.1-flash-image-preview';
   const IMAGE_SYSTEM_PROMPT = 'Eres Mady, la asistente de LTH OS. Genera directamente la imagen que describe el usuario y acompanala con una frase breve en espanol. La imagen debe tratar EXACTAMENTE lo pedido; no agregues marcas, textos ni elementos no solicitados (nunca generes productos LTH si no se piden). Si el usuario pide texto dentro de la imagen, respetalo exactamente.';
   const PDF_SYSTEM_PROMPT = 'Eres Mady, la asistente de LTH OS. El usuario quiere un documento que se exportara a PDF. Antes de redactar, corrige los errores reconocidos durante la conversacion (citas biblicas, datos, cifras): NO transcribas la conversacion cruda, entrega la version corregida, limpia y ordenada. Redacta el documento COMPLETO en espanol, bien estructurado en Markdown simple: una primera linea con el titulo usando "# Titulo", luego secciones con "## Subtitulo", parrafos claros y listas con "- " cuando ayude. No uses tablas ni bloques de codigo ni HTML. Entrega solo el contenido del documento, sin preambulos como "aqui tienes" ni despedidas.';
@@ -243,6 +248,7 @@
     programEdit: null,    // edicion en curso de una pagina ya hecha { doc, convo }
     manualModel: 'auto'   // 'auto' = ruteo automatico; o un id de MANUAL_MODELS
   };
+  const feedbackSyncState = { inFlight: new Set(), lastSignature: new Map() };
 
   // Selector de modelo manual (barra de modelos, igual que en LTH OS). 'auto' deja
   // que el router elija. Los premium requieren plan de pago (el server tambien lo valida).
@@ -972,6 +978,8 @@
     if (Array.isArray(message.media) && message.media.length) next.media = message.media;
     if (message.verdict) next.verdict = message.verdict;
     if (message._feedback) next._feedback = message._feedback;
+    if (message._feedbackValidationStatus) next._feedbackValidationStatus = message._feedbackValidationStatus;
+    if (message._feedbackSyncedAt) next._feedbackSyncedAt = message._feedbackSyncedAt;
     if (message.programDoc && String(message.programDoc).trim()) next.programDoc = String(message.programDoc);
     if (message.reasoningReview && typeof message.reasoningReview === 'object') {
       const review = message.reasoningReview;
@@ -2077,6 +2085,18 @@
         for (const m of remoteMsgs) {
           const same = m.id ? byId.get(m.id) : null;
           if (same) {
+            if (m._feedback && !same._feedback) {
+              same._feedback = m._feedback;
+              changed = true;
+            }
+            if (m._feedbackValidationStatus && same._feedbackValidationStatus !== m._feedbackValidationStatus) {
+              same._feedbackValidationStatus = m._feedbackValidationStatus;
+              changed = true;
+            }
+            if (m._feedbackSyncedAt && same._feedbackSyncedAt !== m._feedbackSyncedAt) {
+              same._feedbackSyncedAt = m._feedbackSyncedAt;
+              changed = true;
+            }
             const localStatus = same.reasoningReview && same.reasoningReview.status;
             const remoteStatus = m.reasoningReview && m.reasoningReview.status;
             if (remoteStatus === 'complete' && localStatus !== 'complete') {
@@ -2115,6 +2135,9 @@
       messages: convo.messages.slice(-120).map((m) => {
         const r = { id: m.id, role: m.role, content: String(m.content || '').slice(0, 20000), ts: m.ts };
         if (Array.isArray(m.media) && m.media.length) r.media = m.media;
+        if (m._feedback) r._feedback = m._feedback;
+        if (m._feedbackValidationStatus) r._feedbackValidationStatus = m._feedbackValidationStatus;
+        if (m._feedbackSyncedAt) r._feedbackSyncedAt = m._feedbackSyncedAt;
         if (m.programDoc) r.programDoc = String(m.programDoc).slice(0, 200000);
         if (m.reasoningReview && typeof m.reasoningReview === 'object') r.reasoningReview = m.reasoningReview;
         return r;
@@ -2134,6 +2157,93 @@
   }
 
   /* ───────────────────────── Render ───────────────────────── */
+  function applyFeedbackRowToMessage(message, row) {
+    if (!message || !row) return false;
+    const rating = row.rating === 'up' || row.rating === 'down' ? row.rating : '';
+    if (!rating) return false;
+    let changed = false;
+    if (message._feedback !== rating) { message._feedback = rating; changed = true; }
+    const validationStatus = String(row.validation_status || '').trim();
+    if ((message._feedbackValidationStatus || '') !== validationStatus) {
+      message._feedbackValidationStatus = validationStatus;
+      changed = true;
+    }
+    const syncedAt = row.updated_at || row.validated_at || new Date().toISOString();
+    if (syncedAt && message._feedbackSyncedAt !== syncedAt) {
+      message._feedbackSyncedAt = syncedAt;
+      changed = true;
+    }
+    return changed;
+  }
+
+  async function syncFeedbackForMessage(convo, message) {
+    if (!convo || !convo.id || !message || !message.id) return false;
+    try {
+      const token = await ensureToken();
+      if (!token) return false;
+      const res = await fetch(
+        FEEDBACK_REST_URL
+          + '?select=assistant_message_id,rating,validation_status,validated_at,updated_at'
+          + '&conversation_id=eq.' + encodeURIComponent(String(convo.id))
+          + '&assistant_message_id=eq.' + encodeURIComponent(String(message.id))
+          + '&limit=1',
+        { headers: { apikey: SB_KEY, Authorization: 'Bearer ' + token } }
+      );
+      if (!res.ok) return false;
+      const rows = await res.json().catch(() => []);
+      const changed = Array.isArray(rows) && rows[0] ? applyFeedbackRowToMessage(message, rows[0]) : false;
+      if (changed) saveConvos();
+      return changed;
+    } catch (_) {
+      return false;
+    }
+  }
+
+  async function syncFeedbackForConvo(convo) {
+    if (!convo || !convo.id) return;
+    const assistantIds = (convo.messages || [])
+      .filter((message) => message && message.role === 'assistant' && message.id)
+      .map((message) => String(message.id));
+    if (!assistantIds.length) return;
+    const signature = String(convo.id) + '|' + assistantIds.join('|');
+    if (feedbackSyncState.inFlight.has(convo.id) || feedbackSyncState.lastSignature.get(convo.id) === signature) return;
+    feedbackSyncState.inFlight.add(convo.id);
+    try {
+      const token = await ensureToken();
+      if (!token) return;
+      const inList = assistantIds.map((id) => encodeURIComponent(id)).join(',');
+      const res = await fetch(
+        FEEDBACK_REST_URL
+          + '?select=assistant_message_id,rating,validation_status,validated_at,updated_at'
+          + '&conversation_id=eq.' + encodeURIComponent(String(convo.id))
+          + '&assistant_message_id=in.(' + inList + ')',
+        { headers: { apikey: SB_KEY, Authorization: 'Bearer ' + token } }
+      );
+      if (!res.ok) return;
+      const rows = await res.json().catch(() => []);
+      if (!Array.isArray(rows) || !rows.length) {
+        feedbackSyncState.lastSignature.set(convo.id, signature);
+        return;
+      }
+      const byMessageId = new Map(rows.map((row) => [String(row.assistant_message_id || ''), row]));
+      let changed = false;
+      for (const message of convo.messages || []) {
+        if (!message || message.role !== 'assistant' || !message.id) continue;
+        const row = byMessageId.get(String(message.id));
+        if (row && applyFeedbackRowToMessage(message, row)) changed = true;
+      }
+      feedbackSyncState.lastSignature.set(convo.id, signature);
+      if (changed) {
+        saveConvos();
+        if (state.activeId === convo.id) renderMessages();
+      }
+    } catch (_) {
+      // El bloqueo local sigue funcionando aunque falle la red; se reintenta al proximo render.
+    } finally {
+      feedbackSyncState.inFlight.delete(convo.id);
+    }
+  }
+
   function setStatusDot(mode) {
     if (!el.statusDot) return;
     el.statusDot.classList.remove('busy', 'off');
@@ -2253,6 +2363,7 @@
       el.welcome.hidden = false;
       return;
     }
+    void syncFeedbackForConvo(c);
     // La Vista previa SOLO va en la revision mas reciente con programDoc. Si una version vieja
     // resucitara por sync/merge, NO debe pintar una preview vieja encima de la nueva.
     let lastDocIdx = -1;
@@ -2676,6 +2787,14 @@
     down.innerHTML = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M22 14h-3.2V3H22zM2 13a2 2 0 0 1 2 2h5.1l-.9 4.3a1.6 1.6 0 0 0 1.6 1.9c.45 0 .87-.2 1.16-.55L16 14.6V3H6a2 2 0 0 0-1.95 1.55l-1.95 7A2 2 0 0 0 2 13z"/></svg>';
     if (message._feedback === 'up') up.classList.add('on');
     if (message._feedback === 'down') down.classList.add('on');
+    const locked = Boolean(message._feedback);
+    if (locked) {
+      row.classList.add('locked');
+      up.disabled = true;
+      down.disabled = true;
+      up.title = message._feedback === 'up' ? 'Me gusta guardado' : 'Feedback ya guardado';
+      down.title = message._feedback === 'down' ? 'No me gusta guardado' : 'Feedback ya guardado';
+    }
     up.addEventListener('click', () => submitFeedback(message, convo, 'up', up, down));
     down.addEventListener('click', () => submitFeedback(message, convo, 'down', up, down));
     row.appendChild(up); row.appendChild(down);
@@ -2683,9 +2802,36 @@
   }
 
   async function submitFeedback(message, convo, rating, upBtn, downBtn) {
+    if (message._feedback) {
+      if (upBtn) upBtn.disabled = true;
+      if (downBtn) downBtn.disabled = true;
+      return;
+    }
+    await syncFeedbackForMessage(convo, message);
+    if (message._feedback) {
+      if (upBtn) {
+        upBtn.classList.toggle('on', message._feedback === 'up');
+        upBtn.disabled = true;
+      }
+      if (downBtn) {
+        downBtn.classList.toggle('on', message._feedback === 'down');
+        downBtn.disabled = true;
+      }
+      return;
+    }
+    // Al dar "no me gusta" pedimos que escriba que salio mal: ese texto es el
+    // que revisa el admin en el plan de recompensas (primeros 10 por ventana).
+    let correction = '';
+    if (rating === 'down') {
+      const text = await askDislikeReason();
+      if (text === null) return; // cerro el dialogo: no registramos nada
+      correction = text;
+    }
     message._feedback = rating;
     upBtn.classList.toggle('on', rating === 'up');
     downBtn.classList.toggle('on', rating === 'down');
+    upBtn.disabled = true;
+    downBtn.disabled = true;
     saveConvos();
     const token = await ensureToken();
     const userId = state.session && state.session.user && state.session.user.id;
@@ -2700,7 +2846,7 @@
       }
     }
     try {
-      await fetch(FEEDBACK_REST_URL + '?on_conflict=user_id,conversation_id,assistant_message_id', {
+      const res = await fetch(FEEDBACK_REST_URL + '?on_conflict=user_id,conversation_id,assistant_message_id', {
         method: 'POST',
         headers: { apikey: SB_KEY, Authorization: 'Bearer ' + token, 'Content-Type': 'application/json', Prefer: 'resolution=merge-duplicates,return=minimal' },
         body: JSON.stringify([{
@@ -2712,11 +2858,358 @@
           assistant_message_id: String(message.id || '').slice(0, 120),
           assistant_response: String(message.content || '').slice(0, 30000),
           rating: rating,
+          correction: correction.slice(0, 4000),
           source_app: 'lth-ia-web',
           updated_at: new Date().toISOString()
         }])
       });
+      if (res.ok) {
+        message._feedbackSyncedAt = new Date().toISOString();
+        saveConvos();
+        syncPushOne(convo);
+      }
     } catch (_) {}
+  }
+
+  // Dialogo "¿que salio mal?": resuelve con el texto, '' si omite, null si cierra.
+  function askDislikeReason() {
+    return new Promise((resolve) => {
+      if (!el.dislikeModal) { resolve(''); return; }
+      el.dislikeText.value = '';
+      el.dislikeModal.hidden = false;
+      setTimeout(() => { try { el.dislikeText.focus(); } catch (_) {} }, 50);
+      const done = (value) => {
+        el.dislikeModal.hidden = true;
+        el.dislikeSend.removeEventListener('click', onSend);
+        el.dislikeSkip.removeEventListener('click', onSkip);
+        el.dislikeClose.removeEventListener('click', onClose);
+        el.dislikeModal.removeEventListener('click', onBackdrop);
+        resolve(value);
+      };
+      const onSend = () => done(el.dislikeText.value.trim());
+      const onSkip = () => done('');
+      const onClose = () => done(null);
+      const onBackdrop = (e) => { if (e.target === el.dislikeModal) done(null); };
+      el.dislikeSend.addEventListener('click', onSend);
+      el.dislikeSkip.addEventListener('click', onSkip);
+      el.dislikeClose.addEventListener('click', onClose);
+      el.dislikeModal.addEventListener('click', onBackdrop);
+    });
+  }
+
+  // ── Plan de recompensas ──────────────────────────────────────────────────
+  // El usuario gana saldo virtual (USD) ayudando al ecosistema: no me gustas
+  // validados por el admin (9 de 10 por ventana), bugs reales e ideas con vision.
+
+  function openRewards() {
+    if (!el.rewardsModal) return;
+    el.rewardsModal.hidden = false;
+    el.rewardsBody.innerHTML = '<p class="rw-muted">Cargando…</p>';
+    void loadRewardStatus();
+  }
+
+  function closeRewards() {
+    if (el.rewardsModal) el.rewardsModal.hidden = true;
+  }
+
+  async function loadRewardStatus() {
+    try {
+      const token = await ensureToken();
+      if (!token) {
+        el.rewardsBody.innerHTML = '<p class="rw-muted">Inicia sesión para ver tus recompensas.</p>';
+        return;
+      }
+      const res = await fetch(REWARD_STATUS_RPC_URL, {
+        method: 'POST',
+        headers: { apikey: SB_KEY, Authorization: 'Bearer ' + token, 'Content-Type': 'application/json' },
+        body: '{}'
+      });
+      if (!res.ok) throw new Error('reward status ' + res.status);
+      renderRewards(await res.json());
+    } catch (_) {
+      el.rewardsBody.innerHTML = '<p class="rw-muted">No se pudo cargar el estado de recompensas. Intenta de nuevo en un momento.</p>';
+    }
+  }
+
+  function restErrorMessage(text, fallback) {
+    try {
+      const parsed = JSON.parse(text);
+      const msg = String(parsed.message || parsed.hint || parsed.error || '');
+      if (msg) return msg.replace(/^[^:]*exception[^:]*:\s*/i, '');
+    } catch (_) {}
+    return fallback;
+  }
+
+  // Iconos SVG del panel de recompensas (mismo estilo de linea que la app).
+  const RW_ICONS = {
+    down: '<svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M22 14h-3.2V3H22zM2 13a2 2 0 0 1 2 2h5.1l-.9 4.3a1.6 1.6 0 0 0 1.6 1.9c.45 0 .87-.2 1.16-.55L16 14.6V3H6a2 2 0 0 0-1.95 1.55l-1.95 7A2 2 0 0 0 2 13z"/></svg>',
+    bug: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="8" y="7" width="8" height="12" rx="4"/><path d="M9 7a3 3 0 0 1 6 0"/><path d="M3 13h5M16 13h5M4.5 19.5 8 16.8M19.5 19.5 16 16.8M4.5 6.5 8 9.2M19.5 6.5 16 9.2"/></svg>',
+    idea: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 18h6M10 21h4"/><path d="M12 3a6 6 0 0 0-3.6 10.8c.7.55 1.1 1.35 1.1 2.2h5a2.8 2.8 0 0 1 1.1-2.2A6 6 0 0 0 12 3z"/></svg>',
+    coins: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M12 6.5v11"/><path d="M15.3 9c-.6-1-1.8-1.6-3.3-1.6-1.8 0-3.1.9-3.1 2.2 0 2.8 6.6 1.4 6.6 4.2 0 1.3-1.4 2.2-3.5 2.2-1.7 0-3-.6-3.6-1.6"/></svg>',
+    check: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 6 9 17l-5-5"/></svg>',
+    clock: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg>',
+    cross: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" aria-hidden="true"><path d="M6 6l12 12M18 6 6 18"/></svg>',
+    camera: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 8h3l2-2.5h6L17 8h3a1 1 0 0 1 1 1v10a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1V9a1 1 0 0 1 1-1z"/><circle cx="12" cy="14" r="3.4"/></svg>'
+  };
+
+  function rwChip(kind, label) {
+    const ic = kind === 'ok' ? RW_ICONS.check : kind === 'bad' ? RW_ICONS.cross : RW_ICONS.clock;
+    return '<span class="rw-chip ' + kind + '">' + ic + label + '</span>';
+  }
+
+  // Pips de progreso: verdes = validados, rojos = invalidos, ambar = en revision.
+  function rwPips(total, valid, invalid, pending) {
+    let out = '<div class="rw-pips">';
+    for (let i = 0; i < total; i += 1) {
+      let cls = '';
+      if (i < valid) cls = 'ok';
+      else if (i < valid + invalid) cls = 'bad';
+      else if (i < valid + invalid + pending) cls = 'wait';
+      out += '<i class="' + cls + '"></i>';
+    }
+    return out + '</div>';
+  }
+
+  // Contador animado del saldo (cuenta de 0 al monto al abrir).
+  function rwAnimateCounter(node) {
+    const target = parseFloat(node.getAttribute('data-target')) || 0;
+    if (!target) { node.textContent = '0.00'; return; }
+    const dur = 950;
+    const t0 = performance.now();
+    const step = (t) => {
+      const p = Math.min(1, (t - t0) / dur);
+      const eased = 1 - Math.pow(1 - p, 3);
+      node.textContent = (target * eased).toFixed(2);
+      if (p < 1) requestAnimationFrame(step);
+    };
+    requestAnimationFrame(step);
+  }
+
+  function renderRewards(status) {
+    const e = escapeHtml;
+    const d = status && status.dislikes ? status.dislikes : {};
+    const b = status && status.bugs ? status.bugs : {};
+    const idea = status && status.idea ? status.idea : {};
+    const bal = status && status.balance ? status.balance : {};
+    const win = status && status.window ? status.window : {};
+    const batchSize = Number(d.batch_size || 10);
+    const requiredValid = Number(d.required_valid || 9);
+    const eligible = Number(d.eligible || 0);
+    const valid = Number(d.valid || 0);
+    const invalid = Number(d.invalid || 0);
+    const pending = Number(d.pending || 0);
+    const bugsUsed = Number(b.used_window || 0);
+    const bugsMax = Number(b.max_per_window || 2);
+    const endsAt = win.ends_at ? new Date(win.ends_at) : null;
+    const endsTxt = endsAt && !Number.isNaN(endsAt.getTime())
+      ? endsAt.toLocaleTimeString('es-MX', { hour: 'numeric', minute: '2-digit', hour12: true })
+      : '—';
+    const balanceUsd = Number(bal.balance_usd || 0);
+    const earnedUsd = Number(bal.total_earned_usd || 0).toFixed(2);
+    const txs = Array.isArray(status && status.transactions) ? status.transactions : [];
+    const recentBugs = Array.isArray(b.recent) ? b.recent : [];
+    const cur = idea.current || null;
+    const canIdea = idea.can_submit === true;
+
+    const bugChip = (s) => (s === 'valid' ? rwChip('ok', 'Validado') : s === 'invalid' ? rwChip('bad', 'No procedió') : rwChip('wait', 'En revisión'));
+    const ideaChip = (s) => (s === 'rewarded' ? rwChip('ok', 'Recompensada') : s === 'rejected' ? rwChip('bad', 'Sin recompensa') : rwChip('wait', 'En revisión'));
+    const dislikeChip = d.rewarded
+      ? rwChip('ok', 'Recompensado')
+      : (pending > 0 ? rwChip('wait', 'Supervisado') : rwChip('wait', eligible + '/' + batchSize));
+
+    el.rewardsBody.innerHTML = [
+      // ── Hero: contador de saldo ──
+      '<div class="rw-hero">',
+      '  <span class="rw-hero-label">Saldo virtual</span>',
+      '  <div class="rw-hero-amount"><em>$</em><b id="rwCounter" data-target="' + balanceUsd.toFixed(2) + '">0.00</b><i>USD</i></div>',
+      '  <div class="rw-hero-meta">',
+      '    <span>' + RW_ICONS.coins + ' Ganado histórico $' + e(earnedUsd) + ' USD</span>',
+      '    <span class="rw-hero-soon">Cobro vía PayPal muy pronto</span>',
+      '  </div>',
+      '</div>',
+
+      // ── Tarea: no me gusta ──
+      '<div class="rw-task">',
+      '  <div class="rw-task-head">',
+      '    <span class="rw-task-ic ic-down">' + RW_ICONS.down + '</span>',
+      '    <div class="rw-task-tt"><strong>No me gusta con recompensa</strong><span>Señala errores reales de Mady y gana saldo</span></div>',
+      dislikeChip,
+      '  </div>',
+      '  <div class="rw-verify">',
+      '    <div class="rw-count"><b>' + e(String(valid)) + '</b><span>de ' + e(String(batchSize)) + ' verificados</span></div>',
+      rwPips(batchSize, valid, invalid, pending),
+      '  </div>',
+      d.rewarded
+        ? '<p class="rw-line rw-ok-line">' + RW_ICONS.check + ' ¡Recompensa acreditada a tu saldo!</p>'
+        : '<p class="rw-line">Con <b>' + e(String(requiredValid)) + ' válidos</b> de ' + e(String(batchSize)) + ' ganas la recompensa. Enviados esta ventana: <b>' + e(String(eligible)) + '/' + e(String(batchSize)) + '</b>.</p>',
+      '  <p class="rw-muted">El admin supervisa cada «no me gusta» para validar que la respuesta fue errónea. Después de los primeros ' + e(String(batchSize)) + ' puedes seguir calificando, pero solo esos entran al plan. Se restablece con tu ventana (termina ' + e(endsTxt) + ').</p>',
+      '</div>',
+
+      // ── Tarea: bugs ──
+      '<div class="rw-task">',
+      '  <div class="rw-task-head">',
+      '    <span class="rw-task-ic ic-bug">' + RW_ICONS.bug + '</span>',
+      '    <div class="rw-task-tt"><strong>Reportes de bug</strong><span>Bug validado = recompensa directa</span></div>',
+      '    <span class="rw-quota' + (bugsUsed >= bugsMax ? ' full' : '') + '"><b>' + e(String(bugsUsed)) + '</b>/' + e(String(bugsMax)) + '</span>',
+      '  </div>',
+      recentBugs.length
+        ? '<div class="rw-items">' + recentBugs.map((bug) => '<div class="rw-item"><div class="rw-item-tt">' + e(String(bug.description || '').slice(0, 90)) + '</div>' + bugChip(bug.status) + (bug.admin_note ? '<div class="rw-item-note">Admin: ' + e(String(bug.admin_note)) + '</div>' : '') + '</div>').join('') + '</div>'
+        : '',
+      bugsUsed < bugsMax
+        ? '<button id="rwBugOpen" class="rw-btn" type="button">' + RW_ICONS.camera + ' Reportar un bug</button>' +
+          '<div id="rwBugForm" class="rw-form" hidden>' +
+          '  <textarea id="rwBugDesc" class="rw-textarea" rows="3" placeholder="Describe el bug: qué hiciste, qué esperabas y qué pasó…"></textarea>' +
+          '  <label class="rw-file-label">' + RW_ICONS.camera + ' Capturas obligatorias (1 a 3 imágenes)' +
+          '    <input id="rwBugFiles" type="file" accept="image/*" multiple />' +
+          '  </label>' +
+          '  <div class="rw-actions"><button id="rwBugSend" class="rw-btn solid" type="button">Enviar reporte</button></div>' +
+          '  <p id="rwBugMsg" class="rw-muted"></p>' +
+          '</div>'
+        : '<p class="rw-muted">Alcanzaste el límite de esta ventana. Se restablece con tu ventana del plan.</p>',
+      '</div>',
+
+      // ── Tarea: idea ──
+      '<div class="rw-task">',
+      '  <div class="rw-task-head">',
+      '    <span class="rw-task-ic ic-idea">' + RW_ICONS.idea + '</span>',
+      '    <div class="rw-task-tt"><strong>Compártenos tu idea</strong><span>Si tiene visión, se recompensa</span></div>',
+      cur ? ideaChip(cur.status) : '',
+      '  </div>',
+      cur
+        ? '<div class="rw-items"><div class="rw-item"><div class="rw-item-tt">' + e(String(cur.title || '')) + '</div>' + (cur.admin_note ? '<div class="rw-item-note">Admin: ' + e(String(cur.admin_note)) + '</div>' : '') + '</div></div>'
+        : '',
+      canIdea
+        ? '<div class="rw-form">' +
+          '  <input id="rwIdeaTitle" class="rw-input" type="text" maxlength="120" placeholder="Título de tu idea" />' +
+          '  <textarea id="rwIdeaDesc" class="rw-textarea" rows="3" placeholder="Cuéntanos tu idea para el ecosistema LTH…"></textarea>' +
+          '  <div class="rw-actions"><button id="rwIdeaSend" class="rw-btn solid" type="button">Enviar idea</button></div>' +
+          '  <p id="rwIdeaMsg" class="rw-muted"></p>' +
+          '</div>'
+        : (cur ? '<p class="rw-muted">El admin te habilitará otra idea cuando revise la actual.</p>' : ''),
+      '</div>',
+
+      // ── Movimientos ──
+      txs.length
+        ? '<div class="rw-task"><div class="rw-task-head"><span class="rw-task-ic ic-coins">' + RW_ICONS.coins + '</span><div class="rw-task-tt"><strong>Movimientos</strong><span>Tus recompensas acreditadas</span></div></div><div class="rw-items">' + txs.map((tx) => '<div class="rw-item rw-tx"><div class="rw-item-tt">' + e(String(tx.note || tx.kind || '')) + '</div><b class="rw-amount">+$' + e(Number(tx.amount_usd || 0).toFixed(2)) + '</b></div>').join('') + '</div></div>'
+        : ''
+    ].join('');
+
+    const counter = el.rewardsBody.querySelector('#rwCounter');
+    if (counter) rwAnimateCounter(counter);
+    const bugOpen = el.rewardsBody.querySelector('#rwBugOpen');
+    if (bugOpen) bugOpen.addEventListener('click', () => {
+      const form = el.rewardsBody.querySelector('#rwBugForm');
+      if (form) form.hidden = !form.hidden;
+    });
+    const bugSend = el.rewardsBody.querySelector('#rwBugSend');
+    if (bugSend) bugSend.addEventListener('click', () => void submitBugReport());
+    const ideaSend = el.rewardsBody.querySelector('#rwIdeaSend');
+    if (ideaSend) ideaSend.addEventListener('click', () => void submitIdea());
+  }
+
+  // Comprime una imagen a JPEG dataURL (max 1400px) para guardarla en la tabla.
+  function compressScreenshot(file) {
+    return new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onerror = () => reject(new Error('No se pudo leer la imagen'));
+      reader.onload = () => {
+        const img = new Image();
+        img.onerror = () => reject(new Error('Archivo de imagen inválido'));
+        img.onload = () => {
+          const maxDim = 1400;
+          const scale = Math.min(1, maxDim / Math.max(img.width, img.height, 1));
+          const canvas = document.createElement('canvas');
+          canvas.width = Math.max(1, Math.round(img.width * scale));
+          canvas.height = Math.max(1, Math.round(img.height * scale));
+          canvas.getContext('2d').drawImage(img, 0, 0, canvas.width, canvas.height);
+          resolve(canvas.toDataURL('image/jpeg', 0.82));
+        };
+        img.src = String(reader.result);
+      };
+      reader.readAsDataURL(file);
+    });
+  }
+
+  async function submitBugReport() {
+    const msgEl = el.rewardsBody.querySelector('#rwBugMsg');
+    const descEl = el.rewardsBody.querySelector('#rwBugDesc');
+    const filesEl = el.rewardsBody.querySelector('#rwBugFiles');
+    const sendBtn = el.rewardsBody.querySelector('#rwBugSend');
+    if (!msgEl || !descEl || !filesEl) return;
+    const say = (text) => { msgEl.textContent = text; };
+    const desc = descEl.value.trim();
+    const files = Array.from(filesEl.files || []);
+    if (!desc) { say('Describe el bug antes de enviarlo.'); return; }
+    if (!files.length) { say('Las capturas son obligatorias (mínimo 1).'); return; }
+    if (files.length > 3) { say('Máximo 3 capturas.'); return; }
+    const token = await ensureToken();
+    const userId = state.session && state.session.user && state.session.user.id;
+    if (!token || !userId) { say('Inicia sesión de nuevo.'); return; }
+    if (sendBtn) sendBtn.disabled = true;
+    say('Enviando reporte…');
+    try {
+      const shots = [];
+      for (const file of files) shots.push(await compressScreenshot(file));
+      const res = await fetch(BUGS_REST_URL, {
+        method: 'POST',
+        headers: { apikey: SB_KEY, Authorization: 'Bearer ' + token, 'Content-Type': 'application/json', Prefer: 'return=representation' },
+        body: JSON.stringify([{ user_id: userId, description: desc.slice(0, 8000), source_app: 'lth-ia-web' }])
+      });
+      if (!res.ok) {
+        say(restErrorMessage(await res.text(), 'No se pudo enviar el reporte.'));
+        return;
+      }
+      const rows = await res.json();
+      const bugId = rows && rows[0] && rows[0].id;
+      for (const dataUrl of shots) {
+        await fetch(BUG_MEDIA_REST_URL, {
+          method: 'POST',
+          headers: { apikey: SB_KEY, Authorization: 'Bearer ' + token, 'Content-Type': 'application/json', Prefer: 'return=minimal' },
+          body: JSON.stringify([{ bug_id: bugId, user_id: userId, data: dataUrl }])
+        });
+      }
+      say('¡Reporte enviado! El admin lo validará pronto.');
+      setTimeout(() => void loadRewardStatus(), 900);
+    } catch (_) {
+      say('No se pudo enviar el reporte. Revisa tu conexión.');
+    } finally {
+      if (sendBtn) sendBtn.disabled = false;
+    }
+  }
+
+  async function submitIdea() {
+    const msgEl = el.rewardsBody.querySelector('#rwIdeaMsg');
+    const titleEl = el.rewardsBody.querySelector('#rwIdeaTitle');
+    const descEl = el.rewardsBody.querySelector('#rwIdeaDesc');
+    const sendBtn = el.rewardsBody.querySelector('#rwIdeaSend');
+    if (!msgEl || !titleEl || !descEl) return;
+    const say = (text) => { msgEl.textContent = text; };
+    const title = titleEl.value.trim();
+    const desc = descEl.value.trim();
+    if (!title) { say('Ponle un título a tu idea.'); return; }
+    if (!desc) { say('Describe tu idea antes de enviarla.'); return; }
+    const token = await ensureToken();
+    const userId = state.session && state.session.user && state.session.user.id;
+    if (!token || !userId) { say('Inicia sesión de nuevo.'); return; }
+    if (sendBtn) sendBtn.disabled = true;
+    say('Enviando idea…');
+    try {
+      const res = await fetch(IDEAS_REST_URL, {
+        method: 'POST',
+        headers: { apikey: SB_KEY, Authorization: 'Bearer ' + token, 'Content-Type': 'application/json', Prefer: 'return=minimal' },
+        body: JSON.stringify([{ user_id: userId, title: title.slice(0, 120), description: desc.slice(0, 8000) }])
+      });
+      if (!res.ok) {
+        say(restErrorMessage(await res.text(), 'No se pudo enviar la idea.'));
+        return;
+      }
+      say('¡Idea enviada! El admin la revisará.');
+      setTimeout(() => void loadRewardStatus(), 900);
+    } catch (_) {
+      say('No se pudo enviar la idea. Revisa tu conexión.');
+    } finally {
+      if (sendBtn) sendBtn.disabled = false;
+    }
   }
 
   async function fetchMediaData(mediaId) {
@@ -3645,7 +4138,7 @@
     const tail = p.hidePeek ? '' : programLiveCodeTail(text, 14);
     const codeHtml = tail
       ? '<details class="pg-live-codewrap" open><summary>Ver lo que escribe</summary>'
-        + '<pre class="pg-live-code"><code>' + escapeHtml(tail) + '</code></pre></details>'
+        + '<pre class="pg-live-code"><code>' + highlightCode(tail) + '</code></pre></details>'
       : '';
     return '<div class="pg-live">'
       + '<div class="pg-live-head">' + reasonStageHtml(stageKey) + partLabel + '</div>'
@@ -4143,14 +4636,14 @@
       for (let attempt = 0; attempt < 2; attempt += 1) {
         if (state.abort && state.abort.signal.aborted) return;
         try {
-          const out = await buildCodePipeline(request, improved, convo, history || [], bub, state.abort.signal, true, confirmedImages || null, !!noImages);
+          const out = await buildCodePipeline(request, improved, convo, history || [], bub, state.abort.signal, true, confirmedImages || null, true);
           doc = String(out || '').trim();
         } catch (e) { lastErr = (e && e.message) || ''; doc = ''; }
         if (doc && /<html[\s>]/i.test(doc)) break;
         if (attempt < 1 && !(state.abort && state.abort.signal.aborted)) { bub.innerHTML = reasonStageHtml('codigo'); await sleep(800); }
       }
       if (!doc || !/<html[\s>]/i.test(doc)) throw new Error(lastErr || 'La IA no devolvio un HTML completo.');
-      const finishOpts = confirmedImages ? { confirmedImages: true } : (noImages ? { skipImages: true } : undefined);
+      const finishOpts = confirmedImages ? { confirmedImages: true } : { skipImages: true };
       await finishProgramDoc(convo, bub, doc, 'Página lista ✅ — estructura, estilos e interacciones en un solo archivo. Usa **Vista previa**, **Editar** o **Descargar** abajo.', request, 'Pagina construida (LTH-code)', finishOpts);
       void maybeUpdateConvoBrain(convo);
     } catch (e) {
@@ -4160,7 +4653,7 @@
     }
   }
 
-  async function buildCodePipeline(text, improved, convo, history, bub, signal, billed, confirmedImages, noImages) {
+  async function buildCodePipeline(text, improved, convo, history, bub, signal, billed, confirmedImages, noImages = true) {
     await fetchReasonStatus();
     const codeModel = reasonModel('spec_codigo', 'deepseek/deepseek-v4-pro');
     const programModel = reasonModel('program_coder', codeModel);
@@ -4232,6 +4725,8 @@
   // no palabras clave: asi NO pregunta cuando son placeholders/CSS/utilidad, y SI pregunta con
   // sujetos implicitos (ardilla, jugadores...). Lista vacia = build directo sin imagenes.
   async function proceedToBuild(convo, request, improved, history) {
+    closeProgramModal();
+    return directProgramBuild(convo, request, improved, history, null, true);
     openProgramModal();
     if (el.programBody) el.programBody.innerHTML = '<div class="pg-busy"><span class="reason-orb"></span> Analizando si la página lleva fotos…</div>';
     setBusy(true); state.abort = new AbortController();
@@ -5024,7 +5519,7 @@
     };
     try {
       // Las URLs del usuario se conservan literalmente. Sin URL, buscamos fotos reales.
-      if (visualAssets.intent.active) {
+      if (false && visualAssets.intent.active) {
         bub.innerHTML = '<span class="gen-img-loading">Buscando fotografias reales<span class="dots"><i>.</i><i>.</i><i>.</i></span></span>';
         visualAssets = await resolveProgramVisualAssets(change, convo, signal);
         if (visualAssets.context) brief += '\n\n' + visualAssets.context;
@@ -5592,6 +6087,9 @@
     el.closeDrawerBtn.addEventListener('click', closeDrawer);
     el.newChatBtn.addEventListener('click', newConvo);
     el.newChatTop.addEventListener('click', newConvo);
+    if (el.rewardsTop) el.rewardsTop.addEventListener('click', openRewards);
+    if (el.rewardsClose) el.rewardsClose.addEventListener('click', closeRewards);
+    if (el.rewardsModal) el.rewardsModal.addEventListener('click', (e) => { if (e.target === el.rewardsModal) closeRewards(); });
     el.logoutBtn.addEventListener('click', logout);
     el.settingsBtn.addEventListener('click', () => { closeDrawer(); openSettings(); });
     el.settingsClose.addEventListener('click', closeSettings);
@@ -6011,6 +6509,9 @@
     el.creditsBtn = $('#creditsBtn'); el.planTag = $('#planTag');
     el.usageFill = $('#usageFill'); el.usageVal = $('#usageVal'); el.usageLabel = $('#usageLabel');
     el.newChatTop = $('#newChatTop');
+    el.rewardsTop = $('#rewardsTop'); el.rewardsModal = $('#rewardsModal'); el.rewardsClose = $('#rewardsClose'); el.rewardsBody = $('#rewardsBody');
+    el.dislikeModal = $('#dislikeModal'); el.dislikeClose = $('#dislikeClose'); el.dislikeText = $('#dislikeText');
+    el.dislikeSend = $('#dislikeSend'); el.dislikeSkip = $('#dislikeSkip');
     el.creditsPanel = $('#creditsPanel'); el.cpPlan = $('#cpPlan');
     el.cpWeek = $('#cpWeek'); el.cpWeekTxt = $('#cpWeekTxt'); el.cpMonth = $('#cpMonth'); el.cpMonthTxt = $('#cpMonthTxt');
     el.cpWindow = $('#cpWindow'); el.cpWindowTxt = $('#cpWindowTxt'); el.cpNote = $('#cpNote');
