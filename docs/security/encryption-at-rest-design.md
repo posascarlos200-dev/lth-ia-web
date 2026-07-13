@@ -17,10 +17,15 @@ clave en Vault (`ia_messages_key`):
   cifradas y su claro anulado. Verificado `still_plaintext=0`, `encrypted=42`,
   `mismatches_vs_backup=0` (cero pérdida). Toda la tabla está cifrada en reposo.
 
+- ✅ **LTH OS escritorio migrado** (2026-07-13, repo `C:\Users\john\Desktop\LTH-iOs`,
+  commit a6d519a): `electron/main.js` (ia-sync:pull) y `src/remote/app.js` (refreshIaConvos)
+  leen por `.rpc('ia_pull_conversations')`. La **Edge Function `lth-ia-cloud` no requiere
+  cambios**: nunca lee `ia_conversations` (los clientes mandan el historial en el payload).
+
 **PENDIENTE:**
-- ⏳ **LTH OS escritorio + Edge Function**: migrar su lectura al RPC / `ia_dec` (necesita el
-  repo de LTH OS). Hasta entonces, no abrir LTH OS de escritorio para evitar que reescriba.
-- ⏳ Tras verificar los 3 clientes: `drop table private.ia_messages_migration_backup`.
+- ⏳ **Recompilar/probar la app de escritorio** con el código nuevo (el .exe en ejecución
+  sigue con el código viejo hasta rebuild). Verificar que el historial se lee bien.
+- ⏳ Tras verificar: `drop table private.ia_messages_migration_backup`.
 
 > Rollback: `update ia_conversations c set messages = b.messages from
 > private.ia_messages_migration_backup b where b.id = c.id;` luego `drop trigger` y la columna.
