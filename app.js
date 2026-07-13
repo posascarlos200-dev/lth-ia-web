@@ -57,7 +57,7 @@
   // Modelo con vision para LEER imagenes adjuntas por el usuario (Gemini lee imagenes).
   const VISION_MODEL = 'google/gemini-2.5-flash';
   const IMAGE_SYSTEM_PROMPT = 'Eres Mady, la asistente de LTH OS. Genera directamente la imagen que describe el usuario y acompanala con una frase breve en espanol. La imagen debe tratar EXACTAMENTE lo pedido; no agregues marcas, textos ni elementos no solicitados (nunca generes productos LTH si no se piden). Si el usuario pide texto dentro de la imagen, respetalo exactamente.';
-  const PDF_SYSTEM_PROMPT = 'Eres Mady, la asistente de LTH OS. El usuario quiere un documento que se exportara a PDF. Antes de redactar, corrige los errores reconocidos durante la conversacion (citas biblicas, datos, cifras): NO transcribas la conversacion cruda, entrega la version corregida, limpia y ordenada. Redacta el documento COMPLETO en espanol, bien estructurado en Markdown simple: una primera linea con el titulo usando "# Titulo", luego secciones con "## Subtitulo", parrafos claros y listas con "- " cuando ayude. No uses tablas ni bloques de codigo ni HTML. Entrega solo el contenido del documento, sin preambulos como "aqui tienes" ni despedidas.';
+  const PDF_SYSTEM_PROMPT = 'Eres Mady, redactora de documentos de LTH IA. El usuario quiere un documento PROFESIONAL que se exportara a PDF. Corrige los errores detectados en la conversacion (citas, datos, cifras) y entrega la version limpia y ordenada, NO la conversacion cruda. Redacta el documento COMPLETO y bien desarrollado en espanol, con estructura profesional en Markdown simple: primera linea "# Titulo" claro y especifico; luego una breve introduccion, el desarrollo en secciones "## Subtitulo" (y "###" para subapartados cuando aporte), parrafos claros y bien redactados, y listas con "- " o numeradas donde ayuden; cierra con una conclusion si corresponde. Desarrolla cada punto con sustancia (no lo dejes en una sola linea), separa ideas en parrafos y usa "---" para separar grandes bloques si hace falta. No uses tablas, bloques de codigo ni HTML. Entrega SOLO el contenido del documento, sin preambulos ("aqui tienes") ni despedidas.';
 
   // Modo razonamiento premium: IA principal (clasifica + mejora prompt) -> especialista -> juez.
   const ORCHESTRATOR_PROMPT = [
@@ -3438,35 +3438,44 @@
     if (!ctor) throw new Error('No se pudo cargar el generador de PDF.');
     const doc = new ctor({ unit: 'pt', format: 'a4' });
     const pageW = doc.internal.pageSize.getWidth();
-    const margin = 48;
+    const pageH = doc.internal.pageSize.getHeight();
+    const margin = 56;
     const maxW = pageW - margin * 2;
 
-    doc.setFillColor(6, 16, 28); doc.rect(0, 0, pageW, 70, 'F');
-    doc.setTextColor(120, 180, 255); doc.setFont('helvetica', 'bold'); doc.setFontSize(16);
-    doc.text('LTH IA · Mady', margin, 34);
-    doc.setTextColor(150, 175, 205); doc.setFont('helvetica', 'normal'); doc.setFontSize(9);
-    doc.text(new Date().toLocaleString('es'), margin, 52);
-
-    let y = 100;
-    doc.setTextColor(18, 26, 38); doc.setFont('helvetica', 'bold'); doc.setFontSize(17);
-    for (const ln of doc.splitTextToSize(String(title || 'Documento'), maxW)) { y = ensurePdfSpace(doc, y, 24); doc.text(ln, margin, y); y += 24; }
-    y += 6;
+    // Título limpio (sin marca de agua) + línea de acento.
+    let y = margin + 8;
+    doc.setTextColor(20, 26, 38); doc.setFont('helvetica', 'bold'); doc.setFontSize(21);
+    for (const ln of doc.splitTextToSize(String(title || 'Documento'), maxW)) { y = ensurePdfSpace(doc, y, 27); doc.text(ln, margin, y); y += 27; }
+    doc.setDrawColor(74, 163, 255); doc.setLineWidth(2.4); doc.line(margin, y - 8, margin + 56, y - 8);
+    y += 16;
 
     for (const raw of String(md || '').split('\n')) {
       const line = raw.replace(/\s+$/, '');
-      if (!line.trim()) { y += 8; continue; }
-      let text = line, size = 11, bold = false, indent = 0;
+      if (!line.trim()) { y += 7; continue; }
+      // Regla horizontal (--- / ***).
+      if (/^\s*([-*_])\1{2,}\s*$/.test(line)) { y = ensurePdfSpace(doc, y, 14); doc.setDrawColor(222, 226, 232); doc.setLineWidth(0.7); doc.line(margin, y, pageW - margin, y); y += 14; continue; }
+      let text = line, size = 10.5, bold = false, indent = 0, gapTop = 0, color = [34, 42, 54];
       const h = line.match(/^(#{1,3})\s+(.*)$/);
       const bullet = line.match(/^\s*[-*]\s+(.*)$/);
       const num = line.match(/^\s*(\d+[.)])\s+(.*)$/);
-      if (h) { size = h[1].length === 1 ? 14 : (h[1].length === 2 ? 12.5 : 11.5); bold = true; text = h[2]; y += 6; }
-      else if (bullet) { text = '•  ' + bullet[1]; indent = 14; }
-      else if (num) { text = num[1] + '  ' + num[2]; indent = 14; }
-      text = text.replace(/\*\*(.+?)\*\*/g, '$1').replace(/\*(.+?)\*/g, '$1').replace(/`(.+?)`/g, '$1');
-      doc.setFont('helvetica', bold ? 'bold' : 'normal'); doc.setFontSize(size); doc.setTextColor(28, 36, 48);
-      const lh = size + 5;
+      if (h) { const lvl = h[1].length; size = lvl === 1 ? 15 : lvl === 2 ? 13 : 11.5; bold = true; text = h[2]; gapTop = lvl === 1 ? 13 : 8; color = [17, 24, 36]; }
+      else if (bullet) { text = '•  ' + bullet[1]; indent = 16; }
+      else if (num) { text = num[1] + '  ' + num[2]; indent = 16; }
+      // Limpia markdown inline que jsPDF no estiliza.
+      text = text.replace(/\*\*(.+?)\*\*/g, '$1').replace(/(^|[^*])\*([^*]+)\*/g, '$1$2').replace(/`([^`]+)`/g, '$1');
+      if (gapTop) y += gapTop;
+      doc.setFont('helvetica', bold ? 'bold' : 'normal'); doc.setFontSize(size); doc.setTextColor(color[0], color[1], color[2]);
+      const lh = size + 5.5;
       for (const w of doc.splitTextToSize(text, maxW - indent)) { y = ensurePdfSpace(doc, y, lh); doc.text(w, margin + indent, y); y += lh; }
       if (h) y += 3;
+    }
+
+    // Pie con número de página (sutil).
+    const pages = doc.internal.getNumberOfPages();
+    for (let i = 1; i <= pages; i += 1) {
+      doc.setPage(i);
+      doc.setFont('helvetica', 'normal'); doc.setFontSize(8.5); doc.setTextColor(150, 158, 170);
+      doc.text(i + ' / ' + pages, pageW - margin, pageH - 26, { align: 'right' });
     }
     return doc.output('datauristring');
   }
@@ -3480,7 +3489,7 @@
 
   async function generatePdf(prompt, convo, wrap, bub) {
     const history = buildCloudMessages(convo, 'pdf');
-    const res = await callEdge({ action: 'chat', feature: 'pdf', model: reasonModel('pdf_gen', 'google/gemini-2.5-flash'), maxTokens: 4000, system: composeSystemWithMemory(PDF_SYSTEM_PROMPT, convo, prompt), messages: history }, state.abort && state.abort.signal);
+    const res = await callEdge({ action: 'chat', feature: 'pdf', model: reasonModel('pdf_gen', 'z-ai/glm-5.2'), maxTokens: 6000, system: composeSystemWithMemory(PDF_SYSTEM_PROMPT, convo, prompt), messages: history }, state.abort && state.abort.signal);
     const data = await res.json().catch(() => ({}));
     if (!res.ok || data.success === false) {
       if (data && data.credits) { state.credits = mergeCredits(state.credits, data.credits); renderCredits(); }
