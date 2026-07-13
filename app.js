@@ -15,6 +15,9 @@
   const FN_URL = SB_URL + (CFG.FUNCTION_PATH || '/functions/v1/lth-ia-cloud');
   const INVITE_FN_URL = SB_URL + (CFG.INVITE_FUNCTION_PATH || '/functions/v1/lth-ia-invites');
   const REST_URL = SB_URL + '/rest/v1/ia_conversations';
+  // Lectura del historial: RPC que descifra en el servidor las filas del propio usuario
+  // (messages viaja cifrado en reposo; ver docs/security/encryption-at-rest-design.md).
+  const CONVOS_RPC_URL = SB_URL + '/rest/v1/rpc/ia_pull_conversations';
   const AUTH_URL = SB_URL + '/auth/v1';
 
   const SESSION_KEY = 'lth_ia_web_session_v1';
@@ -2054,8 +2057,10 @@
     const token = await ensureToken();
     if (!token) return;
     try {
-      const res = await fetch(REST_URL + '?select=id,title,messages,brain,source,updated_at&order=updated_at.desc&limit=80', {
-        headers: { apikey: SB_KEY, Authorization: 'Bearer ' + token }
+      const res = await fetch(CONVOS_RPC_URL, {
+        method: 'POST',
+        headers: { apikey: SB_KEY, Authorization: 'Bearer ' + token, 'Content-Type': 'application/json' },
+        body: '{}'
       });
       if (!res.ok) { console.warn('[sync] pull falló: HTTP ' + res.status, (await res.text().catch(() => '')).slice(0, 200)); return; }
       const rows = await res.json().catch(() => []);

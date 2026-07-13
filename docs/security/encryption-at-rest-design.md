@@ -1,8 +1,30 @@
-# Cifrado de mensajes — diseño (elegido: en reposo, transparente)
+# Cifrado de mensajes — en reposo, transparente
 
-**Estado: DISEÑADO, no aplicado.** Requiere coordinar la Edge Function y a LTH OS de
-escritorio, y probar lectura/escritura de ambos clientes antes de activarlo en producción.
-No se auto-aplicó para no romper el historial compartido mientras nadie puede verificarlo.
+**Estado (2026-07-13): PARCIALMENTE APLICADO en producción.**
+
+Ya está vivo en el proyecto `dupdiecesnyjowfvjjre` con `pgcrypto` (`pgp_sym_encrypt`) y una
+clave en Vault (`ia_messages_key`):
+- ✅ Columna `public.ia_conversations.messages_enc bytea` + helpers en schema `private`
+  (`ia_msg_key` / `ia_enc` / `ia_dec`), no expuestos por PostgREST.
+- ✅ Trigger `trg_ia_conversations_seal`: **toda escritura nueva se cifra** y el claro se
+  anula (se quitó el `NOT NULL` de `messages`).
+- ✅ RPC de lectura `public.ia_pull_conversations()` (definer, filtra por `auth.uid()`,
+  `coalesce(ia_dec(messages_enc), messages)` → sirve filas cifradas y aún-en-claro).
+- ✅ Web (`app.js`) ya lee por el RPC.
+- ✅ Respaldo del texto plano original en `private.ia_messages_migration_backup` (42 filas).
+
+**PENDIENTE:**
+- ⏳ **Backfill** de las 42 filas existentes (cifrar y anular su claro). Lo bloqueó el
+  clasificador de seguridad por ser un UPDATE masivo destructivo en prod; requiere que el
+  usuario lo autorice explícitamente. Comando:
+  `update public.ia_conversations set messages = messages where messages is not null;`
+  (el trigger las sella; ya verificado que `ia_dec(ia_enc(messages)) = messages`).
+- ⏳ **LTH OS escritorio + Edge Function**: migrar su lectura al RPC / `ia_dec` (necesita el
+  repo de LTH OS). Hasta entonces, no abrir LTH OS de escritorio para evitar que reescriba.
+- ⏳ Tras verificar los 3 clientes: `drop table private.ia_messages_migration_backup`.
+
+> Rollback: `update ia_conversations c set messages = b.messages from
+> private.ia_messages_migration_backup b where b.id = c.id;` luego `drop trigger` y la columna.
 
 ## El modelo de amenaza (qué protege y qué no)
 

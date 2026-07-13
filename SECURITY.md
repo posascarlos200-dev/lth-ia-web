@@ -76,7 +76,8 @@ frame-ancestors 'none'
 ## Cifrado de mensajes
 
 Ver [`docs/security/encryption-at-rest-design.md`](docs/security/encryption-at-rest-design.md).
-El tránsito ya va por TLS. El hueco real es **en reposo** (`ia_conversations.messages` en
-texto plano). El diseño elegido es **cifrado en reposo transparente** (pgsodium/Vault): no
-se auto-aplicó porque toca la Edge Function y a LTH OS de escritorio, y debe probarse la
-lectura/escritura de ambos clientes antes de activarlo en producción.
+El tránsito ya va por TLS. El hueco real era **en reposo** (`ia_conversations.messages` en
+texto plano). **Cifrado en reposo transparente (pgcrypto + Vault) ya está PARCIALMENTE
+aplicado** (2026-07-13): trigger que sella toda escritura nueva, RPC de lectura que descifra,
+y la web ya lee por el RPC. **Pendiente:** backfill de las 42 filas existentes (bloqueado por
+el clasificador; requiere autorización explícita) y migrar la lectura de LTH OS/edge function.
