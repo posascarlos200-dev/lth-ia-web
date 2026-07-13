@@ -2052,6 +2052,8 @@
 
   function newConvo() {
     state.activeId = null;
+    // Cada chat nuevo arranca en Auto (no se hereda el Medio/Max del chat anterior).
+    state.autoReason = 'auto'; persistAutoReason(); renderAutoReason();
     renderMessages(); renderConvoList(); syncComposerMode(); closeDrawer();
     el.input && el.input.focus();
   }
@@ -6484,9 +6486,9 @@
       if (level !== 'auto' && !canUsePremium()) { closeAutoReasonPop(); showProModal('reasoning'); return; }
       state.autoReason = level; persistAutoReason(); renderAutoReason(); closeAutoReasonPop();
       setComposerHint(
-        level === 'max' ? 'Auto en Max: uso el modelo más potente (GLM-5.2).'
-          : level === 'medio' ? 'Auto en Medio: modelo equilibrado (Gemini).'
-            : 'Auto: Mady elige el mejor modelo para cada mensaje.'
+        level === 'max' ? 'Auto en Max: uso el modelo más potente para responder.'
+          : level === 'medio' ? 'Auto en Medio: modelo equilibrado.'
+            : 'Auto: Mady elige el mejor para cada mensaje.'
       );
     });
     document.addEventListener('click', (e) => {
