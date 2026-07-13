@@ -3811,6 +3811,240 @@
     if (el.autoReasonPop) el.autoReasonPop.hidden = true;
     if (el.autoReasonBtn) el.autoReasonBtn.setAttribute('aria-expanded', 'false');
   }
+
+  /* ─────────────── Modo voz (beta) · portado de Klave (LTH OS) ───────────────
+   * Manos libres: escucha con VAD, al detectar silencio cierra el turno, manda el
+   * WAV al edge (misma función lth-ia-cloud, modalities text+audio), y reproduce la
+   * respuesta hablada (pcm16 -> WAV). Loop tipo modo voz de GPT. */
+  const V = {
+    active: false, stream: null, ctx: null, analyser: null, source: null,
+    pcmNode: null, sink: null, recorder: null, pcmChunks: [], capturing: false,
+    sampleRate: 0, speechStarted: false, silenceAt: 0, turnStartedAt: 0,
+    discard: false, processing: false, vadFrame: 0, peak: 0, history: [],
+    currentAudio: null, mimeType: ''
+  };
+  const V_THRESHOLD = 0.018, V_SILENCE_MS = 1050, V_MIN_TURN_MS = 520, V_MAX_TURN_MS = 15000;
+  const V_IN_RATE = 16000, V_OUT_RATE = 24000, V_VOICE = 'alloy';
+  const VOICE_SYSTEM = 'Eres Mady, la asistente de voz de LTH IA. Responde en español, cercano, natural y breve (1-3 frases). No leas listas largas ni código en voz alta; resume. No prometas acciones que no puedes hacer por voz.';
+
+  function voiceRecorderMime() {
+    const c = ['audio/webm;codecs=opus', 'audio/webm', 'audio/ogg;codecs=opus', 'audio/ogg'];
+    return c.find((t) => window.MediaRecorder && MediaRecorder.isTypeSupported && MediaRecorder.isTypeSupported(t)) || '';
+  }
+  function voiceSetOrb(cls) {
+    if (!el.voiceOrb) return;
+    el.voiceOrb.classList.remove('is-listening', 'is-thinking', 'is-speaking');
+    if (cls) el.voiceOrb.classList.add(cls);
+  }
+  function voiceSetStatus(txt) { if (el.voiceStatus) el.voiceStatus.textContent = txt || ''; }
+  function voiceSetLevel(l) { if (el.voiceOrb) el.voiceOrb.style.setProperty('--voice-level', Math.max(0, Math.min(1, l * 6)).toFixed(3)); }
+
+  async function openVoiceMode() {
+    if (V.active) return;
+    if (!canUsePremium()) { showProModal('reasoning'); return; }
+    if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia || !window.MediaRecorder) {
+      showError('Este dispositivo no permite grabar el micrófono para la voz.'); return;
+    }
+    el.voiceOverlay.hidden = false;
+    voiceSetOrb(''); voiceSetLevel(0); voiceSetStatus('Preparando micrófono…');
+    try {
+      V.mimeType = voiceRecorderMime();
+      V.stream = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true } });
+      const tracks = V.stream.getAudioTracks();
+      if (!tracks.length || tracks[0].readyState === 'ended') throw new Error('El micrófono no entregó audio.');
+      await voiceSetupAnalyser();
+      V.active = true; V.processing = false; V.history = [];
+      voiceSetStatus('Te escucho. Habla y, al hacer silencio, te respondo.');
+      voiceStartTurn();
+    } catch (e) {
+      voiceSetStatus(voiceMicError(e));
+      setTimeout(() => { if (!V.active) closeVoiceMode(); }, 2800);
+    }
+  }
+  function voiceMicError(e) {
+    const n = String(e && e.name || '');
+    if (n === 'NotAllowedError' || n === 'SecurityError') return 'Permiso de micrófono rechazado. Actívalo para este sitio y reintenta.';
+    if (n === 'NotFoundError') return 'No se encontró ningún micrófono.';
+    if (n === 'NotReadableError') return 'Otra app está usando el micrófono.';
+    return (e && e.message) || 'No pude abrir el micrófono.';
+  }
+  async function voiceSetupAnalyser() {
+    const AC = window.AudioContext || window.webkitAudioContext;
+    if (!AC || !V.stream) throw new Error('Sin AudioContext.');
+    V.ctx = new AC();
+    if (V.ctx.state === 'suspended') { try { await V.ctx.resume(); } catch (_) {} }
+    V.source = V.ctx.createMediaStreamSource(V.stream);
+    V.analyser = V.ctx.createAnalyser(); V.analyser.fftSize = 1024;
+    V.source.connect(V.analyser);
+    V.sampleRate = V.ctx.sampleRate || 48000;
+    try {
+      V.pcmNode = V.ctx.createScriptProcessor(4096, 1, 1);
+      V.pcmNode.onaudioprocess = (ev) => { if (V.capturing) V.pcmChunks.push(new Float32Array(ev.inputBuffer.getChannelData(0))); };
+      V.source.connect(V.pcmNode);
+      V.sink = V.ctx.createGain(); V.sink.gain.value = 0;
+      V.pcmNode.connect(V.sink); V.sink.connect(V.ctx.destination);
+    } catch (_) {}
+  }
+
+  function voiceStartTurn() {
+    if (!V.active || V.processing || !V.stream) return;
+    try {
+      V.pcmChunks = []; V.speechStarted = false; V.silenceAt = 0; V.turnStartedAt = Date.now(); V.discard = false; V.capturing = true; V.peak = 0;
+      V.recorder = new MediaRecorder(V.stream, V.mimeType ? { mimeType: V.mimeType } : undefined);
+      V.recorder.ondataavailable = () => {};
+      V.recorder.onstop = () => {
+        V.capturing = false;
+        const discard = V.discard || !V.active || !V.speechStarted;
+        const blob = voiceEncodeWav(V.pcmChunks, V.sampleRate);
+        V.recorder = null; V.pcmChunks = []; cancelAnimationFrame(V.vadFrame); V.vadFrame = 0;
+        if (discard || blob.size < 2000) { if (V.active && !V.processing) voiceStartTurn(); return; }
+        voiceProcessTurn(blob);
+      };
+      V.recorder.start(250);
+      voiceSetOrb('is-listening'); voiceSetStatus('Te escucho…');
+      voiceMonitor();
+    } catch (e) { voiceSetStatus((e && e.message) || 'No pude iniciar la escucha.'); }
+  }
+  function voiceMonitor() {
+    if (!V.active || V.processing || !V.analyser || !V.recorder || V.recorder.state !== 'recording') return;
+    const data = new Uint8Array(V.analyser.fftSize); V.analyser.getByteTimeDomainData(data);
+    let sum = 0; for (const v of data) { const c = (v - 128) / 128; sum += c * c; }
+    const level = Math.sqrt(sum / data.length); const now = Date.now();
+    if (level > V.peak) V.peak = level; voiceSetLevel(level);
+    if (level > V_THRESHOLD) { V.speechStarted = true; V.silenceAt = 0; }
+    else if (V.speechStarted) {
+      if (!V.silenceAt) V.silenceAt = now;
+      if (now - V.silenceAt > V_SILENCE_MS && now - V.turnStartedAt > V_MIN_TURN_MS) { voiceStopRec(false); return; }
+    }
+    if (V.speechStarted && now - V.turnStartedAt > V_MAX_TURN_MS) { voiceStopRec(false); return; }
+    V.vadFrame = requestAnimationFrame(voiceMonitor);
+  }
+  function voiceStopRec(discard) { V.discard = !!discard; cancelAnimationFrame(V.vadFrame); V.vadFrame = 0; try { if (V.recorder && V.recorder.state === 'recording') V.recorder.stop(); } catch (_) {} }
+
+  // PCM Float32 -> WAV (PCM 16-bit) 16 kHz mono, que el modelo de audio acepta.
+  function voiceFlatten(chunks) { let t = 0; for (const c of chunks) t += c.length; const o = new Float32Array(t); let off = 0; for (const c of chunks) { o.set(c, off); off += c.length; } return o; }
+  function voiceDownsample(s, inR, tgt) { if (!tgt || tgt >= inR) return s; const ratio = inR / tgt; const len = Math.floor(s.length / ratio); const o = new Float32Array(len); for (let i = 0; i < len; i++) { const pos = i * ratio, idx = Math.floor(pos), frac = pos - idx, a = s[idx] || 0, b = s[idx + 1] !== undefined ? s[idx + 1] : a; o[i] = a + (b - a) * frac; } return o; }
+  function voiceEncodeWav(chunks, inR) {
+    const merged = voiceFlatten(chunks); const pcm = voiceDownsample(merged, inR, V_IN_RATE);
+    const rate = (!V_IN_RATE || V_IN_RATE >= inR) ? inR : V_IN_RATE;
+    const buf = new ArrayBuffer(44 + pcm.length * 2); const view = new DataView(buf);
+    const ws = (o, str) => { for (let i = 0; i < str.length; i++) view.setUint8(o + i, str.charCodeAt(i)); };
+    ws(0, 'RIFF'); view.setUint32(4, 36 + pcm.length * 2, true); ws(8, 'WAVE'); ws(12, 'fmt ');
+    view.setUint32(16, 16, true); view.setUint16(20, 1, true); view.setUint16(22, 1, true); view.setUint32(24, rate, true); view.setUint32(28, rate * 2, true); view.setUint16(32, 2, true); view.setUint16(34, 16, true);
+    ws(36, 'data'); view.setUint32(40, pcm.length * 2, true);
+    let off = 44; for (let i = 0; i < pcm.length; i++) { const s = Math.max(-1, Math.min(1, pcm[i])); view.setInt16(off, s < 0 ? s * 0x8000 : s * 0x7FFF, true); off += 2; }
+    return new Blob([view], { type: 'audio/wav' });
+  }
+  function voiceBlobToBase64(blob) { return new Promise((res, rej) => { const r = new FileReader(); r.onload = () => res(String(r.result || '').split(',').pop() || ''); r.onerror = () => rej(new Error('No pude leer el audio.')); r.readAsDataURL(blob); }); }
+
+  // pcm16 (chunks base64 del stream) -> WAV base64 (24 kHz mono) para reproducir.
+  function voicePcm16ToWav(chunksB64, rate) {
+    if (!chunksB64 || !chunksB64.length) return '';
+    const bufs = []; let total = 0;
+    for (const b64 of chunksB64) {
+      try { const bin = atob(String(b64)); const arr = new Uint8Array(bin.length); for (let i = 0; i < bin.length; i++) arr[i] = bin.charCodeAt(i); bufs.push(arr); total += arr.length; } catch (_) {}
+    }
+    if (!total) return '';
+    const pcm = new Uint8Array(total); let off = 0; for (const b of bufs) { pcm.set(b, off); off += b.length; }
+    const out = new Uint8Array(44 + pcm.length); const view = new DataView(out.buffer);
+    const ws = (o, str) => { for (let i = 0; i < str.length; i++) view.setUint8(o + i, str.charCodeAt(i)); };
+    ws(0, 'RIFF'); view.setUint32(4, 36 + pcm.length, true); ws(8, 'WAVE'); ws(12, 'fmt ');
+    view.setUint32(16, 16, true); view.setUint16(20, 1, true); view.setUint16(22, 1, true); view.setUint32(24, rate, true); view.setUint32(28, rate * 2, true); view.setUint16(32, 2, true); view.setUint16(34, 16, true);
+    ws(36, 'data'); view.setUint32(40, pcm.length, true);
+    out.set(pcm, 44);
+    let bin = ''; const CH = 0x8000; for (let i = 0; i < out.length; i += CH) bin += String.fromCharCode.apply(null, out.subarray(i, i + CH));
+    return btoa(bin);
+  }
+
+  async function voiceEdgeCall(wavBase64) {
+    const token = await ensureToken();
+    if (!token) throw ApiError('Tu sesión expiró. Vuelve a entrar.', 401);
+    const messages = [
+      ...V.history.filter((m) => m && (m.role === 'user' || m.role === 'assistant')).map((m) => ({ role: m.role, content: String(m.content || '').slice(0, 1600) })),
+      { role: 'user', content: [{ type: 'input_audio', input_audio: { data: wavBase64, format: 'wav' } }] }
+    ];
+    const payload = {
+      action: 'stream', system: VOICE_SYSTEM,
+      model: reasonModel('voice_model', 'openai/gpt-audio-mini'),
+      messages, modalities: ['text', 'audio'], audio: { voice: V_VOICE, format: 'pcm16' },
+      routerBypass: true, router: { mode: 'klave-voice' }, maxTokens: 1200
+    };
+    const res = await fetch(FN_URL, { method: 'POST', headers: { apikey: SB_KEY, Authorization: 'Bearer ' + token, 'Content-Type': 'application/json', Accept: 'text/event-stream' }, body: JSON.stringify(payload) });
+    const ct = (res.headers.get('content-type') || '').toLowerCase();
+    if (!ct.includes('text/event-stream')) {
+      const data = await res.json().catch(() => ({}));
+      if (data && data.credits) { state.credits = mergeCredits(state.credits, data.credits); renderCredits(); }
+      throw ApiError(data.error || 'No pude conversar por voz.', data.status || res.status, data.credits);
+    }
+    const reader = res.body.getReader(); const dec = new TextDecoder();
+    let buffer = '', text = '', transcript = ''; const audioChunks = []; let credits = null, errored = null;
+    const handle = (evt) => {
+      if (!evt || !evt.type) return;
+      if (evt.type === 'content' && evt.text) text += evt.text;
+      else if (evt.type === 'audio-transcript' && evt.text) transcript += evt.text;
+      else if (evt.type === 'audio' && evt.data) audioChunks.push(String(evt.data));
+      else if (evt.type === 'complete') { if (typeof evt.text === 'string' && evt.text) text = evt.text; if (typeof evt.transcript === 'string' && evt.transcript) transcript = evt.transcript; if (evt.credits) credits = evt.credits; }
+      else if (evt.type === 'error') { errored = evt.error || 'Error en la voz.'; if (evt.credits) credits = evt.credits; }
+    };
+    while (true) {
+      const { value, done } = await reader.read(); if (done) break;
+      buffer += dec.decode(value, { stream: true }).replace(/\r\n/g, '\n');
+      let i = buffer.indexOf('\n\n');
+      while (i >= 0) { const block = buffer.slice(0, i); buffer = buffer.slice(i + 2); const ds = block.split('\n').filter((l) => l.startsWith('data:')).map((l) => l.slice(5).trim()).join('\n').trim(); if (ds) { try { handle(JSON.parse(ds)); } catch (_) {} } i = buffer.indexOf('\n\n'); }
+    }
+    if (credits) { state.credits = mergeCredits(state.credits, credits); renderCredits(); }
+    if (errored && !audioChunks.length) throw ApiError(errored, 500, credits);
+    return { text: (text || transcript || '').trim(), transcript: transcript.trim(), audioBase64: voicePcm16ToWav(audioChunks, V_OUT_RATE) };
+  }
+
+  function voicePlay(wavB64) {
+    return new Promise((resolve) => {
+      try {
+        if (V.currentAudio) { try { V.currentAudio.pause(); } catch (_) {} V.currentAudio = null; }
+        const audio = new Audio('data:audio/wav;base64,' + wavB64);
+        V.currentAudio = audio; voiceSetOrb('is-speaking');
+        const done = () => { if (V.currentAudio === audio) V.currentAudio = null; resolve(); };
+        audio.addEventListener('ended', done, { once: true });
+        audio.addEventListener('error', done, { once: true });
+        audio.play().catch(done);
+      } catch (_) { resolve(); }
+    });
+  }
+
+  async function voiceProcessTurn(blob) {
+    if (!V.active) return;
+    V.processing = true; voiceSetOrb('is-thinking'); voiceSetStatus('Mady está pensando…');
+    try {
+      const wavB64 = await voiceBlobToBase64(blob);
+      const result = await voiceEdgeCall(wavB64);
+      if (!V.active) return;
+      V.history.push({ role: 'user', content: result.transcript || 'Mensaje de voz' });
+      if (result.text) V.history.push({ role: 'assistant', content: result.text });
+      V.history = V.history.slice(-8);
+      if (result.audioBase64) { voiceSetStatus(''); await voicePlay(result.audioBase64); }
+      else if (result.text) { voiceSetStatus(result.text); }
+      if (!V.active) return;
+      V.processing = false; voiceSetStatus('Te escucho de nuevo.'); voiceStartTurn();
+    } catch (e) {
+      V.processing = false;
+      if (V.active) { voiceSetOrb(''); voiceSetStatus((e && e.message) || 'No pude conversar por voz.'); setTimeout(() => { if (V.active && !V.processing) voiceStartTurn(); }, 1600); }
+    }
+  }
+
+  function closeVoiceMode() {
+    V.active = false; V.processing = false; V.capturing = false; V.pcmChunks = [];
+    cancelAnimationFrame(V.vadFrame); V.vadFrame = 0;
+    try { if (V.recorder && V.recorder.state === 'recording') V.recorder.stop(); } catch (_) {} V.recorder = null;
+    if (V.currentAudio) { try { V.currentAudio.pause(); } catch (_) {} V.currentAudio = null; }
+    try { V.pcmNode && V.pcmNode.disconnect(); } catch (_) {}
+    try { V.sink && V.sink.disconnect(); } catch (_) {}
+    try { V.source && V.source.disconnect(); } catch (_) {}
+    V.pcmNode = V.sink = V.source = null; V.analyser = null;
+    if (V.stream) { V.stream.getTracks().forEach((t) => t.stop()); V.stream = null; }
+    if (V.ctx) { try { V.ctx.close(); } catch (_) {} V.ctx = null; }
+    voiceSetOrb(''); voiceSetLevel(0);
+    if (el.voiceOverlay) el.voiceOverlay.hidden = true;
+  }
   // Banner de upsell a Plan Pro (cuando un usuario free toca algo premium).
   function showProModal(context) {
     if (!el.proModal) return;
@@ -6494,6 +6728,10 @@
     document.addEventListener('click', (e) => {
       if (el.autoReasonPop && !el.autoReasonPop.hidden && !el.autoReasonPop.contains(e.target) && el.autoReasonBtn && !el.autoReasonBtn.contains(e.target)) closeAutoReasonPop();
     });
+    // Modo voz (beta)
+    if (el.voiceBtn) el.voiceBtn.addEventListener('click', () => openVoiceMode());
+    if (el.voiceOverlay) el.voiceOverlay.addEventListener('click', (e) => { if (e.target.closest && e.target.closest('[data-voice-close]')) closeVoiceMode(); });
+    document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && V.active) closeVoiceMode(); });
     if (el.themeSeg) el.themeSeg.addEventListener('click', (e) => {
       const b = e.target.closest('[data-theme]');
       if (b) applyTheme(b.getAttribute('data-theme'));
@@ -6950,6 +7188,7 @@
     el.programBtn = $('#programBtn'); el.programModal = $('#programModal'); el.programClose = $('#programClose'); el.programBody = $('#programBody');
     el.modelPickerBtn = $('#modelPickerBtn'); el.modelPickerLabel = $('#modelPickerLabel'); el.modelMenu = $('#modelMenu'); el.composerHint = $('#composerHint');
     el.autoReasonBtn = $('#autoReasonBtn'); el.autoReasonPop = $('#autoReasonPop'); el.autoReasonTag = $('#autoReasonTag');
+    el.voiceBtn = $('#voiceBtn'); el.voiceOverlay = $('#voiceOverlay'); el.voiceOrb = $('#voiceOrb'); el.voiceStatus = $('#voiceStatus');
     el.proModal = $('#proModal'); el.proClose = $('#proClose'); el.proBuyBtn = $('#proBuyBtn'); el.proSub = $('#proSub');
     el.osPromoModal = $('#osPromoModal'); el.osPromoClose = $('#osPromoClose'); el.osPromoSkip = $('#osPromoSkip');
     el.osPromoDownload = $('#osPromoDownload'); el.osPromoNote = $('#osPromoNote'); el.osPromoTitle = null;

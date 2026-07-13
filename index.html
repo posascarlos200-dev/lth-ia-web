@@ -259,6 +259,9 @@
           <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"/><circle cx="12" cy="13" r="4"/></svg>
         </button>
         <textarea id="input" rows="1" placeholder="Escribe a Mady…" autocomplete="off"></textarea>
+        <button id="voiceBtn" class="voice-btn" type="button" aria-label="Conversar por voz con Mady" title="Conversar por voz (beta)">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5 11a7 7 0 0 0 14 0M12 18v3"/></svg>
+        </button>
         <button id="sendBtn" class="send-btn" type="submit" aria-label="Enviar">
           <svg viewBox="0 0 24 24" class="ic-send"><path d="M4 12l16-8-6 8 6 8-16-8z"/></svg>
           <svg viewBox="0 0 24 24" class="ic-stop" hidden><rect x="6" y="6" width="12" height="12" rx="2"/></svg>
@@ -267,6 +270,18 @@
     </form>
     <input type="file" id="fileInput" accept="image/*,application/pdf,text/*,.pdf,.md,.csv,.json,.js,.ts,.jsx,.tsx,.py,.html,.css,.xml,.yaml,.yml,.sql,.sh" multiple hidden />
     <input type="file" id="cameraInput" accept="image/*" capture="environment" hidden />
+
+    <!-- Modo voz (beta): rueda estilo Klave -->
+    <div id="voiceOverlay" class="voice-overlay" hidden>
+      <div class="voice-scrim" data-voice-close="1"></div>
+      <div class="voice-orbwrap">
+        <button class="voice-close" type="button" data-voice-close="1" aria-label="Cerrar voz">✕</button>
+        <span class="voice-kicker">Mady · Voz <span class="voice-beta">beta</span></span>
+        <div id="voiceOrb" class="voice-orb"></div>
+        <div class="voice-title">Hablando con Mady</div>
+        <div id="voiceStatus" class="voice-status" role="status" aria-live="polite">Preparando micrófono…</div>
+      </div>
+    </div>
 
     <!-- Programar: asistente interactivo -->
     <div id="programModal" class="program-modal" hidden>
