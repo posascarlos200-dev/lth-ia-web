@@ -252,6 +252,7 @@
     imageMode: false,     // "Imagen": el siguiente envio genera una imagen
     pdfMode: false,       // "PDF": el siguiente envio prepara un documento PDF
     pendingAttachments: [], // fotos/imagenes adjuntas al proximo envio (para leerlas con vision)
+    autoReason: 'medio',    // nivel de razonamiento en modo Auto: 'medio' (Gemini) | 'max' (mady_max)
     program: null,        // sesion activa del asistente { active, convo, request, answers, plan, busy }
     programEdit: null,    // edicion en curso de una pagina ya hecha { doc, convo }
     manualModel: 'auto'   // 'auto' = ruteo automatico; o un id de MANUAL_MODELS
@@ -2700,6 +2701,14 @@
         if (convo.mode !== 'create') { convo.mode = 'create'; syncComposerMode(); }
       }
 
+      // Razonamiento automatico "Max" en modo Auto: sube el turno al modelo mas potente
+      // (mady_max, editable en el Admin). No aplica a saludos triviales ni a modelo manual.
+      if (state.autoReason === 'max' && canUsePremium() && !manualAllowed && !trivialAuto) {
+        routeOpts = routeOpts || {};
+        routeOpts.model = reasonModel('mady_max', 'z-ai/glm-5.2');
+        if (!routeOpts.maxTokens || routeOpts.maxTokens < 2400) routeOpts.maxTokens = 2400;
+      }
+
       let started = false;
       const result = await streamChat(convo, text, (full) => {
         if (!started) { started = true; bub.classList.add('cursor'); }
@@ -3765,6 +3774,30 @@
     else if (state.manualModel === 'free') state.manualModel = 'auto';
     if (el.modelPickerLabel) el.modelPickerLabel.textContent = 'Mady';
     if (el.modelLabel) el.modelLabel.textContent = 'LTH IA';
+    renderAutoReason();
+  }
+
+  /* ── Nivel de razonamiento en modo Auto: Medio (Gemini) / Max (mady_max) ── */
+  const AUTOREASON_KEY = 'lth_ia_auto_reason';
+  function loadAutoReason() {
+    try { state.autoReason = localStorage.getItem(AUTOREASON_KEY) === 'max' ? 'max' : 'medio'; } catch (_) { state.autoReason = 'medio'; }
+  }
+  function persistAutoReason() { try { localStorage.setItem(AUTOREASON_KEY, state.autoReason === 'max' ? 'max' : 'medio'); } catch (_) {} }
+  function renderAutoReason() {
+    const isMax = state.autoReason === 'max';
+    if (el.autoReasonTag) el.autoReasonTag.hidden = !isMax;
+    if (el.autoReasonBtn) el.autoReasonBtn.classList.toggle('is-max', isMax);
+    if (el.autoReasonPop) {
+      el.autoReasonPop.querySelectorAll('[data-auto-reason]').forEach((b) => {
+        const on = b.getAttribute('data-auto-reason') === state.autoReason;
+        b.classList.toggle('on', on);
+        b.setAttribute('aria-checked', on ? 'true' : 'false');
+      });
+    }
+  }
+  function closeAutoReasonPop() {
+    if (el.autoReasonPop) el.autoReasonPop.hidden = true;
+    if (el.autoReasonBtn) el.autoReasonBtn.setAttribute('aria-expanded', 'false');
   }
   // Banner de upsell a Plan Pro (cuando un usuario free toca algo premium).
   function showProModal(context) {
@@ -6325,6 +6358,7 @@
   }
 
   function bindApp() {
+    loadAutoReason(); renderAutoReason();
     el.menuBtn.addEventListener('click', () => {
       if (isDesktopLayout()) {
         setSidebarCollapsed(!el.appScreen.classList.contains('sidebar-collapsed'));
@@ -6421,6 +6455,26 @@
       if (!b) return;
       state.pendingAttachments.splice(Number(b.getAttribute('data-att-remove')), 1);
       renderAttachPreview();
+    });
+    // Nivel de razonamiento en Auto (Medio / Max)
+    if (el.autoReasonBtn) el.autoReasonBtn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      if (!el.autoReasonPop) return;
+      const willOpen = el.autoReasonPop.hidden;
+      el.autoReasonPop.hidden = !willOpen;
+      el.autoReasonBtn.setAttribute('aria-expanded', willOpen ? 'true' : 'false');
+      if (willOpen) renderAutoReason();
+    });
+    if (el.autoReasonPop) el.autoReasonPop.addEventListener('click', (e) => {
+      const opt = e.target.closest('[data-auto-reason]');
+      if (!opt) return;
+      const level = opt.getAttribute('data-auto-reason') === 'max' ? 'max' : 'medio';
+      if (level === 'max' && !canUsePremium()) { closeAutoReasonPop(); showProModal('reasoning'); return; }
+      state.autoReason = level; persistAutoReason(); renderAutoReason(); closeAutoReasonPop();
+      setComposerHint(level === 'max' ? 'Auto en Max: uso el modelo más potente para responder.' : 'Auto en Medio: rápido y equilibrado.');
+    });
+    document.addEventListener('click', (e) => {
+      if (el.autoReasonPop && !el.autoReasonPop.hidden && !el.autoReasonPop.contains(e.target) && el.autoReasonBtn && !el.autoReasonBtn.contains(e.target)) closeAutoReasonPop();
     });
     if (el.themeSeg) el.themeSeg.addEventListener('click', (e) => {
       const b = e.target.closest('[data-theme]');
@@ -6877,6 +6931,7 @@
     el.fileInput = $('#fileInput'); el.cameraInput = $('#cameraInput'); el.attachPreview = $('#attachPreview');
     el.programBtn = $('#programBtn'); el.programModal = $('#programModal'); el.programClose = $('#programClose'); el.programBody = $('#programBody');
     el.modelPickerBtn = $('#modelPickerBtn'); el.modelPickerLabel = $('#modelPickerLabel'); el.modelMenu = $('#modelMenu'); el.composerHint = $('#composerHint');
+    el.autoReasonBtn = $('#autoReasonBtn'); el.autoReasonPop = $('#autoReasonPop'); el.autoReasonTag = $('#autoReasonTag');
     el.proModal = $('#proModal'); el.proClose = $('#proClose'); el.proBuyBtn = $('#proBuyBtn'); el.proSub = $('#proSub');
     el.osPromoModal = $('#osPromoModal'); el.osPromoClose = $('#osPromoClose'); el.osPromoSkip = $('#osPromoSkip');
     el.osPromoDownload = $('#osPromoDownload'); el.osPromoNote = $('#osPromoNote'); el.osPromoTitle = null;
