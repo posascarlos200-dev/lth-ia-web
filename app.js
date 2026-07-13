@@ -2722,16 +2722,16 @@
       // Nivel del Auto (todos toman el modelo del Admin · Módulos > Mady). max fija Mady Max;
       // medio fija Mady Auto; auto usa lo que decidió el router (ya mapeado a mady_auto/mady_max)
       // y, si el router no dejó modelo, se fuerza mady_auto para NUNCA caer al default del edge.
-      if (canUsePremium() && !manualAllowed && !trivialAuto) {
+      // Max/Medio SIEMPRE usan su modelo fijo (aunque el mensaje sea corto/trivial). Solo
+      // Auto respeta el ruteo barato de los saludos.
+      if (canUsePremium() && !manualAllowed) {
         if (state.autoReason === 'max') {
-          // Max: SIEMPRE el modelo fijo de Mady Max (sin router).
           routeOpts = routeOpts || {}; routeOpts.model = reasonModel('mady_max', 'z-ai/glm-5.2');
           if (!routeOpts.maxTokens || routeOpts.maxTokens < 2400) routeOpts.maxTokens = 2400;
         } else if (state.autoReason === 'medio') {
-          // Medio: SIEMPRE el modelo fijo de Mady Medio (sin router).
           routeOpts = routeOpts || {}; routeOpts.model = reasonModel('mady_medio', 'google/gemini-2.5-flash');
-        } else if (!routeOpts || !routeOpts.model) {
-          // Auto sin modelo del router -> tier estándar del Admin (nunca el default del edge).
+        } else if (!trivialAuto && (!routeOpts || !routeOpts.model)) {
+          // Auto sin modelo del router (y no trivial) -> tier estándar del Admin.
           routeOpts = routeOpts || {}; routeOpts.model = reasonModel('auto_standard', 'google/gemini-2.5-flash');
         }
       }
