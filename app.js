@@ -2402,6 +2402,18 @@
     return m || fallback;
   }
 
+  // En modo Auto el router elige el TIER, pero el MODELO viene del Admin: mady_auto para lo
+  // cotidiano y mady_max para lo pesado. Así Auto obedece lo que pongas en Módulos > Mady.
+  // (code/image/web/files conservan su modelo especializado del router.)
+  function autoRouteModel(route) {
+    const base = route && route.model;
+    if (!base) return base;
+    const tier = String(route.tier || '');
+    if (tier === 'premium' || tier === 'max') return reasonModel('mady_max', base);
+    if (tier === 'cheap' || tier === 'standard') return reasonModel('mady_auto', base);
+    return base;
+  }
+
   function renderConvoList() {
     if (!el.convoList) return;
     if (!state.convos.length) {
@@ -2666,7 +2678,7 @@
           await generateImage(text, convo, wrap, bub);
           return;
         }
-        if (route) routeOpts = { model: route.model, maxTokens: route.maxTokens, temperature: route.temperature, reasoning: route.reasoning, system: route.system };
+        if (route) routeOpts = { model: autoRouteModel(route), maxTokens: route.maxTokens, temperature: route.temperature, reasoning: route.reasoning, system: route.system };
         if (route && route.tier) bub.innerHTML = engineThinkingHtml(route.tier);
         if (!routeOpts && isFreePlan()) {
           const researchIntent = detectFreeResearchIntent(text);
