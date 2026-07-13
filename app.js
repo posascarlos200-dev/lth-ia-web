@@ -3993,22 +3993,55 @@
       while (i >= 0) { const block = buffer.slice(0, i); buffer = buffer.slice(i + 2); const ds = block.split('\n').filter((l) => l.startsWith('data:')).map((l) => l.slice(5).trim()).join('\n').trim(); if (ds) { try { handle(JSON.parse(ds)); } catch (_) {} } i = buffer.indexOf('\n\n'); }
     }
     if (credits) { state.credits = mergeCredits(state.credits, credits); renderCredits(); }
+    try { console.log('[Voz] respuesta', { audioChunks: audioChunks.length, textLen: (text || '').length, transcriptLen: (transcript || '').length, err: errored || null }); } catch (_) {}
     if (errored && !audioChunks.length) throw ApiError(errored, 500, credits);
     return { text: (text || transcript || '').trim(), transcript: transcript.trim(), audioBase64: voicePcm16ToWav(audioChunks, V_OUT_RATE) };
   }
 
+  // Reproduce la respuesta. Preferimos el AudioContext (ya desbloqueado por el gesto de
+  // abrir la voz): los navegadores BLOQUEAN new Audio().play() sin gesto reciente, pero NO
+  // bloquean Web Audio una vez reanudado. En Electron (Klave) no pasaba; en web sí.
   function voicePlay(wavB64) {
     return new Promise((resolve) => {
+      let settled = false;
+      const finish = () => { if (settled) return; settled = true; resolve(); };
       try {
-        if (V.currentAudio) { try { V.currentAudio.pause(); } catch (_) {} V.currentAudio = null; }
-        const audio = new Audio('data:audio/wav;base64,' + wavB64);
-        V.currentAudio = audio; voiceSetOrb('is-speaking');
-        const done = () => { if (V.currentAudio === audio) V.currentAudio = null; resolve(); };
-        audio.addEventListener('ended', done, { once: true });
-        audio.addEventListener('error', done, { once: true });
-        audio.play().catch(done);
-      } catch (_) { resolve(); }
+        if (V.ctx && typeof V.ctx.decodeAudioData === 'function') {
+          if (V.ctx.state === 'suspended') { try { V.ctx.resume(); } catch (_) {} }
+          const bytes = Uint8Array.from(atob(wavB64), (c) => c.charCodeAt(0));
+          voiceSetOrb('is-speaking');
+          let decoded = false;
+          const onOk = (buf) => {
+            if (decoded) return; decoded = true;
+            try {
+              const src = V.ctx.createBufferSource();
+              src.buffer = buf; src.connect(V.ctx.destination);
+              V.currentSource = src;
+              src.onended = () => { if (V.currentSource === src) V.currentSource = null; finish(); };
+              src.start(0);
+            } catch (_) { voicePlayAudioEl(wavB64, finish); }
+          };
+          const onErr = () => { if (decoded) return; decoded = true; voicePlayAudioEl(wavB64, finish); };
+          try {
+            const ret = V.ctx.decodeAudioData(bytes.buffer, onOk, onErr);
+            if (ret && typeof ret.then === 'function') ret.then(onOk, onErr);
+          } catch (_) { onErr(); }
+          return;
+        }
+      } catch (_) {}
+      voicePlayAudioEl(wavB64, finish);
     });
+  }
+  function voicePlayAudioEl(wavB64, done) {
+    try {
+      if (V.currentAudio) { try { V.currentAudio.pause(); } catch (_) {} V.currentAudio = null; }
+      const audio = new Audio('data:audio/wav;base64,' + wavB64);
+      V.currentAudio = audio; voiceSetOrb('is-speaking');
+      const fin = () => { if (V.currentAudio === audio) V.currentAudio = null; done(); };
+      audio.addEventListener('ended', fin, { once: true });
+      audio.addEventListener('error', fin, { once: true });
+      const p = audio.play(); if (p && p.catch) p.catch(fin);
+    } catch (_) { done(); }
   }
 
   async function voiceProcessTurn(blob) {
@@ -4021,8 +4054,8 @@
       V.history.push({ role: 'user', content: result.transcript || 'Mensaje de voz' });
       if (result.text) V.history.push({ role: 'assistant', content: result.text });
       V.history = V.history.slice(-8);
-      if (result.audioBase64) { voiceSetStatus(''); await voicePlay(result.audioBase64); }
-      else if (result.text) { voiceSetStatus(result.text); }
+      voiceSetStatus(result.text || (result.audioBase64 ? 'Respondiendo…' : 'No te escuché bien, ¿me repites?'));
+      if (result.audioBase64) { await voicePlay(result.audioBase64); }
       if (!V.active) return;
       V.processing = false; voiceSetStatus('Te escucho de nuevo.'); voiceStartTurn();
     } catch (e) {
@@ -4036,6 +4069,7 @@
     cancelAnimationFrame(V.vadFrame); V.vadFrame = 0;
     try { if (V.recorder && V.recorder.state === 'recording') V.recorder.stop(); } catch (_) {} V.recorder = null;
     if (V.currentAudio) { try { V.currentAudio.pause(); } catch (_) {} V.currentAudio = null; }
+    if (V.currentSource) { try { V.currentSource.stop(); } catch (_) {} V.currentSource = null; }
     try { V.pcmNode && V.pcmNode.disconnect(); } catch (_) {}
     try { V.sink && V.sink.disconnect(); } catch (_) {}
     try { V.source && V.source.disconnect(); } catch (_) {}
