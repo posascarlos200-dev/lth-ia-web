@@ -247,6 +247,8 @@
     reasonModels: null,   // config de modelos del razonamiento por etapa (editable en admin)
     createMode: false,    // "Crear algo": fuerza generar HTML/CSS/JS visualizable
     programMode: false,   // herramienta "Programar": el siguiente envio abre el asistente
+    imageMode: false,     // "Imagen": el siguiente envio genera una imagen
+    pdfMode: false,       // "PDF": el siguiente envio prepara un documento PDF
     program: null,        // sesion activa del asistente { active, convo, request, answers, plan, busy }
     programEdit: null,    // edicion en curso de una pagina ya hecha { doc, convo }
     manualModel: 'auto'   // 'auto' = ruteo automatico; o un id de MANUAL_MODELS
@@ -2286,24 +2288,76 @@
     el.usageFill.classList.toggle('warn', alertPct >= 70 && alertPct < 95);
     el.usageFill.classList.toggle('danger', alertPct >= 95);
 
-    // Panel detallado (settings): semana (principal) + mes + ventana. Solo %.
+    // Sub-linea de la ventana: cuanto falta para restablecerse.
+    const windowResetSecs = secsUntil(c.window_resets_at);
+    if (el.usageReset) {
+      if (inCooldown) el.usageReset.textContent = '⏸ En pausa · vuelve ' + fmtTime(c.cooldown_until);
+      else if (windowResetSecs != null && windowPct > 0) el.usageReset.textContent = '↻ Se reinicia en ' + fmtDuration(windowResetSecs);
+      else el.usageReset.textContent = '✓ Ventana disponible';
+      el.usageReset.hidden = false;
+    }
+
+    // Panel detallado (dropdown): semana + ventana (sin mes), con tiempo de reinicio.
     el.cpPlan.textContent = plan.toUpperCase() + (c.plan_active ? '' : ' · inactivo');
-    const setBar = (barEl, txtEl, pct) => {
+    const setBar = (barEl, txtEl, pct, resetSecs) => {
+      if (!barEl || !txtEl) return;
       const p = clampPct(pct);
       barEl.style.width = p + '%';
-      txtEl.textContent = Math.round(p) + '%';
+      txtEl.textContent = Math.round(p) + '%' + (resetSecs != null && p > 0 ? ' · ' + fmtDuration(resetSecs) : '');
     };
-    setBar(el.cpWeek, el.cpWeekTxt, c.weekly_usage_percent);
-    setBar(el.cpMonth, el.cpMonthTxt, c.monthly_usage_percent);
-    setBar(el.cpWindow, el.cpWindowTxt, c.window_usage_percent);
+    setBar(el.cpWeek, el.cpWeekTxt, c.weekly_usage_percent, secsUntil(c.weekly_resets_at));
+    setBar(el.cpWindow, el.cpWindowTxt, c.window_usage_percent, windowResetSecs);
     let note = '';
     if (inCooldown) note = 'Llegaste al limite de la ventana actual. Se reactiva ' + fmtTime(c.cooldown_until) + '.';
     else if (plan === 'free') note = 'Plan free: chat de texto. Pasa a Pro para mas modelos e imagenes.';
     el.cpNote.textContent = note;
+
+    // Seccion Uso en Configuracion (Ventana + Semanal, con reinicio).
+    renderUsageConfig(c, windowResetSecs);
+  }
+
+  function renderUsageConfig(c, windowResetSecs) {
+    if (!el.cfgWindowFill) return;
+    if (el.cfgPlanPill) el.cfgPlanPill.textContent = String(c.plan || 'free').toUpperCase() + (c.plan_active ? '' : ' · inactivo');
+    const wPct = clampPct(c.window_usage_percent);
+    const weekPct = clampPct(c.weekly_usage_percent);
+    const winReset = windowResetSecs != null ? windowResetSecs : secsUntil(c.window_resets_at);
+    const weekReset = secsUntil(c.weekly_resets_at);
+    const days = Number(c.weekly_window_days) || 7;
+    el.cfgWindowFill.style.width = wPct + '%';
+    el.cfgWindowTxt.textContent = Math.round(wPct) + '%';
+    el.cfgWeekFill.style.width = weekPct + '%';
+    el.cfgWeekTxt.textContent = Math.round(weekPct) + '%';
+    el.cfgWindowReset.textContent = (winReset != null && wPct > 0) ? 'Se reinicia en ' + fmtDuration(winReset) : 'Disponible · sin consumo en esta ventana';
+    el.cfgWeekReset.textContent = weekReset != null ? 'Se reinicia en ' + fmtDuration(weekReset) + ' · ciclo de ' + days + ' días' : 'Ciclo de ' + days + ' días';
+    el.cfgWindowFill.classList.toggle('warn', wPct >= 70 && wPct < 95);
+    el.cfgWindowFill.classList.toggle('danger', wPct >= 95);
+    el.cfgWeekFill.classList.toggle('warn', weekPct >= 70 && weekPct < 95);
+    el.cfgWeekFill.classList.toggle('danger', weekPct >= 95);
   }
 
   function fmtTime(v) {
     try { return new Date(v).toLocaleString([], { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' }); } catch (_) { return ''; }
+  }
+
+  // Segundos restantes hasta un timestamp ISO (null si no aplica). Se calcula en vivo.
+  function secsUntil(ts) {
+    if (!ts) return null;
+    const t = new Date(ts).getTime();
+    if (!isFinite(t)) return null;
+    return Math.max(0, Math.floor((t - Date.now()) / 1000));
+  }
+
+  // Duracion humana compacta: "2h 14m", "3d 5h", "45m", "menos de 1 min".
+  function fmtDuration(secs) {
+    let s = Math.max(0, Math.floor(Number(secs) || 0));
+    if (s < 60) return 'menos de 1 min';
+    const d = Math.floor(s / 86400); s -= d * 86400;
+    const h = Math.floor(s / 3600); s -= h * 3600;
+    const m = Math.floor(s / 60);
+    if (d > 0) return d + 'd ' + h + 'h';
+    if (h > 0) return h + 'h ' + m + 'm';
+    return m + 'm';
   }
 
   // El razonamiento ya no tiene usos semanales (se cobra por tokens). Solo cargamos la
@@ -2449,8 +2503,9 @@
       return;
     }
 
-    const wantImage = looksLikeImageRequest(text);
-    const wantPdf = !wantImage && looksLikePdfRequest(text);
+    // Los modulos Imagen/PDF fuerzan el modo; si no, se detecta por la intencion del texto.
+    const wantImage = state.imageMode || looksLikeImageRequest(text);
+    const wantPdf = !wantImage && (state.pdfMode || looksLikePdfRequest(text));
     if ((wantImage || wantPdf) && !canUsePremium()) {
       const what = wantImage ? 'La generacion de imagenes' : 'La generacion de PDF';
       const note = what + ' es del plan **Pro**. Con tu plan actual puedo ayudarte con texto; mejora a Pro para desbloquearlo.';
@@ -3844,6 +3899,18 @@
     el.createBtn.setAttribute('aria-pressed', state.createMode ? 'true' : 'false');
   }
 
+  function renderImageBtn() {
+    if (!el.imageBtn) return;
+    el.imageBtn.classList.toggle('on', !!state.imageMode);
+    el.imageBtn.setAttribute('aria-pressed', state.imageMode ? 'true' : 'false');
+  }
+
+  function renderPdfBtn() {
+    if (!el.pdfBtn) return;
+    el.pdfBtn.classList.toggle('on', !!state.pdfMode);
+    el.pdfBtn.setAttribute('aria-pressed', state.pdfMode ? 'true' : 'false');
+  }
+
   // Cada chat queda dedicado a un modo (program/reason/create) una vez usado. Esto bloquea
   // los otros chips para no mezclar modos en el mismo chat.
   function syncComposerMode() {
@@ -3859,6 +3926,9 @@
     apply(el.reasonBtn, mode === 'reason', state.reasoning);
     apply(el.programBtn, mode === 'program', state.programMode);
     apply(el.createBtn, mode === 'create', state.createMode);
+    // Imagen/PDF no fijan el modo del chat (son de un solo envio); se deshabilitan si el chat quedo bloqueado en otro modo.
+    apply(el.imageBtn, false, state.imageMode);
+    apply(el.pdfBtn, false, state.pdfMode);
     if (el.modelPickerBtn) { el.modelPickerBtn.disabled = lock; el.modelPickerBtn.classList.toggle('locked', lock); }
   }
 
@@ -6044,6 +6114,7 @@
     setEngineToggleVisual(on);
     el.engineStatus.className = 'engine-status' + (on ? ' ok' : '');
     el.engineStatus.textContent = on ? '✅ Motor LTH OS activado' : 'Motor web (estándar)';
+    if (state.credits) renderCredits();   // refresca la seccion Uso al abrir
   }
   function closeSettings() { el.settingsModal.hidden = true; }
   function persistEngine() { try { localStorage.setItem(ENGINE_KEY, state.engine); } catch (_) {} }
@@ -6100,10 +6171,15 @@
     el.settingsClose.addEventListener('click', closeSettings);
     el.settingsModal.addEventListener('click', (e) => { if (e.target === el.settingsModal) closeSettings(); });
     el.engineToggle.addEventListener('click', toggleEngine);
-    el.creditsBtn.addEventListener('click', () => { el.creditsPanel.hidden = !el.creditsPanel.hidden; });
+    el.creditsBtn.addEventListener('click', () => {
+      el.creditsPanel.hidden = !el.creditsPanel.hidden;
+      if (!el.creditsPanel.hidden && state.credits) renderCredits();
+    });
     document.addEventListener('click', (e) => {
       if (!el.creditsPanel.hidden && !el.creditsPanel.contains(e.target) && !el.creditsBtn.contains(e.target)) el.creditsPanel.hidden = true;
     });
+    // El tiempo de reinicio se calcula de timestamps absolutos; refrescar cada minuto lo mantiene vivo.
+    setInterval(() => { if (state.credits) renderCredits(); }, 60000);
 
     el.composer.addEventListener('submit', (e) => {
       e.preventDefault();
@@ -6140,6 +6216,26 @@
         if (state.programMode) { state.programMode = false; persistProgram(); renderProgramBtn(); }
         setComposerHint('Modo crear: describe la pagina o mini-app y la IA la genera en HTML (con Vista previa).');
       }
+    });
+    // Deja solo el modulo `keep` activo (apaga los demas modos exclusivos).
+    function clearOtherModes(keep) {
+      if (keep !== 'image' && state.imageMode) { state.imageMode = false; renderImageBtn(); }
+      if (keep !== 'pdf' && state.pdfMode) { state.pdfMode = false; renderPdfBtn(); }
+      if (keep !== 'program' && state.programMode) { state.programMode = false; persistProgram(); renderProgramBtn(); }
+      if (keep !== 'reason' && state.reasoning) { state.reasoning = false; persistReason(); renderReasonBtn(); }
+      if (keep !== 'create' && state.createMode) { state.createMode = false; renderCreateBtn(); }
+    }
+    if (el.imageBtn) el.imageBtn.addEventListener('click', () => {
+      if (el.imageBtn.disabled) return;
+      if (!canUsePremium()) { showProModal('image'); return; }
+      state.imageMode = !state.imageMode; renderImageBtn();
+      if (state.imageMode) { clearOtherModes('image'); setComposerHint('Modo Imagen: describe la imagen y Mady la genera.'); }
+    });
+    if (el.pdfBtn) el.pdfBtn.addEventListener('click', () => {
+      if (el.pdfBtn.disabled) return;
+      if (!canUsePremium()) { showProModal('pdf'); return; }
+      state.pdfMode = !state.pdfMode; renderPdfBtn();
+      if (state.pdfMode) { clearOtherModes('pdf'); setComposerHint('Modo PDF: describe el documento y Mady lo prepara para descargar.'); }
     });
     if (el.themeSeg) el.themeSeg.addEventListener('click', (e) => {
       const b = e.target.closest('[data-theme]');
@@ -6512,15 +6608,18 @@
     el.resetMsg = $('#resetMsg'); el.resetHavePinBtn = $('#resetHavePinBtn'); el.resetBackBtn = $('#resetBackBtn');
     el.menuBtn = $('#menuBtn'); el.statusDot = $('#statusDot'); el.modelLabel = $('#modelLabel'); el.engineBadge = $('#engineBadge');
     el.creditsBtn = $('#creditsBtn'); el.planTag = $('#planTag');
-    el.usageFill = $('#usageFill'); el.usageVal = $('#usageVal'); el.usageLabel = $('#usageLabel');
+    el.usageFill = $('#usageFill'); el.usageVal = $('#usageVal'); el.usageLabel = $('#usageLabel'); el.usageReset = $('#usageReset');
     el.newChatTop = $('#newChatTop');
     el.rewardsTop = $('#rewardsTop'); el.rewardsModal = $('#rewardsModal'); el.rewardsClose = $('#rewardsClose'); el.rewardsBody = $('#rewardsBody');
     el.dislikeModal = $('#dislikeModal'); el.dislikeClose = $('#dislikeClose'); el.dislikeText = $('#dislikeText');
     el.dislikeSend = $('#dislikeSend'); el.dislikeSkip = $('#dislikeSkip');
     el.creditsPanel = $('#creditsPanel'); el.cpPlan = $('#cpPlan');
-    el.cpWeek = $('#cpWeek'); el.cpWeekTxt = $('#cpWeekTxt'); el.cpMonth = $('#cpMonth'); el.cpMonthTxt = $('#cpMonthTxt');
+    el.cpWeek = $('#cpWeek'); el.cpWeekTxt = $('#cpWeekTxt');
     el.cpWindow = $('#cpWindow'); el.cpWindowTxt = $('#cpWindowTxt'); el.cpNote = $('#cpNote');
     el.cpReasonRow = $('#cpReasonRow'); el.cpReason = $('#cpReason'); el.cpReasonTxt = $('#cpReasonTxt');
+    el.cfgPlanPill = $('#cfgPlanPill');
+    el.cfgWindowFill = $('#cfgWindowFill'); el.cfgWindowTxt = $('#cfgWindowTxt'); el.cfgWindowReset = $('#cfgWindowReset');
+    el.cfgWeekFill = $('#cfgWeekFill'); el.cfgWeekTxt = $('#cfgWeekTxt'); el.cfgWeekReset = $('#cfgWeekReset');
     el.drawer = $('#drawer'); el.scrim = $('#scrim'); el.convoList = $('#convoList');
     el.newChatBtn = $('#newChatBtn'); el.closeDrawerBtn = $('#closeDrawerBtn'); el.logoutBtn = $('#logoutBtn');
     el.settingsBtn = $('#settingsBtn'); el.settingsModal = $('#settingsModal'); el.settingsClose = $('#settingsClose');
@@ -6588,6 +6687,7 @@
       });
     }
     el.composer = $('#composer'); el.input = $('#input'); el.sendBtn = $('#sendBtn'); el.reasonBtn = $('#reasonBtn'); el.createBtn = $('#createBtn');
+    el.imageBtn = $('#imageBtn'); el.pdfBtn = $('#pdfBtn');
     el.programBtn = $('#programBtn'); el.programModal = $('#programModal'); el.programClose = $('#programClose'); el.programBody = $('#programBody');
     el.modelPickerBtn = $('#modelPickerBtn'); el.modelPickerLabel = $('#modelPickerLabel'); el.modelMenu = $('#modelMenu'); el.composerHint = $('#composerHint');
     el.proModal = $('#proModal'); el.proClose = $('#proClose'); el.proBuyBtn = $('#proBuyBtn'); el.proSub = $('#proSub');

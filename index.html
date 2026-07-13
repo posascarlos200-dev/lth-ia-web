@@ -159,6 +159,7 @@
       <div class="us-main">
         <div class="us-head"><span id="usageLabel">Uso actual</span><span id="usageVal">—</span></div>
         <div class="us-track"><i id="usageFill"></i></div>
+        <div class="us-reset" id="usageReset" hidden></div>
       </div>
       <button id="creditsBtn" class="us-more" type="button" aria-label="Detalle de uso">⌄</button>
 
@@ -166,7 +167,6 @@
       <div id="creditsPanel" class="credits-panel" hidden>
         <div class="cp-row"><span>Plan</span><b id="cpPlan">—</b></div>
         <div class="cp-bar"><span>Semana</span><div class="bar"><i id="cpWeek"></i></div><em id="cpWeekTxt">—</em></div>
-        <div class="cp-bar"><span>Mes</span><div class="bar"><i id="cpMonth"></i></div><em id="cpMonthTxt">—</em></div>
         <div class="cp-bar"><span>Ventana</span><div class="bar"><i id="cpWindow"></i></div><em id="cpWindowTxt">—</em></div>
         <div class="cp-bar" id="cpReasonRow" hidden><span>Razonar</span><div class="bar"><i id="cpReason"></i></div><em id="cpReasonTxt">—</em></div>
         <p id="cpNote" class="cp-note"></p>
@@ -221,9 +221,12 @@
           <span class="model-badge-mark" aria-hidden="true"></span>
           <span id="modelPickerLabel">Mady</span>
         </div>
-        <button id="reasonBtn" class="mode-chip mode-chip-reason" type="button" aria-pressed="false" title="Modo razonamiento (Pro): la IA principal clasifica y mejora tu pedido, el modelo experto responde y un juez lo verifica y pule"><span class="mode-dot mode-dot-reason" aria-hidden="true"></span><span>Razonar</span></button>
+        <button id="imageBtn" class="mode-chip mode-chip-image" type="button" aria-pressed="false" title="Imagen: describe lo que quieres y Mady genera la imagen"><span class="mode-dot mode-dot-image" aria-hidden="true"></span><span>Imagen</span></button>
+        <button id="pdfBtn" class="mode-chip mode-chip-pdf" type="button" aria-pressed="false" title="PDF: Mady prepara un documento descargable en PDF"><span class="mode-dot mode-dot-pdf" aria-hidden="true"></span><span>PDF</span></button>
         <button id="programBtn" class="mode-chip mode-chip-program" type="button" aria-pressed="false" title="LTH-code (Pro): un asistente te guía paso a paso para definir tu página y la construye (estructura + CSS + pulido). Cobro por tokens."><span class="mode-dot mode-dot-code" aria-hidden="true"></span><span>LTH-code</span></button>
-        <button id="createBtn" class="mode-chip mode-chip-create" type="button" aria-pressed="false" title="Crear algo: la IA genera una página o mini-app en HTML que puedes ver con Vista previa (combina HTML, CSS y JS)"><span class="mode-dot mode-dot-create" aria-hidden="true"></span><span>Crear algo</span></button>
+        <!-- Módulos ocultos temporalmente (se reactivan quitando "hidden"); su lógica sigue intacta. -->
+        <button id="reasonBtn" class="mode-chip mode-chip-reason" type="button" aria-pressed="false" hidden title="Modo razonamiento (Pro): la IA principal clasifica y mejora tu pedido, el modelo experto responde y un juez lo verifica y pule"><span class="mode-dot mode-dot-reason" aria-hidden="true"></span><span>Razonar</span></button>
+        <button id="createBtn" class="mode-chip mode-chip-create" type="button" aria-pressed="false" hidden title="Crear algo: la IA genera una página o mini-app en HTML que puedes ver con Vista previa (combina HTML, CSS y JS)"><span class="mode-dot mode-dot-create" aria-hidden="true"></span><span>Crear algo</span></button>
       </div>
       <div class="composer-inner">
         <textarea id="input" rows="1" placeholder="Escribe a Mady…" autocomplete="off"></textarea>
@@ -267,6 +270,25 @@
           <div class="theme-seg" id="themeSeg">
             <button data-theme="dark" class="on" type="button">🌙 Oscuro</button>
             <button data-theme="light" type="button">☀️ Claro</button>
+          </div>
+        </div>
+
+        <div class="usage-section">
+          <div class="usage-section-head">
+            <div class="setting-info"><strong>Uso</strong><span>Tu consumo actual y cuándo se reinicia.</span></div>
+            <span class="usage-plan-pill" id="cfgPlanPill">—</span>
+          </div>
+          <div class="usage-cfg">
+            <div class="ucfg-row">
+              <div class="ucfg-head"><span class="ucfg-name">Ventana</span><em id="cfgWindowTxt">—</em></div>
+              <div class="ucfg-bar"><i id="cfgWindowFill"></i></div>
+              <div class="ucfg-reset" id="cfgWindowReset">—</div>
+            </div>
+            <div class="ucfg-row">
+              <div class="ucfg-head"><span class="ucfg-name">Semanal</span><em id="cfgWeekTxt">—</em></div>
+              <div class="ucfg-bar"><i id="cfgWeekFill"></i></div>
+              <div class="ucfg-reset" id="cfgWeekReset">—</div>
+            </div>
           </div>
         </div>
       </div>

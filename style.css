@@ -221,6 +221,24 @@ input, textarea { font-family: inherit; }
 .cp-bar .bar { height: 7px; border-radius: 4px; background: rgba(0,0,0,.4); border: 1px solid var(--line); overflow: hidden; }
 .cp-bar .bar i { display: block; height: 100%; width: 0; background: linear-gradient(90deg, var(--cyan), var(--cyan-2)); box-shadow: 0 0 10px var(--cyan); transition: width .5s; }
 .cp-bar em { font-style: normal; color: var(--text); font-size: 10.5px; }
+
+/* Sub-linea de la ventana de uso: tiempo para restablecerse */
+.us-reset { margin-top: 6px; font-size: 10.5px; color: var(--text-dim); letter-spacing: .2px; display: flex; align-items: center; gap: 5px; line-height: 1.2; }
+
+/* Seccion Uso en Configuracion (Ventana + Semanal) */
+.usage-section { margin-top: 4px; padding-top: 18px; border-top: 1px solid var(--line); }
+.usage-section-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; margin-bottom: 16px; }
+.usage-plan-pill { flex: none; font-size: 9.5px; font-weight: 700; letter-spacing: .6px; padding: 4px 10px; border-radius: 999px; background: rgba(64,200,255,.12); color: var(--cyan); border: 1px solid rgba(64,200,255,.3); text-transform: uppercase; }
+.usage-cfg { display: flex; flex-direction: column; gap: 16px; }
+.ucfg-row { display: flex; flex-direction: column; gap: 7px; }
+.ucfg-head { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; }
+.ucfg-name { font-size: 12.5px; font-weight: 600; color: var(--text); }
+.ucfg-head em { font-style: normal; font-size: 13px; font-weight: 700; color: var(--text); font-variant-numeric: tabular-nums; }
+.ucfg-bar { height: 8px; border-radius: 6px; background: rgba(0,0,0,.4); border: 1px solid var(--line); overflow: hidden; }
+.ucfg-bar i { display: block; height: 100%; width: 0; background: linear-gradient(90deg, var(--cyan), var(--cyan-2)); box-shadow: 0 0 10px var(--cyan); transition: width .5s ease; }
+.ucfg-bar i.warn { background: linear-gradient(90deg, #ffd15b, #ff9d3b); box-shadow: 0 0 12px rgba(255,180,60,.5); }
+.ucfg-bar i.danger { background: linear-gradient(90deg, #ff7a93, #ff5c7a); box-shadow: 0 0 12px rgba(255,92,122,.55); }
+.ucfg-reset { font-size: 10.5px; color: var(--text-dim); letter-spacing: .2px; }
 .cp-note { margin: 6px 0 0; font-size: 10.5px; color: var(--text-dim); line-height: 1.5; }
 
 /* Drawer */
@@ -839,6 +857,7 @@ body.light .field input,
 body.light #input { background: #f6f1fd; }
 body.light .us-track,
 body.light .cp-bar .bar,
+body.light .ucfg-bar,
 body.light .vc-bar,
 body.light .switch { background: var(--field); }
 body.light .gen-img { background: var(--field); }
@@ -961,6 +980,20 @@ body.light .bg-scan { display: none; }
 /* Chip "Programar" (premium) */
 .mode-chip-program { letter-spacing: .3px; }
 .mode-chip-program.on { color: #00231b; border-color: transparent; background: linear-gradient(120deg, #34e6b0, #18b9ff); box-shadow: 0 0 18px rgba(52,230,176,.35); font-weight: 700; }
+
+/* El `display` de estas clases pisa el atributo hidden; forzamos respetar hidden. */
+.mode-chip[hidden] { display: none !important; }
+.cp-bar[hidden] { display: none !important; }
+
+/* Modulos Imagen / PDF (reemplazan visualmente a Razonar/Crear algo) */
+.mode-dot-image { --mode-dot: radial-gradient(circle at 35% 35%, #ffe1f4, #ff5cc0 55%, #c23bff); --mode-dot-halo: rgba(255,92,192,.16); --mode-dot-glow: rgba(255,120,220,.62); }
+.mode-dot-pdf { --mode-dot: radial-gradient(circle at 35% 35%, #ffe2dd, #ff6a5c 55%, #e23b2f); --mode-dot-halo: rgba(255,106,92,.16); --mode-dot-glow: rgba(255,90,80,.62); }
+.mode-chip-image.on { color: #fff; border-color: transparent; background: linear-gradient(120deg, #ff5cc0, #b23bff); box-shadow: 0 0 18px rgba(255,92,192,.4); font-weight: 700; }
+.mode-chip-image.on .mode-dot-image { --mode-dot: radial-gradient(circle at 35% 35%, #fff, #ffd0ee 58%, #e0a7ff); --mode-dot-glow: rgba(255,255,255,.76); }
+.mode-chip-pdf.on { color: #fff; border-color: transparent; background: linear-gradient(120deg, #ff6a5c, #ff3b6e); box-shadow: 0 0 18px rgba(255,90,90,.35); font-weight: 700; }
+.mode-chip-pdf.on .mode-dot-pdf { --mode-dot: radial-gradient(circle at 35% 35%, #fff, #ffd6cf 58%, #ff9c8f); --mode-dot-glow: rgba(255,255,255,.74); }
+body.light .mode-chip-image.on { color: #fff; }
+body.light .mode-chip-pdf.on { color: #fff; }
 
 /* Ventana dedicada del asistente Programar */
 .program-modal { position: absolute; inset: 0; z-index: 13; display: grid; place-items: center; padding: 20px; background: rgba(0,4,8,.66); backdrop-filter: blur(4px); animation: fade .2s ease; }
