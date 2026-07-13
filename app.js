@@ -2407,16 +2407,15 @@
     return m || fallback;
   }
 
-  // En modo Auto el router elige el TIER, pero el MODELO viene del Admin: mady_auto para lo
-  // cotidiano y mady_max para lo pesado. Así Auto obedece lo que pongas en Módulos > Mady.
-  // (code/image/web/files conservan su modelo especializado del router.)
+  // En modo Auto el router elige el TIER (según la dificultad/tarea) y el MODELO de cada tier
+  // se configura por separado en el Admin (Módulos > Mady Auto). El tier 'max' en auto baja a
+  // premium (como en LTH OS). Medio/Max NO pasan por aquí: usan su modelo fijo.
+  const AUTO_TIER_STAGE = { cheap: 'auto_cheap', standard: 'auto_standard', code: 'auto_code', premium: 'auto_premium', max: 'auto_premium', web: 'auto_web', files: 'auto_files' };
   function autoRouteModel(route) {
     const base = route && route.model;
     if (!base) return base;
-    const tier = String(route.tier || '');
-    if (tier === 'premium' || tier === 'max') return reasonModel('mady_max', base);
-    if (tier === 'cheap' || tier === 'standard') return reasonModel('mady_auto', base);
-    return base;
+    const stage = AUTO_TIER_STAGE[String(route.tier || '')];
+    return stage ? reasonModel(stage, base) : base;
   }
 
   function renderConvoList() {
@@ -2667,7 +2666,7 @@
         // Trivial: responde directo con el modelo barato (sin clasificador).
         if (trivialAuto) {
           const cheap = window.LTHRouter && window.LTHRouter.MODEL_CONFIG ? window.LTHRouter.MODEL_CONFIG.tiers.cheap : null;
-          if (cheap) { routeOpts = { model: cheap.primary, maxTokens: cheap.maxTokens, temperature: cheap.temperature, reasoning: cheap.reasoning }; bub.innerHTML = engineThinkingHtml('cheap'); }
+          if (cheap) { routeOpts = { model: reasonModel('auto_cheap', cheap.primary), maxTokens: cheap.maxTokens, temperature: cheap.temperature, reasoning: cheap.reasoning }; bub.innerHTML = engineThinkingHtml('cheap'); }
         }
         const route = trivialAuto ? null : await autoRoute(text, convo);
         if (route && route.action === 'block') {
@@ -2725,12 +2724,15 @@
       // y, si el router no dejó modelo, se fuerza mady_auto para NUNCA caer al default del edge.
       if (canUsePremium() && !manualAllowed && !trivialAuto) {
         if (state.autoReason === 'max') {
+          // Max: SIEMPRE el modelo fijo de Mady Max (sin router).
           routeOpts = routeOpts || {}; routeOpts.model = reasonModel('mady_max', 'z-ai/glm-5.2');
           if (!routeOpts.maxTokens || routeOpts.maxTokens < 2400) routeOpts.maxTokens = 2400;
         } else if (state.autoReason === 'medio') {
-          routeOpts = routeOpts || {}; routeOpts.model = reasonModel('mady_auto', 'google/gemini-2.5-flash');
+          // Medio: SIEMPRE el modelo fijo de Mady Medio (sin router).
+          routeOpts = routeOpts || {}; routeOpts.model = reasonModel('mady_medio', 'google/gemini-2.5-flash');
         } else if (!routeOpts || !routeOpts.model) {
-          routeOpts = routeOpts || {}; routeOpts.model = reasonModel('mady_auto', 'google/gemini-2.5-flash');
+          // Auto sin modelo del router -> tier estándar del Admin (nunca el default del edge).
+          routeOpts = routeOpts || {}; routeOpts.model = reasonModel('auto_standard', 'google/gemini-2.5-flash');
         }
       }
 
