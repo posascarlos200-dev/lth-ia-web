@@ -391,6 +391,17 @@ input, textarea { font-family: inherit; }
 .ic-stop { fill: #001226; }
 .send-btn.stopping { background: linear-gradient(120deg, #ff7a93, var(--danger)); }
 .composer-hint { margin: 7px 4px 0; text-align: center; font-size: 10px; color: var(--text-dim); }
+
+/* Adjuntar imagen / tomar foto */
+.attach-btn { width: 38px; height: 38px; flex: none; border: 0; border-radius: 12px; display: grid; place-items: center; background: transparent; color: var(--text-dim); cursor: pointer; transition: color .15s, background .15s, transform .1s; }
+.attach-btn:hover { color: var(--cyan); background: rgba(74,163,255,.08); }
+.attach-btn:active { transform: scale(.92); }
+.attach-btn svg { width: 21px; height: 21px; fill: none; stroke: currentColor; stroke-width: 1.9; stroke-linecap: round; stroke-linejoin: round; }
+.attach-preview { display: flex; flex-wrap: wrap; gap: 8px; margin: 0 4px 8px; }
+.attach-thumb { position: relative; width: 62px; height: 62px; border-radius: 12px; overflow: hidden; border: 1px solid var(--line-strong); background: rgba(0,0,0,.3); }
+.attach-thumb img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.attach-remove { position: absolute; top: 3px; right: 3px; width: 20px; height: 20px; border-radius: 50%; border: 0; background: rgba(0,0,0,.62); color: #fff; font-size: 15px; line-height: 1; display: grid; place-items: center; cursor: pointer; padding: 0; }
+.attach-remove:hover { background: rgba(255,90,90,.9); }
 /* ── Banner / modal de upsell a Plan Pro ── */
 .pro-card {
   position: relative; width: min(92vw, 420px); margin: auto;
@@ -784,7 +795,8 @@ a.vc-src:active, a.vc-src:hover { border-color: var(--cyan); color: var(--text-b
   .model-badge span:last-child { font-size: 11px; }
   .mode-dot, .model-badge-mark { width: 9px; height: 9px; }
   .composer-inner,
-  .composer-hint {
+  .composer-hint,
+  .attach-preview {
     width: min(100%, 820px);
     margin-inline: auto;
   }

@@ -54,6 +54,8 @@
   const BUG_MEDIA_REST_URL = SB_URL + '/rest/v1/bug_report_media';
   const IDEAS_REST_URL = SB_URL + '/rest/v1/user_ideas';
   const IMAGE_MODEL = 'google/gemini-3.1-flash-image-preview';
+  // Modelo con vision para LEER imagenes adjuntas por el usuario (Gemini lee imagenes).
+  const VISION_MODEL = 'google/gemini-2.5-flash';
   const IMAGE_SYSTEM_PROMPT = 'Eres Mady, la asistente de LTH OS. Genera directamente la imagen que describe el usuario y acompanala con una frase breve en espanol. La imagen debe tratar EXACTAMENTE lo pedido; no agregues marcas, textos ni elementos no solicitados (nunca generes productos LTH si no se piden). Si el usuario pide texto dentro de la imagen, respetalo exactamente.';
   const PDF_SYSTEM_PROMPT = 'Eres Mady, la asistente de LTH OS. El usuario quiere un documento que se exportara a PDF. Antes de redactar, corrige los errores reconocidos durante la conversacion (citas biblicas, datos, cifras): NO transcribas la conversacion cruda, entrega la version corregida, limpia y ordenada. Redacta el documento COMPLETO en espanol, bien estructurado en Markdown simple: una primera linea con el titulo usando "# Titulo", luego secciones con "## Subtitulo", parrafos claros y listas con "- " cuando ayude. No uses tablas ni bloques de codigo ni HTML. Entrega solo el contenido del documento, sin preambulos como "aqui tienes" ni despedidas.';
 
@@ -249,6 +251,7 @@
     programMode: false,   // herramienta "Programar": el siguiente envio abre el asistente
     imageMode: false,     // "Imagen": el siguiente envio genera una imagen
     pdfMode: false,       // "PDF": el siguiente envio prepara un documento PDF
+    pendingAttachments: [], // fotos/imagenes adjuntas al proximo envio (para leerlas con vision)
     program: null,        // sesion activa del asistente { active, convo, request, answers, plan, busy }
     programEdit: null,    // edicion en curso de una pagina ya hecha { doc, convo }
     manualModel: 'auto'   // 'auto' = ruteo automatico; o un id de MANUAL_MODELS
@@ -1634,7 +1637,23 @@
     else if (purpose === 'reasoning') sliceSize = 10;
     else if (purpose === 'memory') sliceSize = normalized && normalized.brain && normalized.brain.running_summary ? 8 : 12;
     else if (normalized && normalized.brain && normalized.brain.running_summary) sliceSize = 8;
-    return messages.slice(-sliceSize).map((m) => ({ role: m.role, content: m.content }));
+    const sliced = messages.slice(-sliceSize);
+    // Solo el ULTIMO mensaje del usuario lleva la imagen adjunta (para no reenviarla cada turno)
+    // y solo en la llamada de chat (el clasificador/memoria no necesitan la imagen).
+    let lastUserIdx = -1;
+    for (let i = sliced.length - 1; i >= 0; i -= 1) { if (sliced[i] && sliced[i].role === 'user') { lastUserIdx = i; break; } }
+    return sliced.map((m, i) => {
+      const content = String(m.content || '');
+      if (purpose === 'chat' && i === lastUserIdx && Array.isArray(m.media) && m.media.length) {
+        const parts = [];
+        if (content) parts.push({ type: 'text', text: content });
+        for (const item of m.media) {
+          if (item && item.kind === 'image' && item.id && mediaCache[item.id]) parts.push({ type: 'image_url', image_url: { url: mediaCache[item.id] } });
+        }
+        if (parts.some((p) => p.type === 'image_url')) return { role: m.role, content: parts };
+      }
+      return { role: m.role, content: content };
+    });
   }
 
   function detectCrisisIntent(text) {
@@ -2462,16 +2481,35 @@
   /* ───────────────────────── Enviar ───────────────────────── */
   async function send(text) {
     text = String(text || '').trim();
-    if (!text || state.busy) return;
+    const attachments = (state.pendingAttachments || []).slice();
+    state.pendingAttachments = []; renderAttachPreview();
+    if ((!text && !attachments.length) || state.busy) return;
     if (el.welcome) el.welcome.hidden = true;
 
-    const convo = ensureActiveConvo(text);
-    convo.messages.push({ id: uid(), role: 'user', content: text, ts: Date.now() });
+    const convo = ensureActiveConvo(text || 'Imagen');
+    // Guarda las imagenes adjuntas en ia_media (para verlas en otros dispositivos) y
+    // arma los descriptores de media del mensaje del usuario.
+    const userMedia = [];
+    for (const att of attachments) {
+      if (!att || att.kind !== 'image' || !att.dataUrl) continue;
+      let id = 'local_' + uid();
+      try {
+        const stored = await storeMedia({ convoId: convo.id, kind: 'image', mime: att.mime || 'image/jpeg', title: 'Adjunto', prompt: '', src: att.dataUrl });
+        if (stored && stored.id) id = stored.id;
+      } catch (_) {}
+      mediaCache[id] = att.dataUrl;
+      userMedia.push({ id: id, kind: 'image', mime: att.mime || 'image/jpeg' });
+    }
+    if (!text && userMedia.length) text = '¿Qué ves en esta imagen? Descríbela y ayúdame con lo que corresponda.';
+
+    const userMsg = { id: uid(), role: 'user', content: text, ts: Date.now() };
+    if (userMedia.length) userMsg.media = userMedia;
+    convo.messages.push(userMsg);
     convo.brain = extractBrainFromUserMessage(convo.brain, text);
     convo.updated = Date.now();
     if (convo.messages.length === 1) convo.title = text.slice(0, 48);
     saveConvos();
-    if (!activeConvo() || el.messages.querySelector('.welcome')) renderMessages();
+    if (userMedia.length || !activeConvo() || el.messages.querySelector('.welcome')) renderMessages();
     else el.messages.appendChild(bubbleEl('user', escapeHtml(text).replace(/\n/g, '<br>')).wrap);
     renderConvoList();
     el.input.value = ''; autoGrow();
@@ -2503,11 +2541,13 @@
       return;
     }
 
-    // Los modulos Imagen/PDF fuerzan el modo; si no, se detecta por la intencion del texto.
-    const wantImage = state.imageMode || looksLikeImageRequest(text);
-    const wantPdf = !wantImage && (state.pdfMode || looksLikePdfRequest(text));
-    if ((wantImage || wantPdf) && !canUsePremium()) {
-      const what = wantImage ? 'La generacion de imagenes' : 'La generacion de PDF';
+    // Imagen adjunta -> LEER con vision (tiene prioridad sobre generar). Modulos Imagen/PDF
+    // fuerzan generar; si no, se detecta por la intencion del texto.
+    const hasImageRead = userMedia.length > 0;
+    const wantImage = !hasImageRead && (state.imageMode || looksLikeImageRequest(text));
+    const wantPdf = !hasImageRead && !wantImage && (state.pdfMode || looksLikePdfRequest(text));
+    if ((wantImage || wantPdf || hasImageRead) && !canUsePremium()) {
+      const what = hasImageRead ? 'La lectura de imagenes' : wantImage ? 'La generacion de imagenes' : 'La generacion de PDF';
       const note = what + ' es del plan **Pro**. Con tu plan actual puedo ayudarte con texto; mejora a Pro para desbloquearlo.';
       markAssistantTurn(convo, note, 'Restriccion del plan');
       convo.messages.push({ id: uid(), role: 'assistant', content: note, ts: Date.now() });
@@ -2518,10 +2558,11 @@
     }
 
     const { wrap, bub } = bubbleEl('ai',
-      wantImage ? '<span class="gen-img-loading">Generando imagen<span class="dots"><i>.</i><i>.</i><i>.</i></span></span>'
-        : wantPdf ? '<span class="gen-img-loading">Preparando PDF<span class="dots"><i>.</i><i>.</i><i>.</i></span></span>'
-          : state.engine === 'os' ? '<span class="gen-img-loading">Motor LTH OS pensando<span class="dots"><i>.</i><i>.</i><i>.</i></span></span>'
-            : '<span class="typing"><i></i><i></i><i></i></span>');
+      hasImageRead ? '<span class="gen-img-loading">Leyendo la imagen<span class="dots"><i>.</i><i>.</i><i>.</i></span></span>'
+        : wantImage ? '<span class="gen-img-loading">Generando imagen<span class="dots"><i>.</i><i>.</i><i>.</i></span></span>'
+          : wantPdf ? '<span class="gen-img-loading">Preparando PDF<span class="dots"><i>.</i><i>.</i><i>.</i></span></span>'
+            : state.engine === 'os' ? '<span class="gen-img-loading">Motor LTH OS pensando<span class="dots"><i>.</i><i>.</i><i>.</i></span></span>'
+              : '<span class="typing"><i></i><i></i><i></i></span>');
     el.messages.appendChild(wrap); scrollDown();
 
     setBusy(true);
@@ -2534,6 +2575,26 @@
       }
       if (wantPdf) {
         await generatePdf(text, convo, wrap, bub);
+        return;
+      }
+      // Lectura de imagen adjunta: va directo a un modelo con vision (Gemini).
+      if (hasImageRead) {
+        const routeOpts = { model: VISION_MODEL, maxTokens: 1600, temperature: 0.3 };
+        let started = false;
+        const result = await streamChat(convo, text, (full) => {
+          if (!started) { started = true; bub.classList.add('cursor'); }
+          bub.innerHTML = renderMarkdown(full); bub.classList.add('cursor'); scrollDown();
+        }, state.abort.signal, routeOpts);
+        bub.classList.remove('cursor');
+        const finalText = result.text || '';
+        bub.innerHTML = renderMarkdown(finalText || '_(sin respuesta)_', { preview: true });
+        const assistantMsg = { id: uid(), role: 'assistant', content: finalText, ts: Date.now() };
+        markAssistantTurn(convo, finalText, 'Lectura de imagen');
+        convo.messages.push(assistantMsg);
+        if (finalText.trim()) appendFeedback(bub, assistantMsg, convo);
+        convo.updated = Date.now();
+        saveConvos(); renderConvoList(); syncPushOne(convo); fetchStatus();
+        void maybeUpdateConvoBrain(convo);
         return;
       }
       if (state.engine === 'os') {
@@ -3909,6 +3970,59 @@
     if (!el.pdfBtn) return;
     el.pdfBtn.classList.toggle('on', !!state.pdfMode);
     el.pdfBtn.setAttribute('aria-pressed', state.pdfMode ? 'true' : 'false');
+  }
+
+  /* ── Adjuntos (fotos/imagenes) para leer con vision ── */
+  // Lee una imagen, la reduce (max 1280px) y la devuelve como data URL JPEG liviano.
+  function readAndDownscaleImage(file, maxDim) {
+    maxDim = maxDim || 1280;
+    return new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onerror = reject;
+      reader.onload = () => {
+        const img = new Image();
+        img.onerror = reject;
+        img.onload = () => {
+          try {
+            const scale = Math.min(1, maxDim / Math.max(img.width || 1, img.height || 1));
+            const w = Math.max(1, Math.round((img.width || 1) * scale));
+            const h = Math.max(1, Math.round((img.height || 1) * scale));
+            const canvas = document.createElement('canvas');
+            canvas.width = w; canvas.height = h;
+            const ctx = canvas.getContext('2d');
+            ctx.drawImage(img, 0, 0, w, h);
+            const dataUrl = canvas.toDataURL('image/jpeg', 0.85);
+            resolve({ dataUrl: dataUrl, mime: 'image/jpeg', name: file.name || 'foto.jpg' });
+          } catch (e) { reject(e); }
+        };
+        img.src = reader.result;
+      };
+      reader.readAsDataURL(file);
+    });
+  }
+
+  async function handleAttachFiles(files) {
+    const list = Array.from(files || []).filter((f) => f && /^image\//.test(f.type || '')).slice(0, 4);
+    if (!list.length) return;
+    for (const f of list) {
+      if ((state.pendingAttachments || []).length >= 4) break;
+      try {
+        const att = await readAndDownscaleImage(f);
+        state.pendingAttachments.push({ kind: 'image', dataUrl: att.dataUrl, mime: att.mime, name: att.name });
+      } catch (_) {}
+    }
+    renderAttachPreview();
+  }
+
+  function renderAttachPreview() {
+    if (!el.attachPreview) return;
+    const atts = state.pendingAttachments || [];
+    if (!atts.length) { el.attachPreview.hidden = true; el.attachPreview.innerHTML = ''; return; }
+    el.attachPreview.hidden = false;
+    el.attachPreview.innerHTML = atts.map((a, i) =>
+      '<div class="attach-thumb"><img src="' + previewAttr(a.dataUrl) + '" alt="adjunto ' + (i + 1) + '"/>'
+      + '<button type="button" class="attach-remove" data-att-remove="' + i + '" aria-label="Quitar adjunto">&times;</button></div>'
+    ).join('');
   }
 
   // Cada chat queda dedicado a un modo (program/reason/create) una vez usado. Esto bloquea
@@ -6237,6 +6351,17 @@
       state.pdfMode = !state.pdfMode; renderPdfBtn();
       if (state.pdfMode) { clearOtherModes('pdf'); setComposerHint('Modo PDF: describe el documento y Mady lo prepara para descargar.'); }
     });
+    // Adjuntar imagen / tomar foto
+    if (el.attachBtn && el.fileInput) el.attachBtn.addEventListener('click', () => el.fileInput.click());
+    if (el.cameraBtn && el.cameraInput) el.cameraBtn.addEventListener('click', () => el.cameraInput.click());
+    if (el.fileInput) el.fileInput.addEventListener('change', (e) => { handleAttachFiles(e.target.files); e.target.value = ''; });
+    if (el.cameraInput) el.cameraInput.addEventListener('change', (e) => { handleAttachFiles(e.target.files); e.target.value = ''; });
+    if (el.attachPreview) el.attachPreview.addEventListener('click', (e) => {
+      const b = e.target.closest('[data-att-remove]');
+      if (!b) return;
+      state.pendingAttachments.splice(Number(b.getAttribute('data-att-remove')), 1);
+      renderAttachPreview();
+    });
     if (el.themeSeg) el.themeSeg.addEventListener('click', (e) => {
       const b = e.target.closest('[data-theme]');
       if (b) applyTheme(b.getAttribute('data-theme'));
@@ -6688,6 +6813,8 @@
     }
     el.composer = $('#composer'); el.input = $('#input'); el.sendBtn = $('#sendBtn'); el.reasonBtn = $('#reasonBtn'); el.createBtn = $('#createBtn');
     el.imageBtn = $('#imageBtn'); el.pdfBtn = $('#pdfBtn');
+    el.attachBtn = $('#attachBtn'); el.cameraBtn = $('#cameraBtn');
+    el.fileInput = $('#fileInput'); el.cameraInput = $('#cameraInput'); el.attachPreview = $('#attachPreview');
     el.programBtn = $('#programBtn'); el.programModal = $('#programModal'); el.programClose = $('#programClose'); el.programBody = $('#programBody');
     el.modelPickerBtn = $('#modelPickerBtn'); el.modelPickerLabel = $('#modelPickerLabel'); el.modelMenu = $('#modelMenu'); el.composerHint = $('#composerHint');
     el.proModal = $('#proModal'); el.proClose = $('#proClose'); el.proBuyBtn = $('#proBuyBtn'); el.proSub = $('#proSub');
