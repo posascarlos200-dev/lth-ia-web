@@ -252,7 +252,7 @@
     imageMode: false,     // "Imagen": el siguiente envio genera una imagen
     pdfMode: false,       // "PDF": el siguiente envio prepara un documento PDF
     pendingAttachments: [], // fotos/imagenes adjuntas al proximo envio (para leerlas con vision)
-    autoReason: 'medio',    // nivel de razonamiento en modo Auto: 'medio' (Gemini) | 'max' (mady_max)
+    autoReason: 'auto',     // nivel en modo Auto: 'auto' (router) | 'medio' (Gemini) | 'max' (GLM-5.2)
     program: null,        // sesion activa del asistente { active, convo, request, answers, plan, busy }
     programEdit: null,    // edicion en curso de una pagina ya hecha { doc, convo }
     manualModel: 'auto'   // 'auto' = ruteo automatico; o un id de MANUAL_MODELS
@@ -2701,12 +2701,14 @@
         if (convo.mode !== 'create') { convo.mode = 'create'; syncComposerMode(); }
       }
 
-      // Razonamiento automatico "Max" en modo Auto: sube el turno al modelo mas potente
-      // (mady_max, editable en el Admin). No aplica a saludos triviales ni a modelo manual.
-      if (state.autoReason === 'max' && canUsePremium() && !manualAllowed && !trivialAuto) {
+      // Nivel del Auto: 'auto' deja al router; 'medio' fija Gemini; 'max' fija el modelo
+      // mas potente (editables en el Admin). No aplica a saludos triviales ni a modelo manual.
+      if ((state.autoReason === 'max' || state.autoReason === 'medio') && canUsePremium() && !manualAllowed && !trivialAuto) {
         routeOpts = routeOpts || {};
-        routeOpts.model = reasonModel('mady_max', 'z-ai/glm-5.2');
-        if (!routeOpts.maxTokens || routeOpts.maxTokens < 2400) routeOpts.maxTokens = 2400;
+        routeOpts.model = state.autoReason === 'max'
+          ? reasonModel('mady_max', 'z-ai/glm-5.2')
+          : reasonModel('mady_auto', 'google/gemini-2.5-flash');
+        if (state.autoReason === 'max' && (!routeOpts.maxTokens || routeOpts.maxTokens < 2400)) routeOpts.maxTokens = 2400;
       }
 
       let started = false;
@@ -3779,17 +3781,25 @@
 
   /* ── Nivel de razonamiento en modo Auto: Medio (Gemini) / Max (mady_max) ── */
   const AUTOREASON_KEY = 'lth_ia_auto_reason';
+  const AUTOREASON_LEVELS = ['auto', 'medio', 'max'];
   function loadAutoReason() {
-    try { state.autoReason = localStorage.getItem(AUTOREASON_KEY) === 'max' ? 'max' : 'medio'; } catch (_) { state.autoReason = 'medio'; }
+    try { const v = localStorage.getItem(AUTOREASON_KEY); state.autoReason = AUTOREASON_LEVELS.indexOf(v) >= 0 ? v : 'auto'; } catch (_) { state.autoReason = 'auto'; }
   }
-  function persistAutoReason() { try { localStorage.setItem(AUTOREASON_KEY, state.autoReason === 'max' ? 'max' : 'medio'); } catch (_) {} }
+  function persistAutoReason() { try { localStorage.setItem(AUTOREASON_KEY, AUTOREASON_LEVELS.indexOf(state.autoReason) >= 0 ? state.autoReason : 'auto'); } catch (_) {} }
   function renderAutoReason() {
-    const isMax = state.autoReason === 'max';
-    if (el.autoReasonTag) el.autoReasonTag.hidden = !isMax;
-    if (el.autoReasonBtn) el.autoReasonBtn.classList.toggle('is-max', isMax);
+    const lvl = AUTOREASON_LEVELS.indexOf(state.autoReason) >= 0 ? state.autoReason : 'auto';
+    if (el.autoReasonTag) {
+      el.autoReasonTag.hidden = lvl === 'auto';
+      el.autoReasonTag.textContent = lvl === 'max' ? 'MAX' : lvl === 'medio' ? 'MEDIO' : '';
+      el.autoReasonTag.className = 'model-badge-tag' + (lvl === 'max' ? ' t-max' : lvl === 'medio' ? ' t-medio' : '');
+    }
+    if (el.autoReasonBtn) {
+      el.autoReasonBtn.classList.toggle('is-max', lvl === 'max');
+      el.autoReasonBtn.classList.toggle('is-medio', lvl === 'medio');
+    }
     if (el.autoReasonPop) {
       el.autoReasonPop.querySelectorAll('[data-auto-reason]').forEach((b) => {
-        const on = b.getAttribute('data-auto-reason') === state.autoReason;
+        const on = b.getAttribute('data-auto-reason') === lvl;
         b.classList.toggle('on', on);
         b.setAttribute('aria-checked', on ? 'true' : 'false');
       });
@@ -6468,10 +6478,16 @@
     if (el.autoReasonPop) el.autoReasonPop.addEventListener('click', (e) => {
       const opt = e.target.closest('[data-auto-reason]');
       if (!opt) return;
-      const level = opt.getAttribute('data-auto-reason') === 'max' ? 'max' : 'medio';
-      if (level === 'max' && !canUsePremium()) { closeAutoReasonPop(); showProModal('reasoning'); return; }
+      const raw = opt.getAttribute('data-auto-reason');
+      const level = (raw === 'max' || raw === 'medio') ? raw : 'auto';
+      // Fijar un modelo (Medio/Max) es funcion Pro; Auto queda libre para todos.
+      if (level !== 'auto' && !canUsePremium()) { closeAutoReasonPop(); showProModal('reasoning'); return; }
       state.autoReason = level; persistAutoReason(); renderAutoReason(); closeAutoReasonPop();
-      setComposerHint(level === 'max' ? 'Auto en Max: uso el modelo más potente para responder.' : 'Auto en Medio: rápido y equilibrado.');
+      setComposerHint(
+        level === 'max' ? 'Auto en Max: uso el modelo más potente (GLM-5.2).'
+          : level === 'medio' ? 'Auto en Medio: modelo equilibrado (Gemini).'
+            : 'Auto: Mady elige el mejor modelo para cada mensaje.'
+      );
     });
     document.addEventListener('click', (e) => {
       if (el.autoReasonPop && !el.autoReasonPop.hidden && !el.autoReasonPop.contains(e.target) && el.autoReasonBtn && !el.autoReasonBtn.contains(e.target)) closeAutoReasonPop();
