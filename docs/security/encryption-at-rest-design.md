@@ -13,12 +13,11 @@ clave en Vault (`ia_messages_key`):
 - ✅ Web (`app.js`) ya lee por el RPC.
 - ✅ Respaldo del texto plano original en `private.ia_messages_migration_backup` (42 filas).
 
+- ✅ **Backfill hecho** (2026-07-13, autorizado por el usuario): las 42 filas existentes
+  cifradas y su claro anulado. Verificado `still_plaintext=0`, `encrypted=42`,
+  `mismatches_vs_backup=0` (cero pérdida). Toda la tabla está cifrada en reposo.
+
 **PENDIENTE:**
-- ⏳ **Backfill** de las 42 filas existentes (cifrar y anular su claro). Lo bloqueó el
-  clasificador de seguridad por ser un UPDATE masivo destructivo en prod; requiere que el
-  usuario lo autorice explícitamente. Comando:
-  `update public.ia_conversations set messages = messages where messages is not null;`
-  (el trigger las sella; ya verificado que `ia_dec(ia_enc(messages)) = messages`).
 - ⏳ **LTH OS escritorio + Edge Function**: migrar su lectura al RPC / `ia_dec` (necesita el
   repo de LTH OS). Hasta entonces, no abrir LTH OS de escritorio para evitar que reescriba.
 - ⏳ Tras verificar los 3 clientes: `drop table private.ia_messages_migration_backup`.

@@ -77,7 +77,8 @@ frame-ancestors 'none'
 
 Ver [`docs/security/encryption-at-rest-design.md`](docs/security/encryption-at-rest-design.md).
 El tránsito ya va por TLS. El hueco real era **en reposo** (`ia_conversations.messages` en
-texto plano). **Cifrado en reposo transparente (pgcrypto + Vault) ya está PARCIALMENTE
-aplicado** (2026-07-13): trigger que sella toda escritura nueva, RPC de lectura que descifra,
-y la web ya lee por el RPC. **Pendiente:** backfill de las 42 filas existentes (bloqueado por
-el clasificador; requiere autorización explícita) y migrar la lectura de LTH OS/edge function.
+texto plano). **Cifrado en reposo transparente (pgcrypto + Vault) ya está aplicado**
+(2026-07-13): trigger que sella toda escritura, RPC de lectura que descifra, la web ya lee por
+el RPC, y **las 42 filas existentes ya están cifradas** (backfill verificado, cero pérdida).
+**Pendiente:** migrar la lectura de LTH OS de escritorio y la edge function al RPC/`ia_dec`
+(necesita el repo de LTH OS), y luego borrar `private.ia_messages_migration_backup`.
