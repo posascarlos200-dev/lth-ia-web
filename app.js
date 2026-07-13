@@ -2391,6 +2391,11 @@
       const res = await callEdge({ action: 'reason-status' });
       const data = await res.json().catch(() => ({}));
       if (data && data.reasoningModels && typeof data.reasoningModels === 'object') state.reasonModels = data.reasoningModels;
+      try {
+        const n = state.reasonModels ? Object.keys(state.reasonModels).length : 0;
+        const ma = state.reasonModels && state.reasonModels.mady_auto ? state.reasonModels.mady_auto.model : '(no cargado)';
+        console.log('[Mady] modelos del Admin cargados:', n, '· mady_auto =', ma);
+      } catch (_) {}
     } catch (_) {}
     resumePendingReasonReviews();
   }
@@ -2715,16 +2720,21 @@
         if (convo.mode !== 'create') { convo.mode = 'create'; syncComposerMode(); }
       }
 
-      // Nivel del Auto: 'auto' deja al router; 'medio' fija Gemini; 'max' fija el modelo
-      // mas potente (editables en el Admin). No aplica a saludos triviales ni a modelo manual.
-      if ((state.autoReason === 'max' || state.autoReason === 'medio') && canUsePremium() && !manualAllowed && !trivialAuto) {
-        routeOpts = routeOpts || {};
-        routeOpts.model = state.autoReason === 'max'
-          ? reasonModel('mady_max', 'z-ai/glm-5.2')
-          : reasonModel('mady_auto', 'google/gemini-2.5-flash');
-        if (state.autoReason === 'max' && (!routeOpts.maxTokens || routeOpts.maxTokens < 2400)) routeOpts.maxTokens = 2400;
+      // Nivel del Auto (todos toman el modelo del Admin · Módulos > Mady). max fija Mady Max;
+      // medio fija Mady Auto; auto usa lo que decidió el router (ya mapeado a mady_auto/mady_max)
+      // y, si el router no dejó modelo, se fuerza mady_auto para NUNCA caer al default del edge.
+      if (canUsePremium() && !manualAllowed && !trivialAuto) {
+        if (state.autoReason === 'max') {
+          routeOpts = routeOpts || {}; routeOpts.model = reasonModel('mady_max', 'z-ai/glm-5.2');
+          if (!routeOpts.maxTokens || routeOpts.maxTokens < 2400) routeOpts.maxTokens = 2400;
+        } else if (state.autoReason === 'medio') {
+          routeOpts = routeOpts || {}; routeOpts.model = reasonModel('mady_auto', 'google/gemini-2.5-flash');
+        } else if (!routeOpts || !routeOpts.model) {
+          routeOpts = routeOpts || {}; routeOpts.model = reasonModel('mady_auto', 'google/gemini-2.5-flash');
+        }
       }
 
+      try { console.log('[Mady] nivel:', state.autoReason, '| modelo enviado:', (routeOpts && routeOpts.model) || '(default del edge)'); } catch (_) {}
       let started = false;
       const result = await streamChat(convo, text, (full) => {
         if (!started) { started = true; bub.classList.add('cursor'); }
