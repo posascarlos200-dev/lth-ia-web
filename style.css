@@ -1285,3 +1285,41 @@ body.light .rw-amount { color: #1d9e58; text-shadow: none; }
 body.light .rw-chip.ok { color: #1d9e58; }
 body.light .rw-chip.bad { color: #d04a5e; }
 body.light .rw-chip.wait { color: #b07817; }
+
+
+/* Mobile viewport repair: Safari reports the real visual viewport while the keyboard is open. */
+:root { --app-height: 100dvh; }
+.auth-screen,
+.app-screen { height: var(--app-height); min-height: var(--app-height); }
+body.soft-keyboard-open .app-screen { height: var(--app-height); min-height: var(--app-height); }
+body.soft-keyboard-open .messages { overscroll-behavior: contain; }
+.settings-remote-link {
+  width: 100%;
+  min-height: 66px;
+  margin: 14px 0 4px;
+  display: grid;
+  grid-template-columns: 38px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 11px;
+  padding: 10px 12px;
+  color: var(--text);
+  text-align: left;
+  background: linear-gradient(135deg, rgba(50, 126, 255, .13), rgba(74, 163, 255, .04));
+  border: 1px solid rgba(74, 163, 255, .28);
+  border-radius: 14px;
+}
+.settings-remote-link:active { transform: translateY(1px); }
+.settings-remote-icon {
+  width: 36px;
+  height: 36px;
+  display: grid;
+  place-items: center;
+  border-radius: 11px;
+  color: #02111d;
+  background: linear-gradient(145deg, #72b6ff, #4ce7c1);
+  font-weight: 900;
+}
+.settings-remote-link > span:nth-child(2) { display: grid; gap: 3px; min-width: 0; }
+.settings-remote-link strong { color: var(--text-bright); font-size: 12px; }
+.settings-remote-link small { color: var(--text-dim); font-size: 10px; line-height: 1.35; }
+.settings-remote-link > b { color: var(--cyan); font-size: 22px; font-weight: 400; }

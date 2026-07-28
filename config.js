@@ -13,5 +13,6 @@ window.LTH_IA_CONFIG = {
   ASSISTANT_NAME: 'Mady',
   // Descarga de la app de escritorio LTH OS OUP (beta). /releases/latest siempre
   // redirige a la version mas nueva publicada en el repo, sin tener que tocar esto.
-  LTH_OS_DOWNLOAD_URL: 'https://github.com/posascarlos200-dev/LTH-OS.Oup.1/releases/latest'
+  LTH_OS_DOWNLOAD_URL: 'https://github.com/posascarlos200-dev/LTH-OS.Oup.1/releases/latest',
+  LTH_REMOTE_URL: 'https://lth-remote.vercel.app/'
 };

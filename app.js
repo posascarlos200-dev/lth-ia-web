@@ -6670,6 +6670,35 @@
     renderEngineBadge(); startEnginePresence();
   }
 
+  function openLthRemote() {
+    const url = String(CFG.LTH_REMOTE_URL || 'https://lth-remote.vercel.app/');
+    window.location.assign(url + (url.includes('?') ? '&' : '?') + 'from=lth-ia');
+  }
+
+  function bindMobileViewport() {
+    const root = document.documentElement;
+    const viewport = window.visualViewport;
+    const sync = () => {
+      const height = Math.round(viewport?.height || window.innerHeight);
+      root.style.setProperty('--app-height', height + 'px');
+      const keyboardOpen = !!viewport && (window.innerHeight - viewport.height > 120);
+      document.body.classList.toggle('soft-keyboard-open', keyboardOpen);
+      if (!keyboardOpen) {
+        window.setTimeout(() => {
+          root.style.setProperty('--app-height', Math.round(window.visualViewport?.height || window.innerHeight) + 'px');
+          window.scrollTo(0, 0);
+        }, 80);
+      }
+    };
+    if (viewport) {
+      viewport.addEventListener('resize', sync);
+      viewport.addEventListener('scroll', sync);
+    }
+    window.addEventListener('resize', sync);
+    document.addEventListener('focusin', () => window.setTimeout(sync, 40));
+    document.addEventListener('focusout', () => window.setTimeout(sync, 180));
+    sync();
+  }
   function bindApp() {
     loadAutoReason(); renderAutoReason();
     el.menuBtn.addEventListener('click', () => {
@@ -6692,6 +6721,7 @@
     el.settingsClose.addEventListener('click', closeSettings);
     el.settingsModal.addEventListener('click', (e) => { if (e.target === el.settingsModal) closeSettings(); });
     el.engineToggle.addEventListener('click', toggleEngine);
+    if (el.openLthRemoteBtn) el.openLthRemoteBtn.addEventListener('click', openLthRemote);
     el.creditsBtn.addEventListener('click', () => {
       el.creditsPanel.hidden = !el.creditsPanel.hidden;
       if (!el.creditsPanel.hidden && state.credits) renderCredits();
@@ -7265,6 +7295,7 @@
 
   async function init() {
     cache();
+    bindMobileViewport();
     try { applyTheme(localStorage.getItem(THEME_KEY) === 'light' ? 'light' : 'dark'); } catch (_) { applyTheme('dark'); }
     if (!SB_URL || !SB_KEY) { authMessage('Falta configurar Supabase en config.js.'); return; }
     document.querySelectorAll('[data-auth-tab]').forEach((t) => t.addEventListener('click', () => setAuthMode(t.getAttribute('data-auth-tab'))));
@@ -7289,7 +7320,8 @@
     el.inviteRefreshBtn.addEventListener('click', refreshInviteStatus);
     el.pinCode.addEventListener('input', () => { el.pinCode.value = el.pinCode.value.replace(/\D/g, '').slice(0, 6); });
     bindApp();
-    setAuthMode('login');
+    const params = new URLSearchParams(window.location.search);
+    setAuthMode(params.get('create') === '1' ? 'signup' : 'login');
 
     const stored = loadSession();
     if (stored && stored.access_token) {
