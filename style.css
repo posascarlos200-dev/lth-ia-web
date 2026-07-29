@@ -1287,12 +1287,23 @@ body.light .rw-chip.bad { color: #d04a5e; }
 body.light .rw-chip.wait { color: #b07817; }
 
 
-/* Mobile viewport repair: Safari reports the real visual viewport while the keyboard is open. */
-:root { --app-height: 100dvh; }
+/* Mobile viewport repair: keep the app inside Safari's visual viewport and
+   restore the full canvas after the keyboard closes. */
+:root { --app-height: 100dvh; --viewport-offset: 0px; }
 .auth-screen,
-.app-screen { height: var(--app-height); min-height: var(--app-height); }
-body.soft-keyboard-open .app-screen { height: var(--app-height); min-height: var(--app-height); }
+.app-screen {
+  position: fixed;
+  top: var(--viewport-offset);
+  right: 0;
+  bottom: auto;
+  left: 0;
+  width: 100%;
+  height: var(--app-height);
+  min-height: 0;
+}
+body.soft-keyboard-open .app-screen { height: var(--app-height); min-height: 0; }
 body.soft-keyboard-open .messages { overscroll-behavior: contain; }
+body:not(.soft-keyboard-open) { transform: none !important; }
 .settings-remote-link {
   width: 100%;
   min-height: 66px;

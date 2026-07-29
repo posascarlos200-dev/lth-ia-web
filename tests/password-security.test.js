@@ -3,7 +3,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 
 const root = path.join(__dirname, '..');
-const workspace = path.resolve(root, '..', '..');
+const workspace = path.resolve(root, '..', '..', 'LTH-iOs');
 const html = fs.readFileSync(path.join(root, 'index.html'), 'utf8');
 const app = fs.readFileSync(path.join(root, 'app.js'), 'utf8');
 const edge = fs.readFileSync(path.join(workspace, 'supabase', 'functions', '_shared', 'lth-ia-password-security.ts'), 'utf8');
@@ -14,6 +14,9 @@ assert.match(html, /id="resetForm"/);
 assert.match(app, /'auth\.login'/);
 assert.match(app, /'password\.request'/);
 assert.match(app, /'password\.complete'/);
+assert.doesNotMatch(html, /id="authPassword"[^>]*minlength=/);
+assert.match(app, /if \(signup\) el\.authPassword\.setAttribute\('minlength', '12'\)/);
+assert.match(app, /else el\.authPassword\.removeAttribute\('minlength'\)/);
 assert.match(edge, /900 - \(Date\.now\(\) - startedAt\)/);
 assert.match(edge, /attempts >= 5/);
 assert.match(edge, /interval '15 minutes'|retryAfter: 900/);
@@ -23,4 +26,4 @@ assert.match(migration, /enable row level security/g);
 assert.match(migration, /revoke all .* anon, authenticated/);
 assert.match(migration, /lth_ia_web_record_login_failure/);
 
-console.log('password-security: 13/13 OK');
+console.log('password-security: 16/16 OK');

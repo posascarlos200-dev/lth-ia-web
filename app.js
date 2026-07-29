@@ -6678,25 +6678,63 @@
   function bindMobileViewport() {
     const root = document.documentElement;
     const viewport = window.visualViewport;
-    const sync = () => {
-      const height = Math.round(viewport?.height || window.innerHeight);
-      root.style.setProperty('--app-height', height + 'px');
-      const keyboardOpen = !!viewport && (window.innerHeight - viewport.height > 120);
+    let stableHeight = Math.round(Math.max(window.innerHeight, viewport?.height || 0));
+    let settleTimers = [];
+
+    const isEditable = (node) => !!node && (
+      /^(INPUT|TEXTAREA|SELECT)$/.test(node.tagName)
+      || node.isContentEditable
+    );
+    const resetPageOffset = () => {
+      try { window.scrollTo({ top: 0, left: 0, behavior: 'instant' }); }
+      catch (_) { window.scrollTo(0, 0); }
+    };
+    const sync = (forceClosed = false) => {
+      const visualHeight = Math.round(viewport?.height || window.innerHeight);
+      const visualTop = Math.max(0, Math.round(viewport?.offsetTop || 0));
+      const focused = isEditable(document.activeElement);
+      const lostHeight = Math.max(0, stableHeight - visualHeight);
+      const keyboardOpen = !forceClosed && focused && (lostHeight > 90 || visualTop > 40);
+
+      if (!keyboardOpen && !focused) {
+        stableHeight = Math.max(stableHeight, Math.round(window.innerHeight), visualHeight);
+      }
+
+      root.style.setProperty('--app-height', Math.max(320, visualHeight) + 'px');
+      root.style.setProperty('--viewport-offset', (keyboardOpen ? visualTop : 0) + 'px');
       document.body.classList.toggle('soft-keyboard-open', keyboardOpen);
+
       if (!keyboardOpen) {
-        window.setTimeout(() => {
-          root.style.setProperty('--app-height', Math.round(window.visualViewport?.height || window.innerHeight) + 'px');
-          window.scrollTo(0, 0);
-        }, 80);
+        root.style.setProperty('--app-height', Math.max(320, stableHeight) + 'px');
+        resetPageOffset();
       }
     };
+    const settleClosedViewport = () => {
+      settleTimers.forEach((timer) => window.clearTimeout(timer));
+      settleTimers = [];
+      const settle = (delay) => window.setTimeout(() => {
+        if (!isEditable(document.activeElement)) {
+          const visualHeight = Math.round(viewport?.height || window.innerHeight);
+          stableHeight = Math.max(Math.round(window.innerHeight), visualHeight);
+          sync(true);
+        }
+      }, delay);
+      settleTimers = [0, 80, 220, 420].map(settle);
+    };
     if (viewport) {
-      viewport.addEventListener('resize', sync);
-      viewport.addEventListener('scroll', sync);
+      viewport.addEventListener('resize', () => sync());
+      viewport.addEventListener('scroll', () => sync());
     }
-    window.addEventListener('resize', sync);
+    window.addEventListener('resize', () => sync());
+    window.addEventListener('orientationchange', () => {
+      stableHeight = 0;
+      window.setTimeout(settleClosedViewport, 250);
+    });
     document.addEventListener('focusin', () => window.setTimeout(sync, 40));
-    document.addEventListener('focusout', () => window.setTimeout(sync, 180));
+    document.addEventListener('focusout', settleClosedViewport);
+    document.addEventListener('visibilitychange', () => {
+      if (!document.hidden) settleClosedViewport();
+    });
     sync();
   }
   function bindApp() {
@@ -6876,6 +6914,11 @@
     el.forgotPasswordBtn.hidden = signup;
     el.authBtnLabel.textContent = signup ? 'Solicitar invitación' : 'Entrar';
     el.authPassword.setAttribute('autocomplete', signup ? 'new-password' : 'current-password');
+    // La política nueva se exige al crear la contraseña, no al autenticar
+    // cuentas existentes que Supabase ya considera válidas.
+    if (signup) el.authPassword.setAttribute('minlength', '12');
+    else el.authPassword.removeAttribute('minlength');
+    el.authPassword.setCustomValidity('');
     el.authFoot.textContent = signup
       ? 'LTH Mady está en producción · revisamos cada solicitud manualmente'
       : 'Acceso protegido por Supabase Auth';
@@ -7357,7 +7400,6 @@
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', init);
   else init();
 })();
-
 
 
 
