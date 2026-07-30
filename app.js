@@ -218,6 +218,32 @@
     'Devuelve entre 3 y 6 recursos distintos. Si no puedes verificar un enlace directo, omite ese recurso.'
   ].join('\n');
 
+  // ── Niveles rapidos Medio/Max (selector Auto del chat, NO el toggle "Modo Razonamiento") ──
+  // Ambos corren sobre GLM-5.2. La diferencia entre ellos es la orquestacion: Max es el
+  // pipeline completo (prepara el pedido -> especialista -> juez que valida/corrige, con
+  // busqueda web real cuando aplica); Medio es la mitad de eso (prepara el pedido ->
+  // especialista), sin juez y con busqueda gratuita en vez de la de pago. Nunca clasifican
+  // a "codigo"/"imagen": eso es tarea de los botones Programar/Imagen, no de este selector.
+  const AUTOLEVEL_BRIEF_PROMPT = [
+    'Eres el PASO DE PREPARACION de los niveles Medio/Max de Mady, dentro del chat normal. NO respondas la pregunta del usuario: prepara instrucciones limpias para quien va a responder despues de ti.',
+    'Este paso es SOLO para conversacion de texto. Aunque el usuario pida codigo o una imagen, tu preparas el pedido para que se responda DENTRO del chat (una explicacion, un fragmento de codigo, una descripcion); nunca lo desvies a otra herramienta ni cambies de tema.',
+    'Reglas:',
+    '1) Si falta un dato clave y sin el no puedes preparar bien la respuesta, pide aclaracion breve (need_clarification=true, maximo 2 preguntas concisas). Si el usuario ya respondio algo relacionado antes en este chat, NO vuelvas a preguntar: decide con lo que tienes y procede.',
+    '2) Si esta claro, escribe "improved_prompt": el objetivo real del usuario, el contexto relevante del chat que haga falta, el formato esperado y cualquier restriccion. Se fiel a lo pedido: no amplies el alcance ni inventes requisitos nuevos.',
+    '3) "needs_current_info": true SOLO si la respuesta depende de datos que cambian con el tiempo (precios, noticias, resultados, versiones recientes, fechas actuales) y podria hacer falta verificarlo; false si es conocimiento estable.',
+    '4) Devuelve SOLO JSON valido, sin texto fuera del JSON: { "need_clarification": false, "questions": "", "improved_prompt": "", "needs_current_info": false }'
+  ].join('\n');
+  const AUTOLEVEL_SKILL_MEDIO = [
+    'Antes de escribir, piensa en silencio: que pide exactamente el usuario, que contexto del chat ya aplica y en que orden conviene explicarlo. No muestres ese proceso, entrega solo el resultado.',
+    'Revisa tu propia respuesta una vez antes de entregarla: corrige numeros, nombres o pasos logicos rotos que hayas escrito tu misma.',
+    'Si la respuesta depende de datos que cambian con el tiempo y no tienes certeza, dilo explicitamente en vez de inventar.'
+  ].join(' ');
+  const AUTOLEVEL_SKILL_MAX = [
+    'Sigue un proceso riguroso en silencio antes de escribir: 1) descompon la pregunta en sus partes reales, 2) identifica supuestos y datos que falten, 3) considera al menos un enfoque alternativo y descartalo si es peor, 4) arma la respuesta final ya verificada. No muestres estos pasos: entrega solo el resultado limpio.',
+    'Se exhaustiva pero precisa: cubre los angulos relevantes de la pregunta, con ejemplos concretos cuando ayuden, sin relleno innecesario.',
+    'Nunca inventes datos, cifras, fechas o citas. Si algo no se puede verificar con lo que tienes, dilo explicitamente en vez de afirmarlo.'
+  ].join(' ');
+
   // Motor LTH OS (PC): se enruta por la cola remote_commands (accion ia-ask),
   // igual que LTH Remote. El Mady completo del PC responde.
   const REMOTE_CMD_URL = SB_URL + '/rest/v1/remote_commands';
@@ -2649,6 +2675,13 @@
       // no gastar llamadas extra en algo como "hola". No aplica a manual ni a "Crear algo".
       const trivial = !createOn && looksTrivial(text);
       const trivialAuto = trivial && !manualAllowed && canUsePremium();
+      // Medio/Max fuera de un saludo trivial: pipeline propio en GLM-5.2 (ver autoLevelAnswer).
+      // El saludo trivial sigue el camino corto de siempre, mas abajo (su modelo fijo se
+      // fuerza igual, pero sin gastar la preparacion/juez en un "hola").
+      if (!manualAllowed && !createOn && !trivial && canUsePremium() && (state.autoReason === 'medio' || state.autoReason === 'max')) {
+        await autoLevelAnswer(text, convo, bub, state.autoReason);
+        return;
+      }
       let routeOpts = null;
       let freeSkill = null;
       if (manual && !manualAllowed) {
@@ -2729,7 +2762,7 @@
           routeOpts = routeOpts || {}; routeOpts.model = reasonModel('mady_max', 'z-ai/glm-5.2');
           if (!routeOpts.maxTokens || routeOpts.maxTokens < 2400) routeOpts.maxTokens = 2400;
         } else if (state.autoReason === 'medio') {
-          routeOpts = routeOpts || {}; routeOpts.model = reasonModel('mady_medio', 'google/gemini-2.5-flash');
+          routeOpts = routeOpts || {}; routeOpts.model = reasonModel('mady_medio', 'z-ai/glm-5.2');
         } else if (!trivialAuto && (!routeOpts || !routeOpts.model)) {
           // Auto sin modelo del router (y no trivial) -> tier estándar del Admin.
           routeOpts = routeOpts || {}; routeOpts.model = reasonModel('auto_standard', 'google/gemini-2.5-flash');
@@ -6412,6 +6445,122 @@
       reasoningReview: {
         status: 'pending',
         category,
+        original: text,
+        improved,
+        draft,
+        specialistModel: spec.model,
+        attempts: 0,
+        createdAt: Date.now(),
+        completedAt: 0
+      }
+    };
+    convo.messages.push(m);
+    convo.updated = Date.now();
+    saveConvos(); renderMessages(); renderConvoList(); fetchStatus();
+    await syncPushOne(convo).catch(() => {});
+    void finalizeReasoningReview(convo.id, m.id);
+  }
+
+  // Especialista de Medio/Max: SIEMPRE GLM-5.2 salvo que la preparacion marque que hace
+  // falta informacion actual, caso en el que Max sube temporalmente al modelo con busqueda
+  // web ya probado en el pipeline (spec_chat_max). Medio nunca usa esa busqueda de pago:
+  // si hace falta contexto actual, se apoya en la investigacion gratis (Wikipedia/DuckDuckGo).
+  function autoLevelSpecialist(level, needsWeb, improved) {
+    const brief = '\n\nInstrucciones ya preparadas para ti (siguelas al pie de la letra):\n' + improved;
+    if (level === 'max' && needsWeb) {
+      const hoy = new Date().toLocaleDateString('es', { day: '2-digit', month: 'long', year: 'numeric' });
+      return {
+        model: reasonModel('spec_chat_max', 'anthropic/claude-sonnet-4.6:online'), stage: 'chat_max', temperature: 0.2,
+        plugins: [{ id: 'web', max_results: 6 }],
+        system: 'Eres Mady en modo investigacion con BUSQUEDA WEB ACTIVA. Hoy es ' + hoy + ' (estamos en el ano 2026; NUNCA trates esta fecha como futura ni digas que no puedes acceder a internet). DEBES usar los resultados de la busqueda web que recibes para responder con datos REALES y ACTUALES. CITA las fuentes (URLs reales) que uses. Separa hechos confirmados de inferencias y marca explicitamente lo que no se pudo verificar.' + brief
+      };
+    }
+    const skill = level === 'max' ? AUTOLEVEL_SKILL_MAX : AUTOLEVEL_SKILL_MEDIO;
+    return {
+      model: reasonModel(level === 'max' ? 'mady_max' : 'mady_medio', 'z-ai/glm-5.2'),
+      stage: level === 'max' ? 'razonamiento' : 'chat_simple',
+      temperature: 0.3,
+      system: SYSTEM_PROMPT + '\n\n' + skill + brief
+    };
+  }
+
+  // Pipeline de Medio/Max: prepara el pedido (clasifica si necesita aclarar + mejora el
+  // prompt + detecta si hace falta info actual) -> especialista en GLM-5.2. Max ademas deja
+  // el borrador en revision del JUEZ (misma infraestructura que "Modo Razonamiento": valida,
+  // corrige y muestra el veredicto), reutilizando finalizeReasoningReview tal cual. Medio se
+  // queda en dos llamadas (preparacion + especialista) para ser la mitad de costoso.
+  async function autoLevelAnswer(text, convo, bub, level) {
+    const signal = state.abort && state.abort.signal;
+    const history = buildCloudMessages(convo, 'reasoning');
+
+    bub.innerHTML = reasonStageHtml('orchestrate');
+    let brief = null;
+    try {
+      const raw = await reasonChat({ model: reasonModel('orchestrator', 'google/gemini-2.5-flash'), system: composeSystemWithMemory(AUTOLEVEL_BRIEF_PROMPT, convo, text), messages: history, maxTokens: 900, temperature: 0.2, reasonStage: false }, signal);
+      brief = parseReasonJson(raw);
+    } catch (_) { brief = null; }
+
+    if (brief && brief.need_clarification && String(brief.questions || '').trim()) {
+      const q = String(brief.questions).trim();
+      bub.innerHTML = renderMarkdown(q);
+      markAssistantTurn(convo, q, level === 'max' ? 'Aclaracion Mady Max' : 'Aclaracion Mady Medio');
+      convo.messages.push({ id: uid(), role: 'assistant', content: q, ts: Date.now() });
+      convo.updated = Date.now();
+      saveConvos(); renderConvoList(); syncPushOne(convo);
+      void maybeUpdateConvoBrain(convo);
+      return;
+    }
+
+    const improved = String(brief && brief.improved_prompt || '').trim() || text;
+    let needsWeb = !!(brief && brief.needs_current_info);
+    if (!brief) needsWeb = detectFreeResearchIntent(text).matched; // si fallo la preparacion, red de seguridad heuristica
+
+    // Medio: busqueda gratuita (Wikipedia/DuckDuckGo) como contexto, nunca el plugin de pago.
+    let system = null;
+    if (level === 'medio' && needsWeb) {
+      try {
+        const research = await runFreeResearch(text, signal);
+        if (research && research.sources && research.sources.length) system = buildFreeResearchSystem(SYSTEM_PROMPT + '\n\n' + AUTOLEVEL_SKILL_MEDIO, research);
+      } catch (_) { /* sin resultados gratis: seguimos con GLM-5.2 solo */ }
+    }
+
+    const spec = autoLevelSpecialist(level, needsWeb, improved);
+    if (system) spec.system = system + '\n\nInstrucciones ya preparadas para ti (siguelas al pie de la letra):\n' + improved;
+    bub.innerHTML = reasonStageHtml(spec.stage);
+    const draft = await streamSpecialistDraft(spec, history, convo, improved, bub, signal);
+    if (!draft || !draft.trim()) {
+      const msg = 'No se pudo generar la respuesta. Intenta de nuevo.';
+      bub.innerHTML = renderMarkdown(msg);
+      markAssistantTurn(convo, msg, 'Respuesta ' + (level === 'max' ? 'Mady Max' : 'Mady Medio'));
+      convo.messages.push({ id: uid(), role: 'assistant', content: msg, ts: Date.now() });
+      convo.updated = Date.now(); saveConvos(); renderConvoList(); syncPushOne(convo);
+      return;
+    }
+
+    if (level === 'medio') {
+      // Medio no pasa por el juez: el borrador del especialista YA es la respuesta final.
+      bub.innerHTML = renderMarkdown(draft, { preview: true });
+      const assistantMsg = { id: uid(), role: 'assistant', content: draft, ts: Date.now() };
+      markAssistantTurn(convo, draft, 'Respuesta Mady Medio (GLM-5.2)');
+      convo.messages.push(assistantMsg);
+      if (draft.trim()) appendFeedback(bub, assistantMsg, convo);
+      convo.updated = Date.now();
+      saveConvos(); renderConvoList();
+      syncPushOne(convo);
+      fetchStatus();
+      void maybeUpdateConvoBrain(convo);
+      return;
+    }
+
+    // Max: checkpoint durable + juez (misma mecanica que "Modo Razonamiento").
+    const m = {
+      id: uid(),
+      role: 'assistant',
+      content: '_Verificando y puliendo la respuesta…_',
+      ts: Date.now(),
+      reasoningReview: {
+        status: 'pending',
+        category: needsWeb ? 'chat_max' : 'razonamiento',
         original: text,
         improved,
         draft,
