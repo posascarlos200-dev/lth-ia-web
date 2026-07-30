@@ -7122,12 +7122,34 @@
     return false;
   }
 
+  function suggestedEmail(rawEmail) {
+    const email = String(rawEmail || '').trim().toLowerCase();
+    const at = email.lastIndexOf('@');
+    if (at < 1) return '';
+    const domain = email.slice(at + 1);
+    const corrections = {
+      'gamil.com': 'gmail.com',
+      'gamail.com': 'gmail.com',
+      'gmial.com': 'gmail.com',
+      'gmai.com': 'gmail.com',
+      'hotmal.com': 'hotmail.com',
+      'hotmai.com': 'hotmail.com',
+      'outlok.com': 'outlook.com'
+    };
+    return corrections[domain] ? email.slice(0, at + 1) + corrections[domain] : '';
+  }
+
   async function handleAuthSubmit(e) {
     e.preventDefault();
     const email = String(el.authEmail.value || '').trim().toLowerCase();
     const password = String(el.authPassword.value || '');
     if (!email || !password) { authMessage('Completa correo y contraseña.'); return; }
     if (state.authMode === 'signup') {
+      const correctedEmail = suggestedEmail(email);
+      if (correctedEmail) {
+        authMessage('Revisa el correo. ¿Quisiste escribir ' + correctedEmail + '?');
+        return;
+      }
       const passwordProblem = INVITES.passwordError(password, email);
       if (passwordProblem) { authMessage(passwordProblem); return; }
       if (!CFG.TURNSTILE_SITE_KEY) { authMessage('Las nuevas solicitudes aún no están activadas.'); return; }
@@ -7400,7 +7422,6 @@
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', init);
   else init();
 })();
-
 
 
 

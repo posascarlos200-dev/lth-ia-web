@@ -25,6 +25,7 @@ const context = {
 context.window.window = context.window;
 
 const source = fs.readFileSync(path.join(__dirname, '..', 'invitations.js'), 'utf8');
+const appSource = fs.readFileSync(path.join(__dirname, '..', 'app.js'), 'utf8');
 vm.runInNewContext(source, context, { filename: 'invitations.js' });
 const api = context.window.LTHInviteApi;
 
@@ -43,11 +44,18 @@ assert.equal(api.viewModel({ status: 'pending' }).title, 'Solicitud pendiente');
 assert.equal(api.viewModel({ status: 'code_sent' }).title, 'PIN enviado');
 assert.equal(api.viewModel({ status: 'locked' }).title, 'Solicitud bloqueada');
 assert.equal(api.viewModel({ status: 'expired' }).title, 'PIN vencido');
+assert.match(appSource, /'gamil\.com': 'gmail\.com'/);
+assert.match(appSource, /¿Quisiste escribir/);
 
 (async () => {
   const response = await api.call('https://example.test/invites', 'publishable', 'invite.status', { requestToken: 'opaque' });
   assert.equal(response.invite.status, 'pending');
-  console.log('invitation-flow: 13/13 OK');
+  context.fetch = async () => { throw new TypeError('Load failed'); };
+  await assert.rejects(
+    api.call('https://example.test/invites', 'publishable', 'invite.request', {}),
+    /No pudimos conectar con el servidor de LTH IA/
+  );
+  console.log('invitation-flow: 16/16 OK');
 })().catch((error) => {
   console.error(error);
   process.exitCode = 1;

@@ -28,11 +28,16 @@
   async function call(fnUrl, publishableKey, action, body, accessToken) {
     const headers = { apikey: publishableKey, 'Content-Type': 'application/json' };
     if (accessToken) headers.Authorization = 'Bearer ' + accessToken;
-    const res = await fetch(fnUrl, {
-      method: 'POST',
-      headers,
-      body: JSON.stringify(Object.assign({ action }, body || {}))
-    });
+    let res;
+    try {
+      res = await fetch(fnUrl, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify(Object.assign({ action }, body || {}))
+      });
+    } catch (_) {
+      throw new Error('No pudimos conectar con el servidor de LTH IA. Revisa tu conexión y vuelve a intentarlo.');
+    }
     const data = await res.json().catch(() => ({}));
     if (!res.ok || data.success === false) {
       const error = new Error(data.error || 'No se pudo procesar la invitación.');
