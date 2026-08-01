@@ -4574,7 +4574,10 @@
         model,
         system: composeSystemWithMemory(JUDGE_PROMPT + ctx, convo, text),
         messages: [{ role: 'user', content: 'PETICION ORIGINAL:\n' + text + '\n\nPROMPT MEJORADO:\n' + improved + '\n\nBORRADOR DEL ESPECIALISTA:\n' + draft }],
-        maxTokens: needWeb ? 1600 : 1200,
+        // El juez tambien razona antes de dictar el veredicto (el modelo del Admin para esta
+        // etapa hoy es GLM-5.2). Con 1200 tokens agotaba el presupuesto pensando y su JSON
+        // salia cortado: el veredicto se perdia o quedaba ilegible.
+        maxTokens: needWeb ? 6000 : 5000,
         temperature: 0.1,
         reasonStage: false
       };
@@ -4659,7 +4662,10 @@
     // gemini. Solo si TODAS fallan se marca "Sin revision" y se conserva el borrador intacto.
     const factual = snapshot.category === 'chat_max';
     const attempts = [];
-    if (factual) attempts.push({ model: reasonModel('judge_web', 'anthropic/claude-sonnet-4.6:online'), timeoutMs: 115000, opts: { plugins: [{ id: 'web', max_results: 5 }], needWeb: true } });
+    // El juez con web usa la etapa 'judge_web' si el Admin la define; si no, el MISMO juez que
+    // el Admin ya eligio, solo que con la busqueda encendida. Antes caia a un Sonnet fijo que
+    // no aparece en el panel: un modelo invisible revisando las respuestas.
+    if (factual) attempts.push({ model: reasonModel('judge_web', reasonModel('judge', 'z-ai/glm-5.2')), timeoutMs: 115000, opts: { plugins: [{ id: 'web', max_results: 5 }], needWeb: true } });
     attempts.push({ model: reasonModel('judge', 'anthropic/claude-opus-4.8'), timeoutMs: 100000, opts: null });
     attempts.push({ model: reasonModel('orchestrator', 'google/gemini-2.5-flash'), timeoutMs: 45000, opts: null });
 
@@ -4668,7 +4674,11 @@
       if (judge) break;
       try {
         const result = await runJudgeReview(attempt.model, snapshot.original, snapshot.improved, snapshot.draft, convo, null, attempt.timeoutMs, attempt.opts);
-        if (result && typeof result === 'object') judge = result;
+        // parseReasonJson devuelve {} cuando el modelo no entrego JSON legible (por ejemplo si
+        // gasto todo su presupuesto razonando). Sin exigir un veredicto real, ese {} vacio se
+        // tomaba por bueno y la cadena de fallback NUNCA pasaba al siguiente modelo: el juez
+        // quedaba mudo y el borrador se marcaba "Aprobado" sin que nadie lo revisara.
+        if (result && typeof result === 'object' && String(result.veredicto || '').trim()) judge = result;
       } catch (_) { /* probamos el siguiente modelo del fallback */ }
     }
     if (!judge) {
@@ -4680,9 +4690,6 @@
         advertencia: 'El juez no estuvo disponible; se conserva intacta la respuesta del especialista.',
         correcciones: []
       };
-    } else if (!String(judge.veredicto || '').trim()) {
-      // Corrio pero no devolvio veredicto legible -> el borrador queda aprobado tal cual.
-      judge.veredicto = 'APROBADO';
     }
 
     try {
@@ -6338,32 +6345,50 @@
     bub.appendChild(card);
   }
 
-  // El especialista por STREAMING con auto-continuacion: si la respuesta se trunca por longitud
-  // (preguntas grandes con muchos puntos/codigo), continua donde quedo (hasta 2 veces) en vez de
-  // entregar un borrador cortado. Asi el juez no rechaza por "borrador incompleto".
+  // El especialista por STREAMING con auto-continuacion: si la respuesta se corta, continua
+  // donde quedo (hasta 3 veces) en vez de entregar un borrador incompleto que el juez rechaza.
+  //
+  // Cada turno pide un bloque MODERADO de tokens a proposito. Pedir 16.000 de golpe a un modelo
+  // que razona (GLM-5.2) hace que una sola llamada dure mas de lo que aguanta la edge function:
+  // el worker muere a mitad del stream, no llega el evento "complete" y el borrador queda
+  // cortado (o vacio, si murio mientras todavia razonaba). Con bloques mas cortos cada llamada
+  // termina holgada y la continuacion arma la respuesta larga por partes.
+  const SPECIALIST_TURN_TOKENS = 6000;
   async function streamSpecialistDraft(spec, history, convo, improved, bub, signal) {
     const system = composeSystemWithMemory(spec.system, convo, improved);
     let full = '';
     let messages = history.slice();
-    const MAX_CONTINUE = 2;
+    const MAX_CONTINUE = 3;
     for (let turn = 0; turn <= MAX_CONTINUE; turn += 1) {
       const res = await streamReasonChat({
         model: spec.model,
         system,
         messages,
-        maxTokens: 16000,
+        maxTokens: spec.maxTokens || SPECIALIST_TURN_TOKENS,
         temperature: spec.temperature,
-        plugins: spec.plugins,
+        // La busqueda web (de pago) solo en el primer turno: las continuaciones nada mas
+        // terminan de escribir lo que quedo a medias, no necesitan volver a buscar, y
+        // repetirla en cada turno multiplicaria el costo de la pregunta.
+        plugins: turn === 0 ? spec.plugins : null,
         reasonStage: false
       }, signal, {
         onProgress: (p) => {
           const chars = full.length + String((p && p.text) || '').length;
-          bub.innerHTML = reasonStageHtml(spec.stage) + '<div style="margin-top:8px;font-size:12px;color:rgba(212,255,246,.6)">Redactando… ' + chars + ' caracteres' + (turn > 0 ? ' (continuando)' : '') + '</div>';
+          // Mientras el modelo razona no hay texto todavia: avisamos que esta pensando en vez
+          // de dejar un "0 caracteres" que parece colgado.
+          const phase = chars
+            ? 'Redactando… ' + chars + ' caracteres'
+            : (p && p.sawReasoning ? 'Pensando a fondo…' : 'Conectando…');
+          bub.innerHTML = reasonStageHtml(spec.stage) + '<div style="margin-top:8px;font-size:12px;color:rgba(212,255,246,.6)">' + phase + (turn > 0 ? ' (continuando)' : '') + '</div>';
         }
       });
       full += String((res && res.text) || '');
-      if (!(res && res.truncated)) break;        // termino completo
+      // Truncado por longitud O stream cortado sin "complete" (worker caido): en ambos casos
+      // falta texto y hay que continuar.
+      const cut = !!(res && (res.truncated || res.completed === false));
+      if (!cut) break;                             // termino completo
       if (turn === MAX_CONTINUE) break;            // tope de continuaciones
+      if (!full.trim()) continue;                  // no alcanzo a escribir nada: repite el pedido tal cual
       messages = history.concat([
         { role: 'assistant', content: full },
         { role: 'user', content: 'Continua EXACTAMENTE donde te quedaste, sin repetir nada de lo ya escrito ni volver a saludar. Sigue hasta completar TODO lo pedido.' }
@@ -6382,7 +6407,8 @@
     bub.innerHTML = reasonStageHtml('orchestrate');
     let orch;
     try {
-      const orchRaw = await reasonChat({ model: reasonModel('orchestrator', 'google/gemini-2.5-flash'), system: composeSystemWithMemory(ORCHESTRATOR_PROMPT, convo, text), messages: history, maxTokens: 1400, temperature: 0.2, reasonStage: false }, signal);
+      // Igual que en Medio/Max: el presupuesto cubre razonamiento + JSON (ver autoLevelAnswer).
+      const orchRaw = await reasonChat({ model: reasonModel('orchestrator', 'google/gemini-2.5-flash'), system: composeSystemWithMemory(ORCHESTRATOR_PROMPT, convo, text), messages: history, maxTokens: 4000, temperature: 0.2, reasonStage: false }, signal);
       orch = parseReasonJson(orchRaw);
     } catch (_) {
       const msg = 'No se pudo iniciar el modo razonamiento. Intenta de nuevo.';
@@ -6461,23 +6487,26 @@
     void finalizeReasoningReview(convo.id, m.id);
   }
 
-  // Especialista de Medio/Max: SIEMPRE GLM-5.2 salvo que la preparacion marque que hace
-  // falta informacion actual, caso en el que Max sube temporalmente al modelo con busqueda
-  // web ya probado en el pipeline (spec_chat_max). Medio nunca usa esa busqueda de pago:
-  // si hace falta contexto actual, se apoya en la investigacion gratis (Wikipedia/DuckDuckGo).
+  // Especialista de Medio/Max: SIEMPRE el modelo que el Admin fija en sus etapas
+  // (Modulos > Mady > "Medio y Max"). Ese es el contrato del panel: "Medio y Max NO usan el
+  // router: siempre responden con el modelo que elijas aqui". Ni la busqueda web los cambia:
+  // cuando Max necesita datos actuales se le enciende el plugin de busqueda AL MISMO modelo,
+  // en vez de saltar a otro por detras. Medio nunca usa esa busqueda de pago: si hace falta
+  // contexto actual se apoya en la investigacion gratis (Wikipedia/DuckDuckGo).
   function autoLevelSpecialist(level, needsWeb, improved) {
     const brief = '\n\nInstrucciones ya preparadas para ti (siguelas al pie de la letra):\n' + improved;
+    const model = reasonModel(level === 'max' ? 'mady_max' : 'mady_medio', 'z-ai/glm-5.2');
     if (level === 'max' && needsWeb) {
       const hoy = new Date().toLocaleDateString('es', { day: '2-digit', month: 'long', year: 'numeric' });
       return {
-        model: reasonModel('spec_chat_max', 'anthropic/claude-sonnet-4.6:online'), stage: 'chat_max', temperature: 0.2,
+        model: model, stage: 'chat_max', temperature: 0.2,
         plugins: [{ id: 'web', max_results: 6 }],
         system: 'Eres Mady en modo investigacion con BUSQUEDA WEB ACTIVA. Hoy es ' + hoy + ' (estamos en el ano 2026; NUNCA trates esta fecha como futura ni digas que no puedes acceder a internet). DEBES usar los resultados de la busqueda web que recibes para responder con datos REALES y ACTUALES. CITA las fuentes (URLs reales) que uses. Separa hechos confirmados de inferencias y marca explicitamente lo que no se pudo verificar.' + brief
       };
     }
     const skill = level === 'max' ? AUTOLEVEL_SKILL_MAX : AUTOLEVEL_SKILL_MEDIO;
     return {
-      model: reasonModel(level === 'max' ? 'mady_max' : 'mady_medio', 'z-ai/glm-5.2'),
+      model: model,
       stage: level === 'max' ? 'razonamiento' : 'chat_simple',
       temperature: 0.3,
       system: SYSTEM_PROMPT + '\n\n' + skill + brief
@@ -6496,7 +6525,11 @@
     bub.innerHTML = reasonStageHtml('orchestrate');
     let brief = null;
     try {
-      const raw = await reasonChat({ model: reasonModel('orchestrator', 'google/gemini-2.5-flash'), system: composeSystemWithMemory(AUTOLEVEL_BRIEF_PROMPT, convo, text), messages: history, maxTokens: 900, temperature: 0.2, reasonStage: false }, signal);
+      // El presupuesto tiene que cubrir el RAZONAMIENTO del modelo + el JSON, porque el modelo
+      // del Admin para esta etapa piensa antes de escribir (GLM-5.2). Con 900 tokens se
+      // gastaba todo pensando y devolvia cero JSON: la preparacion se perdia en silencio en
+      // CADA pregunta de Medio/Max y el especialista recibia el texto crudo del usuario.
+      const raw = await reasonChat({ model: reasonModel('orchestrator', 'google/gemini-2.5-flash'), system: composeSystemWithMemory(AUTOLEVEL_BRIEF_PROMPT, convo, text), messages: history, maxTokens: 4000, temperature: 0.2, reasonStage: false }, signal);
       brief = parseReasonJson(raw);
     } catch (_) { brief = null; }
 
@@ -6632,6 +6665,10 @@
     let sawReasoning = false;
     let finishReason = null;
     let truncated = false;
+    // El evento "complete" es el unico que confirma que el modelo TERMINO. Si el stream se
+    // cierra sin el (la edge function murio por limite de tiempo con un modelo que razona
+    // largo), el borrador queda cortado a mitad: se trata igual que un truncado por longitud.
+    let completed = false;
 
     const emit = () => {
       if (hooks && typeof hooks.onProgress === 'function') hooks.onProgress({ text: full, events, sawReasoning });
@@ -6655,6 +6692,7 @@
         if (evt.credits) credits = evt.credits;
         finishReason = evt.finishReason || finishReason;
         truncated = evt.truncated === true || String(evt.finishReason || '').toLowerCase() === 'length';
+        completed = true;
         emit();
         return;
       }
@@ -6689,7 +6727,7 @@
     if (errored) throw ApiError(stageErrorMessage(opts, { error: errored, status: errorStatus }, null), errorStatus, credits);
     // Cobro por token: refrescamos la barra de uso con el costo real del stream (p.ej. el juez).
     if (credits) { state.credits = mergeCredits(state.credits, credits); renderCredits(); }
-    return { text: full, credits, finishReason, truncated, events, sawReasoning };
+    return { text: full, credits, finishReason, truncated, events, sawReasoning, completed };
   }
 
   function mergeCredits(base, extra) {
