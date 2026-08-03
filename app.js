@@ -4578,6 +4578,7 @@
         // etapa hoy es GLM-5.2). Con 1200 tokens agotaba el presupuesto pensando y su JSON
         // salia cortado: el veredicto se perdia o quedaba ilegible.
         maxTokens: needWeb ? 6000 : 5000,
+        reasoningBudgetTokens: needWeb ? 2000 : 1400,
         temperature: 0.1,
         reasonStage: false
       };
@@ -6345,54 +6346,129 @@
     bub.appendChild(card);
   }
 
-  // El especialista por STREAMING con auto-continuacion: si la respuesta se corta, continua
-  // donde quedo (hasta 3 veces) en vez de entregar un borrador incompleto que el juez rechaza.
-  //
-  // Cada turno pide un bloque MODERADO de tokens a proposito. Pedir 16.000 de golpe a un modelo
-  // que razona (GLM-5.2) hace que una sola llamada dure mas de lo que aguanta la edge function:
-  // el worker muere a mitad del stream, no llega el evento "complete" y el borrador queda
-  // cortado (o vacio, si murio mientras todavia razonaba). Con bloques mas cortos cada llamada
-  // termina holgada y la continuacion arma la respuesta larga por partes.
-  const SPECIALIST_TURN_TOKENS = 6000;
+  // MAX no tiene un techo corto de respuesta: se construye en partes y continua hasta terminar.
+  // El limite por PARTE existe porque Supabase asigna un reloj nuevo a cada Edge Function. Asi
+  // GLM-5.2 conserva su razonamiento profundo, pero ninguna parte intenta vivir mas que el worker.
+  const SPECIALIST_TURN_TOKENS = 4600;
+  const SPECIALIST_REASONING_TOKENS = 1800;
+  const SPECIALIST_REASONING_RETRY_TOKENS = 1000;
+  const SPECIALIST_MAX_PARTS = 24;
+  const SPECIALIST_MAX_EMPTY_RETRIES = 3;
+
+  function isRecoverableSpecialistStreamError(error) {
+    const status = Number(error?.status || error?.statusCode || 0) || 0;
+    const message = String(error?.message || error || '');
+    return error?.name === 'AbortError' || [408, 425, 429, 500, 502, 503, 504, 546].includes(status)
+      || /timeout|tiempo de espera|stream|worker|resource limit|fetch failed|network|socket|temporar/i.test(message);
+  }
+
+  function mergeSpecialistChunk(current, incoming) {
+    const base = String(current || '').trimEnd();
+    const next = String(incoming || '').trimStart();
+    if (!base) return next;
+    if (!next) return base;
+    const maxOverlap = Math.min(2400, base.length, next.length);
+    for (let size = maxOverlap; size >= 80; size -= 1) {
+      if (base.slice(-size) === next.slice(0, size)) return base + next.slice(size);
+    }
+    return base + '\n\n' + next;
+  }
+
+  function specialistContinuationMessages(history, full, nextPart) {
+    const complete = String(full || '');
+    const maxContextChars = 90000;
+    const visible = complete.length <= maxContextChars
+      ? complete
+      : complete.slice(0, 16000)
+        + '\n\n[... contenido anterior ya entregado: ' + (complete.length - 76000) + ' caracteres ...]\n\n'
+        + complete.slice(-60000);
+    return history.concat([
+      { role: 'assistant', content: visible },
+      {
+        role: 'user',
+        content: 'Continua EXACTAMENTE la respuesta anterior en la parte ' + nextPart
+          + '. No repitas introducciones, titulos ni contenido ya escrito. Retoma la idea pendiente, conserva el mismo rigor y formato, y sigue hasta completar TODO lo pedido. Si ya estas en la ultima parte, cierra con la conclusion correspondiente.'
+      }
+    ]);
+  }
+
   async function streamSpecialistDraft(spec, history, convo, improved, bub, signal) {
     const system = composeSystemWithMemory(spec.system, convo, improved);
     let full = '';
     let messages = history.slice();
-    const MAX_CONTINUE = 3;
-    for (let turn = 0; turn <= MAX_CONTINUE; turn += 1) {
-      const res = await streamReasonChat({
-        model: spec.model,
-        system,
-        messages,
-        maxTokens: spec.maxTokens || SPECIALIST_TURN_TOKENS,
-        temperature: spec.temperature,
-        // La busqueda web (de pago) solo en el primer turno: las continuaciones nada mas
-        // terminan de escribir lo que quedo a medias, no necesitan volver a buscar, y
-        // repetirla en cada turno multiplicaria el costo de la pregunta.
-        plugins: turn === 0 ? spec.plugins : null,
-        reasonStage: false
-      }, signal, {
-        onProgress: (p) => {
-          const chars = full.length + String((p && p.text) || '').length;
-          // Mientras el modelo razona no hay texto todavia: avisamos que esta pensando en vez
-          // de dejar un "0 caracteres" que parece colgado.
-          const phase = chars
-            ? 'Redactando… ' + chars + ' caracteres'
-            : (p && p.sawReasoning ? 'Pensando a fondo…' : 'Conectando…');
-          bub.innerHTML = reasonStageHtml(spec.stage) + '<div style="margin-top:8px;font-size:12px;color:rgba(212,255,246,.6)">' + phase + (turn > 0 ? ' (continuando)' : '') + '</div>';
+    let part = 0;
+    let emptyRetries = 0;
+    let lastError = null;
+
+    while (part < SPECIALIST_MAX_PARTS) {
+      if (signal?.aborted) throw ApiError('La solicitud fue cancelada.', 499);
+      const reasoningBudgetTokens = emptyRetries > 0
+        ? SPECIALIST_REASONING_RETRY_TOKENS
+        : SPECIALIST_REASONING_TOKENS;
+      let res = null;
+      try {
+        res = await streamReasonChat({
+          model: spec.model,
+          system,
+          messages,
+          maxTokens: SPECIALIST_TURN_TOKENS,
+          reasoningBudgetTokens,
+          temperature: spec.temperature,
+          // La busqueda de pago se repite solo si la primera parte no produjo absolutamente
+          // nada. Las partes que ya continuan el texto reutilizan la investigacion inicial.
+          plugins: part === 0 ? spec.plugins : null,
+          reasonStage: false,
+          stageLabel: spec.stage === 'chat_max' ? 'Mady MAX con busqueda web' : 'Mady MAX'
+        }, signal, {
+          onProgress: (p) => {
+            const chars = full.length + String((p && p.text) || '').length;
+            const phase = chars
+              ? 'Redactando… ' + chars + ' caracteres'
+              : (p && p.sawReasoning ? 'Pensando a fondo…' : 'Conectando…');
+            const partLabel = part > 0 ? ' · parte ' + (part + 1) : '';
+            const retryLabel = emptyRetries > 0 ? ' · recuperando conexion' : '';
+            bub.innerHTML = reasonStageHtml(spec.stage) + '<div style="margin-top:8px;font-size:12px;color:rgba(212,255,246,.6)">' + phase + partLabel + retryLabel + '</div>';
+          }
+        });
+      } catch (error) {
+        lastError = error;
+        const partial = String(error?.partialText || '').trim();
+        if (partial) {
+          full = mergeSpecialistChunk(full, partial);
+          part += 1;
+          emptyRetries = 0;
+          messages = specialistContinuationMessages(history, full, part + 1);
+          continue;
         }
-      });
-      full += String((res && res.text) || '');
-      // Truncado por longitud O stream cortado sin "complete" (worker caido): en ambos casos
-      // falta texto y hay que continuar.
+        if (isRecoverableSpecialistStreamError(error) && emptyRetries < SPECIALIST_MAX_EMPTY_RETRIES) {
+          emptyRetries += 1;
+          bub.innerHTML = reasonStageHtml(spec.stage) + '<div style="margin-top:8px;font-size:12px;color:rgba(212,255,246,.6)">El modelo sigue trabajando · recuperando la conexion (' + emptyRetries + '/' + SPECIALIST_MAX_EMPTY_RETRIES + ')</div>';
+          await sleep(500 + (emptyRetries * 250));
+          continue;
+        }
+        if (full.trim()) break;
+        throw error;
+      }
+
+      const chunk = String((res && res.text) || '').trim();
+      if (chunk) {
+        full = mergeSpecialistChunk(full, chunk);
+        part += 1;
+        emptyRetries = 0;
+      }
+
       const cut = !!(res && (res.truncated || res.completed === false));
-      if (!cut) break;                             // termino completo
-      if (turn === MAX_CONTINUE) break;            // tope de continuaciones
-      if (!full.trim()) continue;                  // no alcanzo a escribir nada: repite el pedido tal cual
-      messages = history.concat([
-        { role: 'assistant', content: full },
-        { role: 'user', content: 'Continua EXACTAMENTE donde te quedaste, sin repetir nada de lo ya escrito ni volver a saludar. Sigue hasta completar TODO lo pedido.' }
-      ]);
+      if (chunk && !cut) break;
+      if (!chunk) {
+        if (emptyRetries < SPECIALIST_MAX_EMPTY_RETRIES) {
+          emptyRetries += 1;
+          await sleep(500 + (emptyRetries * 250));
+          continue;
+        }
+        if (full.trim()) break;
+        throw lastError || ApiError('Mady MAX no alcanzo a iniciar la respuesta.', 504);
+      }
+      messages = specialistContinuationMessages(history, full, part + 1);
     }
     return full.trim();
   }
@@ -6624,6 +6700,7 @@
     };
     if (opts.plugins && opts.plugins.length) payload.plugins = opts.plugins;
     if (opts.reasoning) payload.reasoning = opts.reasoning;
+    if (opts.reasoningBudgetTokens) payload.reasoningBudgetTokens = opts.reasoningBudgetTokens;
     const res = await callEdge(payload, signal);
     const data = await res.json().catch(() => ({}));
     if (!res.ok || data.success === false) {
@@ -6646,6 +6723,8 @@
       reasonStage: opts.reasonStage !== false
     };
     if (opts.plugins && opts.plugins.length) payload.plugins = opts.plugins;
+    if (opts.reasoning) payload.reasoning = opts.reasoning;
+    if (opts.reasoningBudgetTokens) payload.reasoningBudgetTokens = opts.reasoningBudgetTokens;
     const res = await callEdge(payload, signal);
     const ct = (res.headers.get('content-type') || '').toLowerCase();
     if (!ct.includes('text/event-stream')) {
@@ -6699,6 +6778,7 @@
       if (evt.type === 'error') {
         errored = evt.error || 'Error en el stream.';
         errorStatus = Number(evt.status || 500) || 500;
+        if (typeof evt.partialText === 'string' && evt.partialText.length > full.length) full = evt.partialText;
         if (evt.credits) credits = evt.credits;
         emit();
         return;
@@ -6724,7 +6804,12 @@
         i = buffer.indexOf('\n\n');
       }
     }
-    if (errored) throw ApiError(stageErrorMessage(opts, { error: errored, status: errorStatus }, null), errorStatus, credits);
+    if (errored) {
+      const streamError = ApiError(stageErrorMessage(opts, { error: errored, status: errorStatus }, null), errorStatus, credits);
+      streamError.partialText = full;
+      streamError.retryable = true;
+      throw streamError;
+    }
     // Cobro por token: refrescamos la barra de uso con el costo real del stream (p.ej. el juez).
     if (credits) { state.credits = mergeCredits(state.credits, credits); renderCredits(); }
     return { text: full, credits, finishReason, truncated, events, sawReasoning, completed };
