@@ -6351,9 +6351,26 @@
   // GLM-5.2 conserva su razonamiento profundo, pero ninguna parte intenta vivir mas que el worker.
   const SPECIALIST_TURN_TOKENS = 4600;
   const SPECIALIST_REASONING_TOKENS = 1800;
-  const SPECIALIST_REASONING_RETRY_TOKENS = 1000;
   const SPECIALIST_MAX_PARTS = 24;
   const SPECIALIST_MAX_EMPTY_RETRIES = 3;
+
+  // Un tramo que murio SIN emitir una sola letra no se arregla repitiendolo igual: el modelo
+  // vuelve a gastar todo el reloj pensando y vuelve a morir. Cada reintento pide MENOS
+  // razonamiento y MENOS texto, y el ultimo lo apaga del todo (la unica variante que
+  // garantiza contenido inmediato). Antes los 3 reintentos eran identicos entre si: tres
+  // muertes seguidas de ~106 s y MAX fallaba entero sin entregar nada.
+  const SPECIALIST_RETRY_LADDER = [
+    { reasoningBudgetTokens: 900, maxTokens: 3600 },
+    { reasoningBudgetTokens: 400, maxTokens: 2600 },
+    { disableReasoning: true, maxTokens: 2000 }
+  ];
+
+  function specialistAttemptPlan(emptyRetries) {
+    if (emptyRetries <= 0) {
+      return { reasoningBudgetTokens: SPECIALIST_REASONING_TOKENS, maxTokens: SPECIALIST_TURN_TOKENS };
+    }
+    return SPECIALIST_RETRY_LADDER[Math.min(emptyRetries, SPECIALIST_RETRY_LADDER.length) - 1];
+  }
 
   function isRecoverableSpecialistStreamError(error) {
     const status = Number(error?.status || error?.statusCode || 0) || 0;
@@ -6402,17 +6419,16 @@
 
     while (part < SPECIALIST_MAX_PARTS) {
       if (signal?.aborted) throw ApiError('La solicitud fue cancelada.', 499);
-      const reasoningBudgetTokens = emptyRetries > 0
-        ? SPECIALIST_REASONING_RETRY_TOKENS
-        : SPECIALIST_REASONING_TOKENS;
+      const attempt = specialistAttemptPlan(emptyRetries);
       let res = null;
       try {
         res = await streamReasonChat({
           model: spec.model,
           system,
           messages,
-          maxTokens: SPECIALIST_TURN_TOKENS,
-          reasoningBudgetTokens,
+          maxTokens: attempt.maxTokens,
+          reasoningBudgetTokens: attempt.reasoningBudgetTokens,
+          disableReasoning: attempt.disableReasoning === true,
           temperature: spec.temperature,
           // La busqueda de pago se repite solo si la primera parte no produjo absolutamente
           // nada. Las partes que ya continuan el texto reutilizan la investigacion inicial.
@@ -6422,11 +6438,15 @@
         }, signal, {
           onProgress: (p) => {
             const chars = full.length + String((p && p.text) || '').length;
+            // El Admin tiene el razonamiento en modo "exclude", asi que los deltas de
+            // pensamiento no llegan nunca y esto decia "Conectando..." durante minutos.
+            // El latido de la Edge (cada 8 s) si llega: basta para saber que esta vivo.
+            const alive = !!(p && (p.sawReasoning || Number(p.events || 0) > 1));
             const phase = chars
               ? 'Redactando… ' + chars + ' caracteres'
-              : (p && p.sawReasoning ? 'Pensando a fondo…' : 'Conectando…');
+              : (alive ? 'Pensando a fondo…' : 'Conectando…');
             const partLabel = part > 0 ? ' · parte ' + (part + 1) : '';
-            const retryLabel = emptyRetries > 0 ? ' · recuperando conexion' : '';
+            const retryLabel = emptyRetries > 0 ? ' · reintento mas corto' : '';
             bub.innerHTML = reasonStageHtml(spec.stage) + '<div style="margin-top:8px;font-size:12px;color:rgba(212,255,246,.6)">' + phase + partLabel + retryLabel + '</div>';
           }
         });
@@ -6442,7 +6462,11 @@
         }
         if (isRecoverableSpecialistStreamError(error) && emptyRetries < SPECIALIST_MAX_EMPTY_RETRIES) {
           emptyRetries += 1;
-          bub.innerHTML = reasonStageHtml(spec.stage) + '<div style="margin-top:8px;font-size:12px;color:rgba(212,255,246,.6)">El modelo sigue trabajando · recuperando la conexion (' + emptyRetries + '/' + SPECIALIST_MAX_EMPTY_RETRIES + ')</div>';
+          const nextPlan = specialistAttemptPlan(emptyRetries);
+          const nextHow = nextPlan.disableReasoning
+            ? 'ahora sin razonamiento previo'
+            : 'con razonamiento mas corto';
+          bub.innerHTML = reasonStageHtml(spec.stage) + '<div style="margin-top:8px;font-size:12px;color:rgba(212,255,246,.6)">El tramo tardo demasiado · reintentando ' + nextHow + ' (' + emptyRetries + '/' + SPECIALIST_MAX_EMPTY_RETRIES + ')</div>';
           await sleep(500 + (emptyRetries * 250));
           continue;
         }
@@ -6725,6 +6749,8 @@
     if (opts.plugins && opts.plugins.length) payload.plugins = opts.plugins;
     if (opts.reasoning) payload.reasoning = opts.reasoning;
     if (opts.reasoningBudgetTokens) payload.reasoningBudgetTokens = opts.reasoningBudgetTokens;
+    // Ultimo reintento de un tramo muerto: sin razonamiento, para que el modelo escriba ya.
+    if (opts.disableReasoning === true) payload.disableReasoning = true;
     const res = await callEdge(payload, signal);
     const ct = (res.headers.get('content-type') || '').toLowerCase();
     if (!ct.includes('text/event-stream')) {
