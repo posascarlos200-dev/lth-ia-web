@@ -4666,8 +4666,13 @@
     // El juez con web usa la etapa 'judge_web' si el Admin la define; si no, el MISMO juez que
     // el Admin ya eligio, solo que con la busqueda encendida. Antes caia a un Sonnet fijo que
     // no aparece en el panel: un modelo invisible revisando las respuestas.
-    if (factual) attempts.push({ model: reasonModel('judge_web', reasonModel('judge', 'z-ai/glm-5.2')), timeoutMs: 115000, opts: { plugins: [{ id: 'web', max_results: 5 }], needWeb: true } });
-    attempts.push({ model: reasonModel('judge', 'anthropic/claude-opus-4.8'), timeoutMs: 100000, opts: null });
+    // Los cortes del juez van POR ENCIMA del reloj de la Edge (130 s) a proposito: si el
+    // tramo se pasa, queremos que corte el servidor, que emite su error controlado con el
+    // texto parcial y los creditos ya reconciliados. Cuando el navegador abortaba primero
+    // (100 s) se perdia esa reconciliacion y se desperdiciaban 30 s de margen que existen.
+    // El ultimo escalon es un modelo rapido sin razonamiento: no necesita el reloj largo.
+    if (factual) attempts.push({ model: reasonModel('judge_web', reasonModel('judge', 'z-ai/glm-5.2')), timeoutMs: 140000, opts: { plugins: [{ id: 'web', max_results: 5 }], needWeb: true } });
+    attempts.push({ model: reasonModel('judge', 'anthropic/claude-opus-4.8'), timeoutMs: 140000, opts: null });
     attempts.push({ model: reasonModel('orchestrator', 'google/gemini-2.5-flash'), timeoutMs: 45000, opts: null });
 
     let judge = null;
