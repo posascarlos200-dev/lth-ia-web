@@ -63,6 +63,7 @@
         <p id="authMsg" class="auth-msg" role="status" aria-live="polite"></p>
         <button id="forgotPasswordBtn" class="auth-link" type="button">Olvidé mi contraseña</button>
         <button id="havePinBtn" class="auth-link" type="button">Ya tengo un PIN</button>
+        <button id="recoverAccountBtn" class="auth-link" type="button">No tengo acceso a mis dispositivos</button>
       </form>
 
       <section id="invitePanel" class="invite-panel" hidden aria-live="polite">
@@ -96,6 +97,27 @@
         </button>
         <p id="pinMsg" class="auth-msg" role="status" aria-live="polite"></p>
         <button id="pinBackBtn" class="auth-link" type="button">Volver</button>
+      </form>
+
+      <!-- Verificacion de sesion: aparece sola cuando el administrador reinicia
+           el acceso de la cuenta. No la pide el usuario, y por eso no hay boton
+           para llegar aqui: el login la muestra cuando toca. Es la MISMA
+           pantalla que ya existe en LTH.OS y en LTH Remote. -->
+      <form id="sessionVerifyForm" class="auth-form pin-form" hidden novalidate>
+        <p class="invite-status-tag">VERIFICACIÓN DE ACCESO</p>
+        <h2>Confirma que eres tú</h2>
+        <p id="sessionVerifyIntro" class="pin-intro">El administrador reinició el acceso de tu cuenta. Pídele el código de 6 dígitos para entrar.</p>
+        <div id="sessionVerifyEmail" class="masked-email"></div>
+        <label class="field">
+          <span>Código de 6 dígitos</span>
+          <input id="sessionVerifyCode" class="pin-code" type="text" inputmode="numeric" autocomplete="one-time-code" maxlength="6" pattern="[0-9]{6}" placeholder="000000" required />
+        </label>
+        <button id="sessionVerifySubmit" class="btn-primary" type="submit">
+          <span class="btn-label">Entrar</span>
+          <span class="btn-spinner" hidden></span>
+        </button>
+        <p id="sessionVerifyMsg" class="auth-msg" role="status" aria-live="polite"></p>
+        <button id="sessionVerifyBackBtn" class="auth-link" type="button">Volver</button>
       </form>
 
       <form id="resetForm" class="auth-form pin-form" hidden novalidate>
@@ -414,6 +436,6 @@
   <script src="./vendor/jspdf.umd.min.js"></script>
   <script src="./vendor/lth-router.js"></script>
   <script src="./invitations.js?v=3"></script>
-  <script src="./app.js?v=10"></script>
+  <script src="./app.js?v=11"></script>
 </body>
 </html>

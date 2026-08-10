@@ -7211,11 +7211,17 @@
     el.invitePanel.hidden = true;
     el.pinForm.hidden = true;
     el.resetForm.hidden = true;
+    // Cambiar de pestana abandona la verificacion: si no se limpiara, el panel
+    // seguiria visible sobre el formulario y la contrasena seguiria viva en
+    // memoria sin que nadie la vaya a usar.
+    if (el.sessionVerifyForm) el.sessionVerifyForm.hidden = true;
+    state.sessionVerify = null;
     document.querySelectorAll('[data-auth-tab]').forEach((t) => t.classList.toggle('on', t.getAttribute('data-auth-tab') === mode));
     const signup = mode === 'signup';
     el.passwordRules.hidden = !signup;
     el.turnstileWrap.hidden = !signup;
     el.forgotPasswordBtn.hidden = signup;
+    if (el.recoverAccountBtn) el.recoverAccountBtn.hidden = signup;
     el.authBtnLabel.textContent = signup ? 'Solicitar invitación' : 'Entrar';
     el.authPassword.setAttribute('autocomplete', signup ? 'new-password' : 'current-password');
     // La política nueva se exige al crear la contraseña, no al autenticar
@@ -7297,6 +7303,92 @@
     el.pinMsg.textContent = '';
     el.authFoot.textContent = 'El PIN vence 24 horas después del envío · máximo 5 intentos';
     setTimeout(() => el.pinCode.focus(), 0);
+  }
+
+  /* ── Verificacion de sesion (recuperar cuenta) ──────────────────────────
+     Este es el MISMO mecanismo que usan LTH.OS y LTH Remote. El usuario no lo
+     puede iniciar por su cuenta: lo enciende el administrador reiniciando el
+     acceso de la cuenta. Cuando eso pasa, el login responde con
+     `verificationRequired` y aqui se pide el codigo de 6 digitos.
+
+     La contrasena se conserva en memoria porque `auth.login.verify` la vuelve a
+     exigir junto al codigo. No se guarda en disco ni sale de esta pestana. */
+  function showSessionVerifyPanel(email, password, verification) {
+    stopInvitePolling();
+    state.sessionVerify = {
+      email,
+      password,
+      requestToken: verification.requestToken || '',
+      expiresAt: verification.expiresAt || ''
+    };
+    el.authTabs.hidden = true;
+    el.authForm.hidden = true;
+    el.invitePanel.hidden = true;
+    el.pinForm.hidden = true;
+    el.resetForm.hidden = true;
+    el.sessionVerifyForm.hidden = false;
+    el.sessionVerifyEmail.textContent = verification.email || email || 'Correo registrado';
+    el.sessionVerifyCode.value = '';
+    el.sessionVerifyMsg.textContent = '';
+    el.authFoot.textContent = 'El administrador te dicta el código · vence en 15 minutos';
+    setTimeout(() => el.sessionVerifyCode.focus(), 0);
+  }
+
+  function hideSessionVerifyPanel() {
+    // La contrasena en memoria muere aqui: si se abandona la verificacion no
+    // tiene por que seguir viva en la pestana.
+    state.sessionVerify = null;
+    el.sessionVerifyForm.hidden = true;
+    el.authTabs.hidden = false;
+    el.authForm.hidden = false;
+    el.sessionVerifyCode.value = '';
+    el.sessionVerifyMsg.textContent = '';
+  }
+
+  async function submitSessionVerify(event) {
+    if (event) event.preventDefault();
+    const pending = state.sessionVerify;
+    if (!pending) { hideSessionVerifyPanel(); return; }
+    const code = String(el.sessionVerifyCode.value || '').replace(/\D/g, '');
+    if (!/^\d{6}$/.test(code)) { el.sessionVerifyMsg.textContent = 'Escribe los 6 dígitos del código.'; return; }
+    el.sessionVerifySubmit.disabled = true;
+    el.sessionVerifyMsg.textContent = '';
+    try {
+      const result = await inviteCall('auth.login.verify', {
+        email: pending.email,
+        password: pending.password,
+        requestToken: pending.requestToken,
+        code,
+        client: 'lth_ia_web'
+      });
+      const session = normalizeSession(result.session);
+      if (!session) throw new Error('No se pudo iniciar sesión.');
+      state.sessionVerify = null;
+      el.sessionVerifyForm.hidden = true;
+      el.authTabs.hidden = false;
+      el.authForm.hidden = false;
+      saveSession(session);
+      if (await ensureWebAccess(session)) await enterApp();
+    } catch (error) {
+      el.sessionVerifyMsg.textContent = (error && error.message) || 'El código no es válido.';
+    } finally {
+      el.sessionVerifySubmit.disabled = false;
+    }
+  }
+
+  function explainAccountRecovery() {
+    const email = String((el.authEmail && el.authEmail.value) || '').trim();
+    alert(
+      'RECUPERAR TU CUENTA\n\n'
+      + 'Si perdiste el acceso a tu teléfono y a tu PC, el administrador puede\n'
+      + 'devolverte la entrada. Son tres pasos:\n\n'
+      + `1. Escríbele con tu correo${email ? ` (${email})` : ''} y pídele que reinicie tu acceso.\n`
+      + '2. Vuelve a iniciar sesión aquí. Aparecerá sola una pantalla pidiendo un\n'
+      + '   código de 6 dígitos, sin que tengas que hacer nada más.\n'
+      + '3. El administrador te dicta ese código. Al escribirlo, entras.\n\n'
+      + 'Ojo: al recuperar, los dispositivos anteriores dejan de estar vinculados.\n'
+      + 'Tienes 15 minutos para usar el código desde que el administrador lo genera.'
+    );
   }
 
   async function refreshInviteStatus() {
@@ -7496,7 +7588,15 @@
 
     setAuthBusy(true); authMessage('');
     try {
-      const login = await inviteCall('auth.login', { email, password });
+      // `client` es obligatorio para que el servidor aplique la verificacion de
+      // sesion. Sin el, normalizeLoginClient devuelve vacio y esta web dejaba
+      // entrar aunque el administrador hubiera reiniciado el acceso: la puerta
+      // solo estaba cerrada en el OS, el telefono y el Admin de Bitcoin.
+      const login = await inviteCall('auth.login', { email, password, client: 'lth_ia_web' });
+      if (login && login.verificationRequired && login.verification) {
+        showSessionVerifyPanel(email, password, login.verification);
+        return;
+      }
       const data = login.session;
       const session = normalizeSession(data);
       if (!session) throw new Error('No se pudo iniciar sesión.');
@@ -7583,6 +7683,11 @@
     el.inviteExpiry = $('#inviteExpiry'); el.inviteRefreshBtn = $('#inviteRefreshBtn'); el.inviteLoginBtn = $('#inviteLoginBtn');
     el.pinForm = $('#pinForm'); el.pinEmail = $('#pinEmail'); el.pinCode = $('#pinCode'); el.pinSubmit = $('#pinSubmit');
     el.pinSpinner = el.pinSubmit.querySelector('.pin-spinner'); el.pinMsg = $('#pinMsg'); el.pinBackBtn = $('#pinBackBtn');
+    el.recoverAccountBtn = $('#recoverAccountBtn');
+    el.sessionVerifyForm = $('#sessionVerifyForm'); el.sessionVerifyIntro = $('#sessionVerifyIntro');
+    el.sessionVerifyEmail = $('#sessionVerifyEmail'); el.sessionVerifyCode = $('#sessionVerifyCode');
+    el.sessionVerifySubmit = $('#sessionVerifySubmit'); el.sessionVerifyMsg = $('#sessionVerifyMsg');
+    el.sessionVerifyBackBtn = $('#sessionVerifyBackBtn');
     el.forgotPasswordBtn = $('#forgotPasswordBtn'); el.resetForm = $('#resetForm'); el.resetEmail = $('#resetEmail');
     el.resetTurnstile = $('#resetTurnstile'); el.resetPinFields = $('#resetPinFields'); el.resetPin = $('#resetPin'); el.resetPassword = $('#resetPassword');
     el.resetPasswordConfirm = $('#resetPasswordConfirm'); el.resetNotice = $('#resetNotice'); el.resetTitle = $('#resetTitle'); el.resetIntro = $('#resetIntro');
@@ -7695,6 +7800,12 @@
     el.forgotPasswordBtn.addEventListener('click', () => showResetForm(false));
     el.resetHavePinBtn.addEventListener('click', () => showResetForm(true));
     el.resetBackBtn.addEventListener('click', () => setAuthMode('login'));
+    el.recoverAccountBtn?.addEventListener('click', explainAccountRecovery);
+    el.sessionVerifyForm?.addEventListener('submit', submitSessionVerify);
+    el.sessionVerifyBackBtn?.addEventListener('click', hideSessionVerifyPanel);
+    el.sessionVerifyCode?.addEventListener('input', () => {
+      el.sessionVerifyCode.value = el.sessionVerifyCode.value.replace(/\D/g, '').slice(0, 6);
+    });
     el.resetPin.addEventListener('input', () => { el.resetPin.value = el.resetPin.value.replace(/\D/g, '').slice(0, 6); });
     el.resetForm.querySelectorAll('.password-toggle').forEach((btn) => btn.addEventListener('click', () => {
       const input = el.resetForm.querySelector('#' + btn.getAttribute('data-target'));
