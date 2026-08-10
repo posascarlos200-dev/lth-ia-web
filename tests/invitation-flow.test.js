@@ -50,12 +50,17 @@ assert.match(appSource, /¿Quisiste escribir/);
 (async () => {
   const response = await api.call('https://example.test/invites', 'publishable', 'invite.status', { requestToken: 'opaque' });
   assert.equal(response.invite.status, 'pending');
+  context.fetch = async () => ({ ok: false, status: 409, json: async () => ({ success: false, code: 'INVITATION_PIN', error: 'wrong flow' }) });
+  await assert.rejects(
+    api.call('https://example.test/invites', 'publishable', 'password.complete', {}),
+    (error) => error.code === 'INVITATION_PIN' && error.status === 409
+  );
   context.fetch = async () => { throw new TypeError('Load failed'); };
   await assert.rejects(
     api.call('https://example.test/invites', 'publishable', 'invite.request', {}),
     /No pudimos conectar con el servidor de LTH IA/
   );
-  console.log('invitation-flow: 16/16 OK');
+  console.log('invitation-flow: 18/18 OK');
 })().catch((error) => {
   console.error(error);
   process.exitCode = 1;

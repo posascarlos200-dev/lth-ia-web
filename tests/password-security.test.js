@@ -21,9 +21,14 @@ assert.match(edge, /900 - \(Date\.now\(\) - startedAt\)/);
 assert.match(edge, /attempts >= 5/);
 assert.match(edge, /interval '15 minutes'|retryAfter: 900/);
 assert.match(edge, /reset-pin:/);
+assert.match(edge, /isSentInvitationPin/);
+assert.match(edge, /INVITATION_PIN/);
+assert.match(edge, /RESET_NOT_SENT/);
+assert.match(app, /tracker\.email === email/);
+assert.match(app, /recoveryAfterInviteEmail/);
 assert.doesNotMatch(edge, /console\.log\([^)]*password/i);
 assert.match(migration, /enable row level security/g);
 assert.match(migration, /revoke all .* anon, authenticated/);
 assert.match(migration, /lth_ia_web_record_login_failure/);
 
-console.log('password-security: 16/16 OK');
+console.log('password-security: 21/21 OK');

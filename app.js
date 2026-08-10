@@ -268,6 +268,7 @@
     authMode: 'login',
     invite: null,
     inviteTimer: null,
+    recoveryAfterInviteEmail: '',
     engine: 'web',
     osConnected: null,   // null = comprobando, true = conectado, false = sin conexion
     presenceTimer: null,
@@ -7321,6 +7322,14 @@
     try {
       await inviteCall('invite.verify', { email, pin });
       INVITES.clearTracker();
+      if (state.recoveryAfterInviteEmail === email) {
+        state.recoveryAfterInviteEmail = '';
+        showResetForm(false);
+        el.resetEmail.value = email;
+        el.resetMsg.textContent = 'Cuenta activada correctamente. Ahora pulsa “Solicitar PIN” para iniciar la recuperación de contraseña.';
+        el.resetMsg.classList.add('ok');
+        return;
+      }
       setAuthMode('login');
       el.authEmail.value = email;
       el.authPassword.value = '';
@@ -7366,7 +7375,8 @@
     el.resetPin.value = ''; el.resetPassword.value = ''; el.resetPasswordConfirm.value = '';
     resetPasswordToggles();
     if (!complete) INVITES.renderTurnstile('resetTurnstileWidget', CFG.TURNSTILE_SITE_KEY).catch((error) => { el.resetMsg.textContent = error.message; });
-    const tracker = resetTracker(); if (tracker && tracker.email) el.resetEmail.value = tracker.email;
+    const tracker = resetTracker();
+    if (!String(el.resetEmail.value || '').trim() && tracker && tracker.email) el.resetEmail.value = tracker.email;
     // El auto-enfoque solo en escritorio: en moviles (pointer grueso) provoca saltos y bloqueos del teclado en iOS.
     const coarse = typeof window.matchMedia === 'function' && window.matchMedia('(pointer: coarse)').matches;
     if (!coarse) setTimeout(() => { (complete ? el.resetPin : el.resetEmail).focus(); }, 0);
@@ -7389,7 +7399,7 @@
           // Si ya hay una solicitud previa (p.ej. tope de solicitudes), no es un fallo real:
           // pasamos igual a introducir el PIN, que es lo unico que falta.
           const tracker = resetTracker();
-          if (!(tracker && tracker.email)) throw err;
+          if (!(tracker && tracker.requestToken && tracker.email === email)) throw err;
           alreadyRequested = true;
         }
         showResetForm(true);
@@ -7408,7 +7418,19 @@
         resetTracker(null); setAuthMode('login'); el.authEmail.value = email; el.authPassword.value = '';
         authMessage('Contraseña actualizada. Ya puedes iniciar sesión.', true);
       }
-    } catch (error) { el.resetMsg.textContent = error.message || 'No se pudo completar la solicitud.'; el.resetMsg.classList.remove('ok'); }
+    } catch (error) {
+      if (state.resetStage === 'complete' && error && error.code === 'INVITATION_PIN') {
+        const pin = String(el.resetPin.value || '').replace(/\D/g, '');
+        state.recoveryAfterInviteEmail = email;
+        resetTracker(null);
+        showPinPanel(email);
+        el.pinCode.value = pin;
+        pinMessage('Este es un PIN de activación. Ya lo colocamos en el formulario correcto: pulsa “Verificar PIN”. Después podrás solicitar el PIN de recuperación.', true);
+      } else {
+        el.resetMsg.textContent = error.message || 'No se pudo completar la solicitud.';
+        el.resetMsg.classList.remove('ok');
+      }
+    }
     finally { el.resetSubmit.disabled = false; el.resetSpinner.hidden = true; }
   }
   async function ensureWebAccess(session) {
