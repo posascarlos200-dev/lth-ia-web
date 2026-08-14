@@ -256,6 +256,13 @@ input, textarea { font-family: inherit; }
 @keyframes slideIn { from { transform: translateX(-100%); } }
 .drawer-head { display: flex; align-items: center; justify-content: space-between; padding: 4px 4px 12px; border-bottom: 1px solid var(--line); }
 .drawer-head strong { font-family: var(--font-display); letter-spacing: 1.5px; font-size: 14px; color: var(--text-bright); }
+.drawer-brand { display: flex; align-items: center; gap: 9px; min-width: 0; }
+.drawer-brand img {
+  flex: none; width: 28px; height: 28px; border-radius: 9px;
+  border: 1px solid var(--line-strong);
+  background: radial-gradient(circle at 50% 35%, rgba(74,163,255,.14), transparent 70%);
+  box-shadow: 0 0 16px rgba(74,163,255,.16);
+}
 .dh-actions { display: flex; align-items: center; gap: 6px; }
 .dh-close { padding: 7px 11px; font-size: 13px; line-height: 1; }
 .mini-btn { background: rgba(74,163,255,.1); border: 1px solid var(--line-strong); color: var(--cyan); border-radius: 9px; padding: 7px 11px; font-size: 12px; }
@@ -701,6 +708,10 @@ a.vc-src:active, a.vc-src:hover { border-color: var(--cyan); color: var(--text-b
 
   .drawer-head { padding: 0 2px 11px; gap: 7px; }
   .drawer-head strong { font-size: 13px; letter-spacing: .8px; white-space: nowrap; }
+  /* El rail de escritorio es estrecho: el logo cede tamano antes que el
+     titulo, que es el que no puede partirse. */
+  .drawer-brand { gap: 7px; }
+  .drawer-brand img { width: 24px; height: 24px; border-radius: 8px; }
   .dh-actions { gap: 6px; }
   .mini-btn { min-height: 30px; padding: 6px 10px; font-size: 10.5px; border-radius: 9px; }
   .convo-list { gap: 3px; padding: 11px 0; }

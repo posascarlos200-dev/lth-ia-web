@@ -198,7 +198,14 @@
     <!-- Lista de conversaciones (drawer) -->
     <aside id="drawer" class="drawer" hidden>
       <div class="drawer-head">
-        <strong>Conversaciones</strong>
+        <!-- El logo vivia en el panel de escritorio que se retiro al consolidar
+             el layout; desde entonces la marca solo aparecia en el login y en
+             el chat vacio. Aqui acompana toda la sesion, en PC y al abrir el
+             menu en el telefono. -->
+        <div class="drawer-brand">
+          <img src="./icon.png" alt="LTH IA" width="28" height="28" />
+          <strong>Conversaciones</strong>
+        </div>
         <div class="dh-actions">
           <button id="newChatBtn" class="mini-btn" type="button">+ Nueva</button>
           <button id="closeDrawerBtn" class="mini-btn ghost dh-close" type="button" aria-label="Cerrar">✕</button>
