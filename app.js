@@ -7795,7 +7795,14 @@
      que borrar nada al publicar la siguiente. */
   const NOVEDAD_OS = {
     version: '2.4.12',
-    titulo: 'LTH OS 2.4.12 ya esta disponible',
+    // De que herramienta se habla. LTH OS trae muchas y cada version suele
+    // tocar una sola: sin decirlo, quien no usa esa no sabe si le afecta.
+    app: 'LTH Bitcoin',
+    appIcono: '₿',
+    appColor: 'linear-gradient(135deg,#e8ff26 0%,#ffa31a 48%,#ff2d46 100%)',
+    alcance: 'Esta version actualiza LTH Bitcoin, la herramienta de analisis de '
+      + 'mercado. El resto de LTH OS no cambia.',
+    titulo: 'Novedades en LTH Bitcoin',
     resumen: 'El motor de ejecucion cierra la operacion antes de que la vela se de vuelta, '
       + 'y lo que ves en pantalla pasa a ser lo que de verdad vale.',
     puntos: [
@@ -7823,6 +7830,13 @@
 
     const poner = (id, texto) => { const n = document.getElementById(id); if (n) n.textContent = texto; };
     poner('novedadOsVersion', 'LTH OS ' + NOVEDAD_OS.version);
+    poner('novedadOsApp', NOVEDAD_OS.app);
+    poner('novedadOsAlcance', NOVEDAD_OS.alcance);
+    const icono = document.getElementById('novedadOsIcono');
+    if (icono) {
+      icono.textContent = NOVEDAD_OS.appIcono || '';
+      icono.style.background = NOVEDAD_OS.appColor || '';
+    }
     poner('novedadOsTitulo', NOVEDAD_OS.titulo);
     poner('novedadOsResumen', NOVEDAD_OS.resumen);
     poner('novedadOsPie', NOVEDAD_OS.pie);
