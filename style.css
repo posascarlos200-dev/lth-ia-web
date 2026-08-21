@@ -1345,3 +1345,41 @@ body:not(.soft-keyboard-open) { transform: none !important; }
 .settings-remote-link strong { color: var(--text-bright); font-size: 12px; }
 .settings-remote-link small { color: var(--text-dim); font-size: 10px; line-height: 1.35; }
 .settings-remote-link > b { color: var(--cyan); font-size: 22px; font-weight: 400; }
+
+/* Aviso de version nueva de LTH OS. Se ensena unas pocas veces y se calla solo:
+   nadie quiere leer lo mismo cada vez que entra. Usa los colores del tema para
+   no desentonar con el modo claro. */
+.novedad-os {
+  position: fixed; inset: 0; z-index: 3000;
+  display: flex; align-items: center; justify-content: center;
+  padding: 18px; background: rgba(0, 0, 0, .5);
+}
+.novedad-os[hidden] { display: none; }
+.novedad-os-card {
+  width: 100%; max-width: 460px;
+  padding: 20px; border-radius: 18px;
+  border: 1px solid var(--border, rgba(255,255,255,.14));
+  background: var(--panel, #16161a);
+  color: var(--text, #f2f2f2);
+  box-shadow: 0 24px 60px rgba(0, 0, 0, .5);
+  animation: novedadEntra .28s cubic-bezier(.22, 1, .36, 1);
+}
+@keyframes novedadEntra {
+  from { opacity: 0; transform: translateY(18px) scale(.98); }
+  to { opacity: 1; transform: none; }
+}
+.novedad-os-card header { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+.novedad-os-sello {
+  font-size: 10px; font-weight: 700; letter-spacing: .12em; text-transform: uppercase;
+  padding: 4px 9px; border-radius: 999px;
+  background: var(--accent, #c96442); color: #fff;
+}
+.novedad-os-cerrar {
+  border: none; background: none; color: var(--muted, #9a9a9a);
+  font-size: 24px; line-height: 1; padding: 0 4px; cursor: pointer;
+}
+.novedad-os-card strong { display: block; margin: 12px 0 6px; font-size: 18px; }
+.novedad-os-card p { margin: 0; font-size: 13px; line-height: 1.55; color: var(--muted, #9a9a9a); }
+.novedad-os-card ul { margin: 12px 0 0; padding-left: 18px; display: grid; gap: 7px; }
+.novedad-os-card li { font-size: 13px; line-height: 1.5; }
+.novedad-os-card small { display: block; margin-top: 14px; font-size: 11px; color: var(--muted, #9a9a9a); }

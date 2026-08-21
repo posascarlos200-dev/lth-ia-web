@@ -7788,8 +7788,69 @@
     el.icSend = el.sendBtn.querySelector('.ic-send'); el.icStop = el.sendBtn.querySelector('.ic-stop');
   }
 
+  /* ── Aviso de version nueva de LTH OS ────────────────────────────────────
+     Se rellena a mano en cada lanzamiento del OS (lo recuerda el documento de
+     empaquetado). Se ensena unas pocas veces y se calla: el contador vive en
+     este navegador y se reinicia solo cuando cambia la version, asi que no hay
+     que borrar nada al publicar la siguiente. */
+  const NOVEDAD_OS = {
+    version: '2.4.12',
+    titulo: 'LTH OS 2.4.12 ya esta disponible',
+    resumen: 'El bot aprende a cerrar la operacion antes de que la vela se de vuelta, '
+      + 'y lo que ves en pantalla pasa a ser lo que de verdad vale.',
+    puntos: [
+      'Toma de ganancia: eliges que parte de lo que la operacion puede pagar quieres asegurar, y el bot vende solo al alcanzarla.',
+      'El boton Salir ahora ya vende de verdad: Kalshi rechazaba todas las ventas por una regla suya sobre el tipo de orden.',
+      'Se acabo el precio que parpadeaba: la pantalla mezclaba el precio de la compra con el de ahora y marcaba perdidas estando en ganancia.',
+      'Los activos en mantenimiento se ven apagados de un vistazo, y se nota cuando vuelven.',
+    ],
+    pie: 'Actualiza desde el propio LTH OS: te avisa al abrirlo.',
+  };
+  const NOVEDAD_KEY = 'lth_ia_novedad_os_v1';
+  const NOVEDAD_VECES = 7;
+
+  function mostrarNovedadOs() {
+    const caja = document.getElementById('novedadOs');
+    if (!caja || !NOVEDAD_OS.version) return;
+
+    let guardado = null;
+    try { guardado = JSON.parse(localStorage.getItem(NOVEDAD_KEY) || 'null'); } catch (_) { guardado = null; }
+    // Version distinta = aviso nuevo: la cuenta empieza otra vez desde cero.
+    const vistas = guardado && guardado.version === NOVEDAD_OS.version
+      ? Math.max(0, Number(guardado.vistas) || 0)
+      : 0;
+    if (vistas >= NOVEDAD_VECES) return;
+
+    const poner = (id, texto) => { const n = document.getElementById(id); if (n) n.textContent = texto; };
+    poner('novedadOsVersion', 'LTH OS ' + NOVEDAD_OS.version);
+    poner('novedadOsTitulo', NOVEDAD_OS.titulo);
+    poner('novedadOsResumen', NOVEDAD_OS.resumen);
+    poner('novedadOsPie', NOVEDAD_OS.pie);
+    const lista = document.getElementById('novedadOsLista');
+    if (lista) {
+      lista.textContent = '';
+      NOVEDAD_OS.puntos.forEach((punto) => {
+        const li = document.createElement('li');
+        li.textContent = punto;
+        lista.appendChild(li);
+      });
+    }
+
+    const cerrar = () => { caja.hidden = true; };
+    document.getElementById('novedadOsCerrar')?.addEventListener('click', cerrar);
+    // Tocar fuera de la tarjeta tambien cierra; dentro no, para poder leerlo.
+    caja.addEventListener('click', (evento) => { if (evento.target === caja) cerrar(); });
+
+    caja.hidden = false;
+    try {
+      localStorage.setItem(NOVEDAD_KEY,
+        JSON.stringify({ version: NOVEDAD_OS.version, vistas: vistas + 1 }));
+    } catch (_) { /* sin espacio: se vera alguna vez de mas, no pasa nada */ }
+  }
+
   async function init() {
     cache();
+    mostrarNovedadOs();
     bindMobileViewport();
     try { applyTheme(localStorage.getItem(THEME_KEY) === 'light' ? 'light' : 'dark'); } catch (_) { applyTheme('dark'); }
     if (!SB_URL || !SB_KEY) { authMessage('Falta configurar Supabase en config.js.'); return; }
