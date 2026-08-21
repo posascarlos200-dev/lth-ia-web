@@ -7796,13 +7796,13 @@
   const NOVEDAD_OS = {
     version: '2.4.12',
     titulo: 'LTH OS 2.4.12 ya esta disponible',
-    resumen: 'El bot aprende a cerrar la operacion antes de que la vela se de vuelta, '
+    resumen: 'El motor de ejecucion cierra la operacion antes de que la vela se de vuelta, '
       + 'y lo que ves en pantalla pasa a ser lo que de verdad vale.',
     puntos: [
-      'Toma de ganancia: eliges que parte de lo que la operacion puede pagar quieres asegurar, y el bot vende solo al alcanzarla.',
-      'El boton Salir ahora ya vende de verdad: Kalshi rechazaba todas las ventas por una regla suya sobre el tipo de orden.',
-      'Se acabo el precio que parpadeaba: la pantalla mezclaba el precio de la compra con el de ahora y marcaba perdidas estando en ganancia.',
-      'Los activos en mantenimiento se ven apagados de un vistazo, y se nota cuando vuelven.',
+      'Toma de ganancia: se fija que parte del rendimiento posible se asegura, y el motor liquida la posicion al alcanzarlo, sin esperar al cierre de la vela.',
+      'Salida manual operativa: el mercado rechazaba toda orden de venta por una restriccion en el tipo de orden. Las de compra nunca la llevaron, de ahi que se abriera posicion pero no se cerrara.',
+      'Valoracion en vivo corregida: la cotizacion del momento de la entrada se mezclaba con la actual, y el resultado aparecia en negativo estando en positivo.',
+      'Los activos en mantenimiento se distinguen de un vistazo, y se senala su vuelta al servicio.',
     ],
     pie: 'Actualiza desde el propio LTH OS: te avisa al abrirlo.',
   };
